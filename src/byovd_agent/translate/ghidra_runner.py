@@ -155,26 +155,24 @@ def run_ghidra_headless(
 
         log.info("[ghidra] %s — analysis completed in %.1fs", sys_path.name, elapsed)
 
+        if not cached_result.exists():
+            result.error = "ghidra script did not produce ghidra_result.json"
+            log.error("[ghidra] %s — %s", sys_path.name, result.error)
+            contents = list(output_dir.iterdir()) if output_dir.exists() else []
+            log.error("[ghidra] output dir contents: %s", [f.name for f in contents])
+            return result
+
+        return _parse_ghidra_result(cached_result, result)
     except Exception as e:
         result.error = f"execution error: {e}"
         log.error("[ghidra] %s", result.error)
+        return result
     finally:
         if 'proc' in locals() and proc.poll() is None:
             try:
                 proc.kill()
             except BaseException:
                 pass
-        return result
-
-    if not cached_result.exists():
-        result.error = "ghidra script did not produce ghidra_result.json"
-        log.error("[ghidra] %s — %s", sys_path.name, result.error)
-        # log what IS in the output dir
-        contents = list(output_dir.iterdir()) if output_dir.exists() else []
-        log.error("[ghidra] output dir contents: %s", [f.name for f in contents])
-        return result
-
-    return _parse_ghidra_result(cached_result, result)
 
 
 def _parse_ghidra_result(result_json: Path, result: TranslationResult) -> TranslationResult:

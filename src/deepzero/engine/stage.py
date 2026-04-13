@@ -5,9 +5,31 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
 
 from deepzero.engine.state import SampleState, StageOutput
+
+
+@runtime_checkable
+class LLMProtocol(Protocol):
+    # contract for any LLM provider — at minimum must support complete()
+    def complete(
+        self,
+        messages: list[dict[str, str]],
+        max_retries: int = ...,
+        initial_backoff: float = ...,
+        max_backoff: float = ...,
+        backoff_decay: float = ...,
+        **kwargs: Any,
+    ) -> str: ...
+
+
+class GlobalConfig(TypedDict, total=False):
+    # typed config passed to stages — replaces dict[str, Any]
+    settings: dict[str, Any]
+    tools: dict[str, Any]
+    knowledge: dict[str, Any]
+    model: str
 
 
 class ToolType(str, Enum):
@@ -48,9 +70,9 @@ class StageContext:
     # the pipeline directory root (for resolving relative paths)
     pipeline_dir: Path
     # global pipeline config (settings, tools, knowledge)
-    global_config: dict[str, Any]
-    # llm provider if configured
-    llm: Any | None
+    global_config: GlobalConfig
+    # llm provider if configured — must implement LLMProtocol
+    llm: LLMProtocol | None
     # logger for this stage
     log: logging.Logger = field(default_factory=lambda: logging.getLogger("deepzero.stage"))
 

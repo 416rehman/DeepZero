@@ -17,7 +17,9 @@ from deepzero.engine.stage import (
     BatchEntry,
     BatchTool,
     FailurePolicy,
+    GlobalConfig,
     IngestTool,
+    LLMProtocol,
     MapTool,
     ReduceTool,
     StageContext,
@@ -82,8 +84,8 @@ class PipelineRunner:
         stages: list[tuple[StageSpec, Tool]],
         state_store: StateStore,
         pipeline_dir: Path,
-        global_config: dict[str, Any],
-        llm: Any | None = None,
+        global_config: GlobalConfig,
+        llm: LLMProtocol | None = None,
         default_max_workers: int = 4,
     ):
         self.ingest = ingest

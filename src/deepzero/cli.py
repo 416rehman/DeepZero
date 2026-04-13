@@ -57,12 +57,13 @@ def _setup_logging(verbose: bool) -> None:
 def _build_runner(pipeline_def: Any) -> tuple[Any, Any]:
     # shared setup for run/resume — builds PipelineRunner and optional LLM provider
     from deepzero.engine.runner import PipelineRunner
+    from deepzero.engine.stage import GlobalConfig
     from deepzero.engine.state import StateStore
     from deepzero.providers.llm import LLMProvider
 
     llm = LLMProvider(pipeline_def.model) if pipeline_def.model else None
 
-    global_config: dict[str, Any] = {
+    global_config: GlobalConfig = {
         "settings": pipeline_def.settings,
         "tools": pipeline_def.tools,
         "knowledge": pipeline_def.knowledge,

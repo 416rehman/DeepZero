@@ -53,6 +53,14 @@ def _setup_logging(verbose: bool) -> None:
         for lib in ("httpx", "httpcore", "urllib3", "litellm", "openai"):
             logging.getLogger(lib).setLevel(logging.WARNING)
 
+def _load_env() -> None:
+    # load .env if python-dotenv is installed — not a hard dependency
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
 
 def _build_runner(pipeline_def: Any) -> tuple[Any, Any]:
     # shared setup for run/resume — builds PipelineRunner and optional LLM provider
@@ -102,8 +110,7 @@ def run(target: str, pipeline: str, model: str | None, work_dir: str | None, ver
     """run a pipeline against a target file or directory"""
     _setup_logging(verbose)
 
-    from dotenv import load_dotenv
-    load_dotenv()
+    _load_env()
 
     from deepzero.engine.pipeline import load_pipeline
     from deepzero.engine.state import RunState, StateStore
@@ -160,8 +167,7 @@ def resume(pipeline: str, verbose: bool):
     """resume an interrupted pipeline run"""
     _setup_logging(verbose)
 
-    from dotenv import load_dotenv
-    load_dotenv()
+    _load_env()
 
     import deepzero.stages  # noqa: F401
     from deepzero.engine.pipeline import load_pipeline
@@ -333,8 +339,7 @@ def interactive(model: str, work_dir: str, verbose: bool):
     """interactive analysis repl with llm-backed conversation"""
     _setup_logging(verbose)
 
-    from dotenv import load_dotenv
-    load_dotenv()
+    _load_env()
 
     from deepzero.providers.llm import LLMProvider
     from deepzero.engine.state import StateStore

@@ -162,8 +162,9 @@ def run(target: str, pipeline: str, model: str | None, work_dir: str | None, ver
 
 @main.command()
 @click.option("--pipeline", "-p", required=True, help="pipeline name or path (for tool resolution)")
+@click.option("--model", "-m", default=None, help="llm model override (e.g. openai/gpt-4o)")
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
-def resume(pipeline: str, verbose: bool):
+def resume(pipeline: str, model: str | None, verbose: bool):
     """resume an interrupted pipeline run"""
     _setup_logging(verbose)
 
@@ -174,6 +175,11 @@ def resume(pipeline: str, verbose: bool):
     from deepzero.engine.state import StateStore
 
     pipeline_def = load_pipeline(pipeline)
+
+    # allow model override on resume
+    if model:
+        pipeline_def.model = model
+
     state_store = StateStore(pipeline_def.work_dir)
     run_state = state_store.load_run()
 
@@ -404,6 +410,8 @@ def interactive(model: str, work_dir: str, verbose: bool):
 @click.option("--work-dir", "-w", default="work", help="work directory")
 def serve(host: str, port: int, work_dir: str):
     """start the rest api server"""
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        console.print(f"[bold yellow]⚠ binding to {host} — server will be accessible on the network[/]")
     console.print(f"[bold cyan]deepzero serve[/] - http://{host}:{port}")
     console.print(f"  work_dir: {work_dir}")
 

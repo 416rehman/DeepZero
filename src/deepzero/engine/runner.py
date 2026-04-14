@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
-import os
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -13,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from deepzero.engine.context import generate_context
+from deepzero.engine.process import run_subprocess_with_kill
 from deepzero.engine.stage import (
     BatchEntry,
     BatchTool,
@@ -30,49 +29,6 @@ from deepzero.engine.stage import (
 from deepzero.engine.state import RunState, SampleState, StateStore
 
 log = logging.getLogger("deepzero.runner")
-
-
-def run_subprocess_with_kill(
-    cmd: list[str],
-    timeout: int,
-    cwd: str | Path | None = None,
-    env: dict[str, str] | None = None,
-) -> tuple[int, bytes, bytes]:
-    # launches a subprocess in its own process group so we can kill the entire tree
-    kwargs: dict[str, Any] = {}
-    if sys.platform == "win32":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        kwargs["start_new_session"] = True
-
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        cwd=cwd, env=env, **kwargs,
-    )
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-        return proc.returncode, stdout, stderr
-    except subprocess.TimeoutExpired:
-        _kill_process_tree(proc)
-        raise
-
-
-def _kill_process_tree(proc: subprocess.Popen) -> None:
-    try:
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-                capture_output=True,
-            )
-        else:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (OSError, ProcessLookupError):
-        # process already exited or pid is invalid
-        log.debug("process tree kill skipped — pid %d already gone", proc.pid)
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        log.debug("process %d did not exit within 5s after kill", proc.pid)
 
 
 class PipelineRunner:
@@ -108,7 +64,7 @@ class PipelineRunner:
         self.state_store.save_run(run_state)
 
         try:
-            return self._run_inner(target, run_state)
+            return self._execute_pipeline_stages(target, run_state)
         except KeyboardInterrupt:
             log.warning("interrupted by user - saving state")
             run_state.status = "interrupted"
@@ -123,7 +79,7 @@ class PipelineRunner:
             self._restore_signal_handler()
             self._teardown_tools()
 
-    def _run_inner(
+    def _execute_pipeline_stages(
         self,
         target: Path,
         run_state: RunState,

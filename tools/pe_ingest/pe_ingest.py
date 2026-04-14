@@ -226,7 +226,8 @@ class PEIngest(IngestTool):
 
         try:
             meta["imphash"] = pe.get_imphash() or ""
-        except Exception:
+        except (AttributeError, ValueError, Exception) as exc:  # noqa: B110 — pefile imphash can fail on malformed imports
+            self.log.debug("imphash extraction failed: %s", exc)
             meta["imphash"] = ""
 
         pe.close()

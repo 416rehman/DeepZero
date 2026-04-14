@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from deepzero.engine.stage import StageContext, StageSpec
 from deepzero.engine.state import StageOutput

@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -37,15 +38,15 @@ class SemgrepScannerTool(BatchTool):
                     findings = json.loads(findings_path.read_text(encoding="utf-8"))
                     results[i] = self._make_result(findings, min_findings, cached=True)
                     continue
-                except (json.JSONDecodeError, OSError):
-                    pass
+                except (json.JSONDecodeError, OSError) as exc:
+                    self.log.debug("cache read failed for %s, rescanning: %s", entry.sample_id, exc)
 
             # verify scan target exists
             scan_dir = entry.sample_dir / target_subdir
             if not scan_dir.exists():
                 results[i] = StageResult(
                     status="failed",
-                    error=f"scan target '{target_subdir}' missing — does a decompile tool run before this?",
+                    error=f"scan target '{target_subdir}' missing - does a decompile tool run before this?",
                 )
                 continue
 
@@ -81,8 +82,8 @@ class SemgrepScannerTool(BatchTool):
                 file_to_sample[dest_name] = idx
 
         if not file_to_sample:
-            # nothing to scan — all entries had no scannable files
-            for idx, entry in uncached_entries:
+            # nothing to scan - all entries had no scannable files
+            for idx, _entry in uncached_entries:
                 results[idx] = StageResult(
                     status="completed", verdict="continue",
                     data={"finding_count": 0, "findings_cached": False},
@@ -109,7 +110,7 @@ class SemgrepScannerTool(BatchTool):
         except FileNotFoundError:
             self._cleanup_batch_dir(batch_dir)
             for idx, _ in uncached_entries:
-                results[idx] = StageResult(status="failed", error="semgrep not installed — pip install semgrep")
+                results[idx] = StageResult(status="failed", error="semgrep not installed - pip install semgrep")
             return [r for r in results if r is not None]
         except subprocess.TimeoutExpired:
             self._cleanup_batch_dir(batch_dir)
@@ -162,7 +163,17 @@ class SemgrepScannerTool(BatchTool):
         for idx, entry in uncached_entries:
             findings = per_sample_findings.get(idx, [])
             findings_path = entry.sample_dir / "findings.json"
-            findings_path.write_text(json.dumps(findings, indent=2), encoding="utf-8")
+            fd, tmp = tempfile.mkstemp(dir=str(entry.sample_dir), suffix=".json")
+            try:
+                os.write(fd, json.dumps(findings, indent=2).encode("utf-8"))
+                os.close(fd)
+                os.replace(tmp, str(findings_path))
+            except OSError:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                self.log.debug("failed to write findings for %s", entry.sample_id)
             results[idx] = self._make_result(findings, min_findings, cached=False)
 
         self._cleanup_batch_dir(batch_dir)

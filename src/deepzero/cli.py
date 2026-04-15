@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import time
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import click
@@ -13,17 +16,19 @@ from rich.table import Table
 console = Console()
 
 
+# short name lookups for log formatting
+_LOG_PREFIX_MAP: MappingProxyType[str, str] = MappingProxyType({
+    "deepzero.runner": "engine",
+    "deepzero.pipeline": "pipeline",
+})
+
+
 class _ShortNameFormatter(logging.Formatter):
     # strips deepzero prefix to keep log lines short and scannable
 
-    _PREFIX_MAP = {
-        "deepzero.runner": "engine",
-        "deepzero.pipeline": "pipeline",
-    }
-
     def format(self, record: logging.LogRecord) -> str:
         name = record.name
-        short = self._PREFIX_MAP.get(name)
+        short = _LOG_PREFIX_MAP.get(name)
         if short is None:
             if name.startswith("deepzero.tool."):
                 short = name[len("deepzero.tool."):]
@@ -54,7 +59,6 @@ def _setup_logging(verbose: bool) -> None:
             logging.getLogger(lib).setLevel(logging.WARNING)
 
 def _load_env() -> None:
-    # load .env if python-dotenv is installed — not a hard dependency
     try:
         from dotenv import load_dotenv
         load_dotenv()
@@ -63,20 +67,12 @@ def _load_env() -> None:
 
 
 def _build_runner(pipeline_def: Any) -> tuple[Any, Any]:
-    # shared setup for run/resume — builds PipelineRunner and optional LLM provider
+    # shared setup for run/resume - builds PipelineRunner and optional LLM provider
     from deepzero.engine.runner import PipelineRunner
-    from deepzero.engine.stage import GlobalConfig
     from deepzero.engine.state import StateStore
     from deepzero.providers.llm import LLMProvider
 
     llm = LLMProvider(pipeline_def.model) if pipeline_def.model else None
-
-    global_config: GlobalConfig = {
-        "settings": pipeline_def.settings,
-        "tools": pipeline_def.tools,
-        "knowledge": pipeline_def.knowledge,
-        "model": pipeline_def.model,
-    }
 
     state_store = StateStore(pipeline_def.work_dir)
 
@@ -85,7 +81,7 @@ def _build_runner(pipeline_def: Any) -> tuple[Any, Any]:
         stages=pipeline_def.stages,
         state_store=state_store,
         pipeline_dir=pipeline_def.pipeline_dir,
-        global_config=global_config,
+        global_config=pipeline_def.to_global_config(),
         llm=llm,
         default_max_workers=pipeline_def.max_workers,
     )
@@ -331,7 +327,20 @@ stages:
   # tool types: map (1:1), reduce (N:1 ranking), batch (N:batch external)
 """
 
-    (pipeline_dir / "pipeline.yaml").write_text(yaml_content, encoding="utf-8")
+    target_path_yaml = pipeline_dir / "pipeline.yaml"
+    fd, tmp = tempfile.mkstemp(dir=str(pipeline_dir), suffix=".yaml")
+    try:
+        os.write(fd, yaml_content.encode("utf-8"))
+        os.close(fd)
+        os.replace(tmp, str(target_path_yaml))
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
     console.print(f"[green]pipeline scaffolded at {pipeline_dir}[/]")
     console.print(f"  edit {pipeline_dir / 'pipeline.yaml'} to configure your pipeline")
@@ -401,7 +410,7 @@ def interactive(model: str, work_dir: str, verbose: bool):
             history.append({"role": "assistant", "content": response})
             console.print(f"\n[bold cyan]deepzero>[/] {response}\n")
         except Exception as e:
-            console.print(f"[red]error: {e}[/]")
+            console.print(f"[red]llm error ({type(e).__name__}): {e}[/]")
 
 
 @main.command()
@@ -411,7 +420,7 @@ def interactive(model: str, work_dir: str, verbose: bool):
 def serve(host: str, port: int, work_dir: str):
     """start the rest api server"""
     if host not in ("127.0.0.1", "localhost", "::1"):
-        console.print(f"[bold yellow]⚠ binding to {host} — server will be accessible on the network[/]")
+        console.print(f"[bold yellow]⚠ binding to {host} - server will be accessible on the network[/]")
     console.print(f"[bold cyan]deepzero serve[/] - http://{host}:{port}")
     console.print(f"  work_dir: {work_dir}")
 
@@ -419,9 +428,9 @@ def serve(host: str, port: int, work_dir: str):
 
     try:
         import uvicorn
-    except ImportError:
+    except ImportError as exc:
         console.print("[red]uvicorn required: pip install deepzero[serve][/]")
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
 
     app = create_app(Path(work_dir))
     uvicorn.run(app, host=host, port=port)

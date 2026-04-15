@@ -59,7 +59,8 @@ class FileDiscovery(IngestTool):
         for f in files:
             try:
                 sha256 = hashlib.sha256(f.read_bytes()).hexdigest()
-            except OSError:
+            except OSError as e:
+                self.log.debug("skipping unreadable file %s: %s", f.name, e)
                 continue
 
             samples.append(Sample(

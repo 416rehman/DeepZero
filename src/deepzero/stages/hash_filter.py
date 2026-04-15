@@ -7,7 +7,7 @@ from deepzero.engine.stage import MapTool, StageContext, StageResult, StageSpec
 
 
 class HashExclude(MapTool):
-    # generic hash-based exclusion filter — skips samples whose hash matches a known set
+    # generic hash-based exclusion filter - skips samples whose hash matches a known set
 
     def __init__(self, spec: StageSpec):
         super().__init__(spec)

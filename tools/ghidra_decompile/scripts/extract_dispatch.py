@@ -125,10 +125,11 @@ def find_dispatch_assignment(decomp, driver_entry=None):
                 try:
                     for sub in called.getCalledFunctions(getMonitor()):
                         priority_funcs.append(sub)
-                except Exception:  # noqa: B110 — ghidra may fail to resolve callees in obfuscated code
+                except Exception as exc:
+                    print("ghidra warning: failed to resolve deeper callees in " + called.getName() + ":", str(exc))
                     continue
-        except Exception:  # noqa: B110 — failed to enumerate callees from driver entry
-            pass
+        except Exception as exc:
+            print("ghidra warning: failed to enumerate callees from driver entry:", str(exc))
 
     seen_addrs = set()
     for func in priority_funcs:
@@ -189,7 +190,7 @@ def extract_ioctl_codes(decompiled_c):
             if (code >> 16) > 0 and (code >> 16) < 0xFFFF:
                 codes.append(code)
         except ValueError:
-            pass
+            pass  # non-ioctl numeric constant, skip
 
     return sorted(set(codes))
 
@@ -200,7 +201,7 @@ def main():
         try:
             os.makedirs(output_dir)
         except OSError:
-            pass
+            pass  # output dir may already exist or be created by ghidra
 
     decomp = get_decompiler()
     result = {"success": False, "error": "", "driver_entry_c": "",
@@ -236,7 +237,8 @@ def main():
                     result["device_name"] = sv.strip('"').strip("u'")
                 elif "\\DosDevices\\" in sv:
                     result["symbolic_link"] = sv.strip('"').strip("u'")
-        except Exception:  # noqa: B110 — some data entries cannot be read as values
+        except Exception as exc:
+            print("ghidra warning: failed to read data entry:", str(exc))
             continue
 
     # find dispatch handler
@@ -283,8 +285,8 @@ def main():
                     if c:
                         subfuncs_c.append(c)
                         get_subfuncs(called, depth + 1)
-        except Exception:  # noqa: B110 — ghidra may fail to decompile or resolve calls
-            pass
+        except Exception as exc:
+            print("ghidra warning: failed to decompile or resolve calls:", str(exc))
 
     get_subfuncs(dispatch_func)
     
@@ -306,7 +308,7 @@ def main():
         try:
             os.makedirs(ioctls_dir)
         except OSError:
-            pass
+            pass  # may already exist
 
     for code in ioctl_codes:
         handler_info = {

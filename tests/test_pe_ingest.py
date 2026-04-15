@@ -6,7 +6,7 @@ import pytest
 
 from deepzero.engine.stage import StageSpec
 
-# pe_ingest requires pefile — tests skip if not installed
+# pe_ingest requires pefile - tests skip if not installed
 pefile = pytest.importorskip("pefile")
 
 from tools.pe_ingest.pe_ingest import PEIngest

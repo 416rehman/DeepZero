@@ -10,7 +10,7 @@ from typing import Any
 
 log = logging.getLogger("deepzero.state")
 
-# enforced on load — reject incompatible state from v1 runs
+# enforced on load - reject incompatible state from v1 runs
 STATE_VERSION = 2
 
 
@@ -46,7 +46,7 @@ class StageOutput:
     started_at: str = ""
     completed_at: str = ""
     artifacts: dict[str, str] = field(default_factory=dict)
-    # namespaced tool output — never merged across stages
+    # namespaced tool output - never merged across stages
     data: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 
@@ -206,7 +206,7 @@ class StateStore:
             data = json.loads(path.read_text(encoding="utf-8"))
             version = data.get("_version", 1)
             if version < STATE_VERSION:
-                log.warning("sample %s has v%d state, expected v%d — skipping", sample_id, version, STATE_VERSION)
+                log.warning("sample %s has v%d state, expected v%d - skipping", sample_id, version, STATE_VERSION)
                 return None
             return _sample_from_dict(data)
         except (json.JSONDecodeError, TypeError, KeyError) as e:
@@ -263,7 +263,7 @@ class StateStore:
 
     def save_pipeline_snapshot(self, yaml_content: str) -> None:
         path = self.work_dir / "pipeline.yaml"
-        path.write_text(yaml_content, encoding="utf-8")
+        self._atomic_write(path, yaml_content)
 
 
 def _now() -> str:

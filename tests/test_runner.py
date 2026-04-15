@@ -165,7 +165,7 @@ class TestPipelineRunner:
         store.save_run(run_state)
         
         ingest = MockIngest(self._make_samples(5))
-        # Limit 2 — stage config
+        # Limit 2 - stage config
         map_tool = MockMapTool(StageSpec(name="m", tool="mock", config={"limit": 2}, parallel=1))
         
         runner = PipelineRunner(ingest, [(map_tool.spec, map_tool)], store, tmp_path, {})

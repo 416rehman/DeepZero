@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from deepzero.engine.stage import MapTool, StageContext, StageResult
 
 
 class GenericCommand(MapTool):
-    # runs any external command as a pipeline stage — the universal escape hatch
+    # runs any external command as a pipeline stage - the universal escape hatch
 
     def process(self, ctx: StageContext) -> StageResult:
         run_template = ctx.config.get("run", "")
@@ -40,12 +41,14 @@ class GenericCommand(MapTool):
         self.log.info("running: %s", cmd_str[:200])
 
         try:
-            proc = subprocess.run(cmd_str, shell=True, capture_output=True, timeout=timeout, cwd=str(ctx.sample_dir))
+            import shlex
+            cmd_list = shlex.split(cmd_str)
+            proc = subprocess.run(cmd_list, shell=False, capture_output=True, timeout=timeout, cwd=str(ctx.sample_dir))
         except subprocess.TimeoutExpired:
             if on_error == "skip":
                 return StageResult(status="completed", verdict="skip", data={"command_error": "timeout"})
             return StageResult(status="failed", error=f"command timed out after {timeout}s")
-        except Exception as e:
+        except OSError as e:
             if on_error == "skip":
                 return StageResult(status="completed", verdict="skip", data={"command_error": str(e)})
             return StageResult(status="failed", error=f"command execution error: {e}")
@@ -53,7 +56,9 @@ class GenericCommand(MapTool):
         if stdout_to and proc.stdout:
             stdout_path = ctx.sample_dir / stdout_to
             stdout_path.parent.mkdir(parents=True, exist_ok=True)
-            stdout_path.write_bytes(proc.stdout)
+            tmp = stdout_path.with_suffix(".tmp")
+            tmp.write_bytes(proc.stdout)
+            os.replace(tmp, stdout_path)
 
         if proc.returncode != 0:
             stderr_text = proc.stderr.decode("utf-8", errors="replace")[:500]

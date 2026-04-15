@@ -11,7 +11,7 @@ class TestNamespacedState:
         s = SampleState(sample_id="x")
         s.mark_stage_completed("stage_a", data={"score": 10})
         s.mark_stage_completed("stage_b", data={"score": 99})
-        # data is namespaced — no collision
+        # data is namespaced - no collision
         assert s.history["stage_a"].data["score"] == 10
         assert s.history["stage_b"].data["score"] == 99
 

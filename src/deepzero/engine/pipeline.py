@@ -10,6 +10,7 @@ import yaml
 from deepzero.engine.stage import (
     BatchTool,
     FailurePolicy,
+    GlobalConfig,
     IngestTool,
     MapTool,
     ReduceTool,
@@ -66,6 +67,14 @@ class PipelineDefinition:
     def stage_names(self) -> list[str]:
         return [s.name for s in self.stage_specs]
 
+    def to_global_config(self) -> GlobalConfig:
+        return {
+            "settings": self.settings,
+            "tools": self.tools,
+            "knowledge": self.knowledge,
+            "model": self.model,
+        }
+
 
 def load_pipeline(
     pipeline_ref: str,
@@ -113,8 +122,8 @@ def load_pipeline(
         on_failure_raw = raw.get("on_failure", "skip")
         try:
             on_failure = FailurePolicy(on_failure_raw)
-        except ValueError:
-            raise ValueError(f"stage '{stage_name}': invalid on_failure '{on_failure_raw}', must be skip/retry/abort")
+        except ValueError as exc:
+            raise ValueError(f"stage '{stage_name}': invalid on_failure '{on_failure_raw}', must be skip/retry/abort") from exc
 
         spec = StageSpec(
             name=stage_name,
@@ -163,7 +172,7 @@ def _resolve_tools(pipeline: PipelineDefinition) -> None:
                     f"stage '{spec.name}' at position {i} is an IngestTool. "
                     f"only the first stage can be an ingest tool."
                 )
-            # accept any Tool subclass — MapTool, ReduceTool, or BatchTool
+            # accept any Tool subclass - MapTool, ReduceTool, or BatchTool
             if not isinstance(instance, (MapTool, ReduceTool, BatchTool)):
                 raise ValueError(
                     f"stage '{spec.name}' at position {i} must be a MapTool, ReduceTool, or BatchTool. "
@@ -246,7 +255,7 @@ def validate_pipeline(pipeline_ref: str) -> list[str]:
 
     try:
         pipeline = load_pipeline(pipeline_ref)
-    except Exception as e:
+    except (ValueError, FileNotFoundError, ImportError, yaml.YAMLError) as e:
         return [f"ERROR: {e}"]
 
     if not pipeline.model:
@@ -258,7 +267,8 @@ def validate_pipeline(pipeline_ref: str) -> list[str]:
             cls = resolve_tool_class(spec.tool)
             stype = getattr(cls, "tool_type", None)
             tool_types.append((spec.name, stype))
-        except Exception:
+        except (ValueError, FileNotFoundError, ImportError, AttributeError, TypeError) as exc:
+            log.debug("tool resolution failed for '%s': %s", spec.name, exc)
             tool_types.append((spec.name, None))
 
     from deepzero.engine.stage import ToolType

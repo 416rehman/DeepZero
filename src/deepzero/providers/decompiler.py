@@ -96,14 +96,14 @@ def run_ghidra_headless(
 
         log.info("ghidra analysis of %s completed in %.1fs", binary_path.name, elapsed)
 
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
         return {"success": False, "error": f"execution error: {e}"}
     finally:
         if proc is not None and proc.poll() is None:
             try:
                 proc.kill()
-            except OSError:
-                pass
+            except OSError as exc:
+                log.debug("cleanup kill skipped — pid already exited: %s", exc)
 
     if not cached_result.exists():
         contents = [f.name for f in output_dir.iterdir()] if output_dir.exists() else []

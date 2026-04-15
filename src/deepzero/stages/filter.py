@@ -6,7 +6,7 @@ from deepzero.engine.stage import MapTool, StageContext, StageResult, StageSpec
 
 
 class MetadataFilter(MapTool):
-    # generic metadata condition evaluator — checks field equality, min/max thresholds, dedup
+    # generic metadata condition evaluator - checks field equality, min/max thresholds, dedup
 
     def __init__(self, spec: StageSpec):
         super().__init__(spec)
@@ -29,19 +29,19 @@ class MetadataFilter(MapTool):
         # min thresholds
         for key, value in config.items():
             if key.startswith("min_"):
-                field = key[4:]
-                actual = flat.get(field, 0)
+                field_name = key[4:]
+                actual = flat.get(field_name, 0)
                 if isinstance(actual, (int, float)) and actual < value:
-                    reason = f"filter: {field}={actual} < min {value}"
+                    reason = f"filter: {field_name}={actual} < min {value}"
                     return StageResult(status="completed", verdict="skip", data={"reject_reason": reason})
 
         # max thresholds
         for key, value in config.items():
             if key.startswith("max_"):
-                field = key[4:]
-                actual = flat.get(field, 0)
+                field_name = key[4:]
+                actual = flat.get(field_name, 0)
                 if isinstance(actual, (int, float)) and actual > value:
-                    reason = f"filter: {field}={actual} > max {value}"
+                    reason = f"filter: {field_name}={actual} > max {value}"
                     return StageResult(status="completed", verdict="skip", data={"reject_reason": reason})
 
         # dedup on a data field
@@ -61,7 +61,7 @@ class MetadataFilter(MapTool):
 
     def _flatten_history(self, ctx: StageContext) -> dict[str, Any]:
         # merge all upstream stage data into one flat dict for backward-compatible lookups
-        # later stages overwrite earlier ones if keys collide — this is intentional
+        # later stages overwrite earlier ones if keys collide - this is intentional
         flat: dict[str, Any] = {}
         for output in ctx.history.values():
             flat.update(output.data)

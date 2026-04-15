@@ -12,7 +12,7 @@ class PEIngest(IngestTool):
     walks the target directory, parses PE headers, extracts import tables,
     and computes metadata used by downstream filter/analysis tools.
 
-    not tied to any specific corpus layout — works with any directory of PE files.
+    not tied to any specific corpus layout - works with any directory of PE files.
 
     config:
       extensions: list of file extensions to scan (default [".sys"])
@@ -127,7 +127,8 @@ class PEIngest(IngestTool):
 
         try:
             pe = pefile.PE(data=data, fast_load=True)
-        except Exception:
+        except (OSError, ValueError, AttributeError) as exc:
+            self.log.debug("pe parse failed: %s", exc)
             return {"is_valid_pe": False}
 
         subsys = pe.OPTIONAL_HEADER.Subsystem
@@ -153,7 +154,7 @@ class PEIngest(IngestTool):
                 pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"],
                 pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_SECURITY"],
             ])
-        except Exception as exc:  # noqa: B110 — pe parsing can fail in many ways on malformed files
+        except (OSError, AttributeError, ValueError) as exc:
             self.log.debug("pe data directory parse error: %s", exc)
 
         imported_functions = []
@@ -226,7 +227,7 @@ class PEIngest(IngestTool):
 
         try:
             meta["imphash"] = pe.get_imphash() or ""
-        except (AttributeError, ValueError, Exception) as exc:  # noqa: B110 — pefile imphash can fail on malformed imports
+        except (AttributeError, ValueError, IndexError) as exc:
             self.log.debug("imphash extraction failed: %s", exc)
             meta["imphash"] = ""
 

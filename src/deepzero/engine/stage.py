@@ -12,7 +12,7 @@ from deepzero.engine.state import SampleState, StageOutput
 
 @runtime_checkable
 class LLMProtocol(Protocol):
-    # contract for any LLM provider — at minimum must support complete()
+    # contract for any LLM provider - at minimum must support complete()
     def complete(
         self,
         messages: list[dict[str, str]],
@@ -25,7 +25,7 @@ class LLMProtocol(Protocol):
 
 
 class GlobalConfig(TypedDict, total=False):
-    # typed config passed to stages — replaces dict[str, Any]
+    # typed config passed to stages - replaces dict[str, Any]
     settings: dict[str, Any]
     tools: dict[str, Any]
     knowledge: dict[str, Any]
@@ -53,7 +53,7 @@ class Sample:
     source_path: Path
     # display name
     filename: str
-    # initial data from discovery — goes into history["discover"].data
+    # initial data from discovery - goes into history["discover"].data
     data: dict[str, Any] = field(default_factory=dict)
 
 
@@ -63,7 +63,7 @@ class StageContext:
     sample_path: Path
     # working directory for this sample (work/<pipeline>/samples/<id>/)
     sample_dir: Path
-    # full provenance chain — history[stage_name].data for upstream access
+    # full provenance chain - history[stage_name].data for upstream access
     history: dict[str, StageOutput]
     # this stage's config block from the pipeline yaml
     config: dict[str, Any]
@@ -71,7 +71,7 @@ class StageContext:
     pipeline_dir: Path
     # global pipeline config (settings, tools, knowledge)
     global_config: GlobalConfig
-    # llm provider if configured — must implement LLMProtocol
+    # llm provider if configured - must implement LLMProtocol
     llm: LLMProtocol | None
     # logger for this stage
     log: logging.Logger = field(default_factory=lambda: logging.getLogger("deepzero.stage"))
@@ -84,7 +84,7 @@ class StageResult:
     verdict: Literal["continue", "skip"] = "continue"
     # name -> relative path of files this stage produced
     artifacts: dict[str, str] = field(default_factory=dict)
-    # namespaced output — written to history[stage_name].data, never merged
+    # namespaced output - written to history[stage_name].data, never merged
     data: dict[str, Any] = field(default_factory=dict)
     # if failed, why
     error: str | None = None
@@ -165,7 +165,7 @@ class IngestTool(Tool):
 
 
 class MapTool(Tool):
-    # processes one sample at a time — engine fans out with ThreadPoolExecutor
+    # processes one sample at a time - engine fans out with ThreadPoolExecutor
     tool_type = ToolType.MAP
 
     @abstractmethod
@@ -178,7 +178,7 @@ class MapTool(Tool):
 
 
 class ReduceTool(Tool):
-    # sees ALL active samples at once — the synchronization barrier
+    # sees ALL active samples at once - the synchronization barrier
     tool_type = ToolType.REDUCE
 
     @abstractmethod

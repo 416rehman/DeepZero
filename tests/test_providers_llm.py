@@ -93,7 +93,7 @@ class TestLLMProviderComplete:
         with pytest.raises(RuntimeError, match="token limit exceeded"):
             provider.complete([{"role": "user", "content": "hi"}], max_retries=3)
 
-        # should not have retried — only 1 call
+        # should not have retried - only 1 call
         assert mock_litellm.completion.call_count == 1
 
     @patch("time.sleep")

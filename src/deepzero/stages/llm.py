@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -8,9 +10,11 @@ import jinja2
 
 from deepzero.engine.stage import MapTool, StageContext, StageResult
 
+_log = logging.getLogger("deepzero.stages.llm")
+
 
 class GenericLLM(MapTool):
-    # generic LLM assessment — sends context to an LLM via a jinja2 prompt template
+    # generic LLM assessment - sends context to an LLM via a jinja2 prompt template
 
     def process(self, ctx: StageContext) -> StageResult:
         if ctx.llm is None:
@@ -42,7 +46,9 @@ class GenericLLM(MapTool):
             backoff_decay=backoff_config.get("decay", 0.7),
         )
 
-        output_path.write_text(response, encoding="utf-8")
+        tmp = output_path.with_suffix(".tmp")
+        tmp.write_text(response, encoding="utf-8")
+        os.replace(tmp, output_path)
         self.log.info("response written to %s (%d chars)", output_file, len(response))
 
         return self._make_result(response, output_file, ctx.config)
@@ -75,7 +81,7 @@ class GenericLLM(MapTool):
             env = jinja2.Environment(
                 loader=jinja2.FileSystemLoader(str(template_path.parent)),
                 undefined=jinja2.Undefined,
-                autoescape=jinja2.select_autoescape(default=False, default_for_string=False),
+                autoescape=jinja2.select_autoescape(),
             )
             template = env.from_string(raw)
             return template.render(**template_vars)
@@ -106,8 +112,8 @@ class GenericLLM(MapTool):
             if f.suffix == ".json":
                 try:
                     template_vars[key] = json.loads(f.read_text(encoding="utf-8"))
-                except (json.JSONDecodeError, OSError):
-                    pass
+                except (json.JSONDecodeError, OSError) as exc:
+                    _log.debug("skipping unreadable json artifact %s: %s", f.name, exc)
             elif f.suffix in (".c", ".h", ".txt", ".md", ".py", ".yaml", ".yml"):
                 try:
                     content = f.read_text(encoding="utf-8", errors="replace")
@@ -116,8 +122,8 @@ class GenericLLM(MapTool):
                     if len(content) > char_budget:
                         content = content[:char_budget] + f"\n... [truncated: {len(content)} -> {char_budget} chars]"
                     template_vars[key] = content
-                except OSError:
-                    pass
+                except OSError as exc:
+                    _log.debug("skipping unreadable text artifact %s: %s", f.name, exc)
 
         return template_vars
 

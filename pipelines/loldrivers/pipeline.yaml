@@ -83,7 +83,7 @@ stages:
       keep_top: 10
       sort_order: desc
 
-  # llm deep analysis — only the top 10 survivors
+  # llm deep analysis - only the top 10 survivors
   - name: assess
     tool: generic_llm
     parallel: 2

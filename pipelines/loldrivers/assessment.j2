@@ -1,7 +1,7 @@
 You are an expert vulnerability researcher specializing in Windows kernel driver exploitation.
 Analyze the following decompiled code for driver: {{ sample_name }}.
 
-CRITICAL ANALYSIS RULES — read these before you begin:
+CRITICAL ANALYSIS RULES - read these before you begin:
 
 1. PROVE USER CONTROLLABILITY: for every value that reaches a dangerous sink
 (memcpy size, MmMapIoSpace address, pointer dereference target), you MUST trace it back
@@ -15,7 +15,7 @@ you can show a separate IOCTL that lets the user SET that value.
 but the pointer itself was allocated by the driver (ExAllocatePool, MmAllocatePagesForMdl,
 IoAllocateMdl) and never set by user input, this is NOT an arbitrary write
    - HID feature report buffers: drivers like ASUS, Synaptics, etc. write command bytes
-into their own HID report buffers — two user bytes going into a driver-allocated buffer
+into their own HID report buffers - two user bytes going into a driver-allocated buffer
 is normal HID protocol, not a vulnerability
    - hardware-gated code paths: if the dangerous operation is behind a check on MMIO
 registers (READ_REGISTER_UCHAR), SMI results (out(port, val) return values), or
@@ -23,9 +23,9 @@ device_extension fields that are only set during PnP device start (EvtDeviceAdd)
 then the vulnerability requires physical hardware and is NOT exploitable without it
    - PnP-dependent devices: if the device name contains a format specifier (%d, %s)
 or the symbolic_link is empty/partial, the device object only exists when hardware is
-enumerated — mark SAFE
+enumerated - mark SAFE
    - Ghidra decompilation artifacts: 'unaff_ESI', 'unaff_EDI' etc. are registers that
-Ghidra could not resolve — they are NOT user-controlled inputs, they are typically
+Ghidra could not resolve - they are NOT user-controlled inputs, they are typically
 return values from hardware (SMI handlers, CPUID, etc.)
    - speculative/assumed state: do NOT assume device extension fields have convenient
 initial values. if the exploit depends on 'assuming the initial state is X', it is

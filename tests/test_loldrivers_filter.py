@@ -96,7 +96,7 @@ class TestLoldriversFilterProcess:
     def test_passes_everything_without_db(self, tmp_path):
         spec = StageSpec(name="loldrivers", tool="loldrivers_filter")
         flt = LoldriversFilter(spec)
-        # empty known_hashes — db not loaded
+        # empty known_hashes - db not loaded
 
         ctx = self._make_ctx(tmp_path, sha256="anything")
         result = flt.process(ctx)

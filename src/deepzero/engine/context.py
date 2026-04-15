@@ -23,7 +23,7 @@ def generate_context(sample_dir: Path, state: SampleState) -> None:
             if output.error:
                 lines.append(f"- error: {output.error}")
             for key, value in output.data.items():
-                # keep it readable — truncate long values
+                # keep it readable - truncate long values
                 val_str = str(value)
                 if len(val_str) > 200:
                     val_str = val_str[:200] + "..."
@@ -33,7 +33,7 @@ def generate_context(sample_dir: Path, state: SampleState) -> None:
     # list artifact files that exist on disk
     artifacts = []
     for output in state.history.values():
-        for label, rel_path in output.artifacts.items():
+        for rel_path in output.artifacts.values():
             full = sample_dir / rel_path
             if full.exists():
                 artifacts.append(rel_path)

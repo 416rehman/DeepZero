@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "deepzero"
+version = "0.2.0"
+description = "agentic pipeline for automated vulnerability research on kernel drivers"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.0",
+]
+
+[project.optional-dependencies]
+llm = ["litellm>=1.0"]
+serve = ["starlette>=0.27", "uvicorn>=0.22"]
+pe = ["pefile>=2023.2"]
+full = ["deepzero[llm,serve,pe]"]
+dev = ["pytest>=7.0", "deepzero[full]"]
+
+[project.scripts]
+deepzero = "deepzero.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.bandit]
+skips = ["B404", "B602", "B603", "B607"]

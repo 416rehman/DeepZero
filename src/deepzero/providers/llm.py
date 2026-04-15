@@ -23,10 +23,10 @@ class LLMProvider:
             # suppress litellm's noisy logging and traceback spam
             litellm.suppress_debug_info = True
             logging.getLogger("litellm").setLevel(logging.CRITICAL)
-        except ImportError:
+        except ImportError as exc:
             raise ImportError(
                 "litellm is required for LLM support. install with: pip install litellm"
-            )
+            ) from exc
 
     def complete(
         self,

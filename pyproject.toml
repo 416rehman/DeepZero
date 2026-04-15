@@ -30,7 +30,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [tool.bandit]
 skips = ["B404", "B602", "B603", "B607"]

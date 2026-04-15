@@ -220,46 +220,55 @@ class PipelineRunner:
         from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
         import deepzero.cli
         
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeRemainingColumn(),
-            console=deepzero.cli.console,
-            transient=True,
-        ) as progress:
-            task = progress.add_task(f"[cyan]running {spec.name}[/]", total=len(pending))
+        # Mute ALL deepzero INFO logs temporarily so they don't break the progress bar UI buffer
+        dz_logger = logging.getLogger("deepzero")
+        old_level = dz_logger.level
+        dz_logger.setLevel(logging.WARNING)
 
-            if parallelism <= 1:
-                for idx, state in enumerate(pending):
-                    if self._shutdown_event.is_set():
-                        break
-                    self._process_one_map(state, spec, tool)
-                    outcome = self._classify_outcome(state, spec.name)
-                    stage_stats[outcome] += 1
-                    progress.advance(task)
-            else:
-                max_workers = min(parallelism, len(pending))
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    future_map = {
-                        executor.submit(self._process_one_map, s, spec, tool): s
-                        for s in pending
-                    }
-                    for future in concurrent.futures.as_completed(future_map):
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TextColumn("[cyan]{task.completed}/{task.total} completed"),
+                TimeRemainingColumn(),
+                console=deepzero.cli.console,
+                transient=True,
+            ) as progress:
+                task = progress.add_task(f"[cyan]running {spec.name}[/]", total=len(pending))
+
+                if parallelism <= 1:
+                    for idx, state in enumerate(pending):
                         if self._shutdown_event.is_set():
-                            executor.shutdown(wait=False, cancel_futures=True)
                             break
-                        state = future_map[future]
-                        exc = future.exception()
-                        if exc:
-                            log.error("  %s unhandled error: %s", state.filename, exc)
-                            state.mark_stage_failed(spec.name, f"{type(exc).__name__}: {exc}")
-                            self.state_store.save_sample(state)
-
+                        self._process_one_map(state, spec, tool)
                         outcome = self._classify_outcome(state, spec.name)
                         stage_stats[outcome] += 1
                         progress.advance(task)
+                else:
+                    max_workers = min(parallelism, len(pending))
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        future_map = {
+                            executor.submit(self._process_one_map, s, spec, tool): s
+                            for s in pending
+                        }
+                        for future in concurrent.futures.as_completed(future_map):
+                            if self._shutdown_event.is_set():
+                                executor.shutdown(wait=False, cancel_futures=True)
+                                break
+                            state = future_map[future]
+                            exc = future.exception()
+                            if exc:
+                                log.error("  %s unhandled error: %s", state.filename, exc)
+                                state.mark_stage_failed(spec.name, f"{type(exc).__name__}: {exc}")
+                                self.state_store.save_sample(state)
+
+                            outcome = self._classify_outcome(state, spec.name)
+                            stage_stats[outcome] += 1
+                            progress.advance(task)
+        finally:
+            dz_logger.setLevel(old_level)
 
     def _process_one_map(
         self,

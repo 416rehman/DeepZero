@@ -485,15 +485,27 @@ def _print_stats(run_state, manifest: list[dict[str, Any]] | None = None) -> Non
         if i == 0:
             # first stage is always ingest, stats are held in discovered
             discovered = run_state.stats.get("discovered", 0)
-            table.add_row(stage_name, str(discovered), "0", "0")
+            table.add_row(
+                stage_name, 
+                str(discovered) if discovered else "[dim]·[/]", 
+                "[dim]·[/]", 
+                "[dim]·[/]"
+            )
         else:
             counts = per_stage.get(stage_name, {})
-            table.add_row(
-                stage_name,
-                str(counts.get("completed", 0)),
-                str(counts.get("filtered", 0)),
-                str(counts.get("failed", 0)),
-            )
+            if not counts:
+                # stage completely unstarted
+                table.add_row(f"[dim]{stage_name}[/]", "[dim]·[/]", "[dim]·[/]", "[dim]·[/]")
+            else:
+                p = counts.get("completed", 0)
+                f = counts.get("filtered", 0)
+                err = counts.get("failed", 0)
+                table.add_row(
+                    stage_name,
+                    str(p) if p else "[dim]·[/]",
+                    str(f) if f else "[dim]·[/]",
+                    str(err) if err else "[dim]·[/]",
+                )
 
     console.print(table)
 

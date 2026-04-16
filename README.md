@@ -1,88 +1,119 @@
-# DeepZero
+<div align="center">
+  <h1>DeepZero</h1>
+  <p><b>Agentic Vulnerability Research & Binary Analysis at Scale</b></p>
 
-> Configurable, agentic vulnerability research pipeline
+  <p>
+    <a href="https://github.com/416rehman/DeepZero/actions"><img src="https://img.shields.io/github/actions/workflow/status/416rehman/DeepZero/ci.yml?branch=main" alt="Build Status"></a>
+    <a href="https://pypi.org/project/deepzero/"><img src="https://img.shields.io/pypi/v/deepzero" alt="PyPI - Version"></a>
+    <a href="https://pypi.org/project/deepzero/"><img src="https://img.shields.io/pypi/pyversions/deepzero" alt="PyPI - Python Version"></a>
+    <a href="https://github.com/416rehman/DeepZero/blob/main/LICENSE"><img src="https://img.shields.io/github/license/416rehman/DeepZero" alt="License"></a>
+  </p>
+</div>
 
-DeepZero is an extensible, breadth-first framework for automated binary analysis. It orchestrates configurable processor chains-file discovery, GHIDRA decompilation, Semgrep pattern matching, and LLM-powered context assessment-against any binary target. 
+---
 
-Powered by a **File-Ledger Engine**, DeepZero was built to handle massive uncurated corpora (e.g., thousands of Windows kernel drivers) seamlessly through a robust file-based database, fast resume capabilities, and atomic synchronization barriers.
+**DeepZero** is a highly parallelized, breadth-first pipeline framework designed to automate massive-scale binary analysis. By flawlessly orchestrating tools like Headless Ghidra and Semgrep alongside modern Foundation Models (via `litellm`), DeepZero enables you to construct complex, declarative vulnerability research workflows capable of traversing thousands of binaries simultaneously.
 
-## Key Features
+Unlike traditional ad-hoc scripts, DeepZero features an **Agentic File-Ledger Engine**—a zero-database architecture that writes deterministic state natively to the filesystem. If a pipeline parsing 10,000 Windows kernel drivers is killed halfway through, DeepZero can resume instantly with zero overhead, automatically compiling deep contextual histories into `context.md` files for final LLM analysis.
 
-- **Breadth-First Engine** - executes highly parallelized Map/Reduce/Bulk primitives across large corpora in lockstep.
-- **Agentic File-Ledger (File-DB)** - zero dependencies; the entire pipeline state is cleanly serialized to `work/` with a global `run_manifest.json`, namespaced processor history, and LLM-ready `context.md` files.
-- **Fast, Idempotent Resume** - process a 12,000-file corpus, kill the pipeline, and instantly resume it with zero re-ingestion overhead. Completed states are skipped automatically.
-- **Pipeline-as-YAML** - hook up built-in processors or custom Python classes rapidly without modifying the core engine.
-- **Hardened for Scale** - atomic file writes with EDR/AV evasion retries, `ProcessGroupKills` for runaway GHIDRA JVMs, process isolation, and poison pill exception handling.
-- **Bulk Processing** - massive performance boosts using `os.link` temp-copy patterns to scan 500 decompiled drivers instantly in a single Semgrep invocation.
-- **Any LLM Provider** - completely abstracted via LiteLLM.
+## 🔥 Key Highlights
 
-## Quick Start
+* **Declarative Pipelines**: Build massive multi-stage data flows entirely in YAML. Effortlessly stack parsing, filtering, decompilation, and LLM evaluation stages with zero glue code.
+* **Idempotent Resurrection**: Abort, kill, and restart. DeepZero picks up exactly where it left off on a per-binary basis. 
+* **Zero-DB File Ledger**: Transparent processing. Every processor writes localized JSON chunks to a pipeline `work/` directory, naturally formatting data for LLM context windows.
+* **Massive Bulk Execution**: Instantly scan hundreds of Ghidra-decompiled outputs with a single Semgrep invocation using high-performance hardlink abstractions.
+* **Model Agnostic**: With built-in LiteLLM integration, route complex security contexts to `gpt-4o`, `gemini-2.5-pro`, or local Oollama instances transparently.
+
+---
+
+## ⚡ The Architecture 
+
+DeepZero forces processing stages into polymorphic primitives, executing horizontally across entire datasets before advancing to the next stage. This ensures you never bottleneck on a single runaway decompiler process.
+
+* **Ingest** (`1:N`): Crawl directories, parse formats, extract headers (e.g., `pe_ingest`).
+* **Map** (`1:1`): Apply filters, execute parallel de-compilation (e.g., `ghidra_decompile`).
+* **Bulk** (`N:Batch`): Route hundreds of outputs through external batch scanners (e.g., `semgrep_scanner`).
+* **Reduce** (`N:1`): Erect synchronization barriers to rank or truncate the active corpus (e.g., `top_k`).
+
+---
+
+## 📦 Installation
+
+DeepZero requires **Python 3.11+**.
 
 ```bash
-# install via pip
-pip install deepzero
+# Clone the repository
+git clone https://github.com/416rehman/DeepZero.git
+cd DeepZero
 
-# run the loldrivers pipeline against your local directory
-deepzero run ./drivers/ --pipeline loldrivers --model vertex_ai/gemini-2.5-pro
-
-# check status of the run
-deepzero status -p loldrivers
-
-# resume after interruption (instantly skips everything already cached)
-deepzero resume -p loldrivers
+# Install with all dependencies (PE parsing, LLM support, CLI)
+pip install -e .[full]
 ```
 
-## Architecture: Polymorphic Processor Primitives
+## 🚀 Quick Start: Hunting Vulnerable Drivers
 
-DeepZero enforces strict processor interfaces that allow for powerful pipeline semantics:
+DeepZero includes highly capable pre-configured pipelines. Let's run the `loldrivers` analysis pipeline against a local folder of `.sys` drivers:
 
-| Primitive | Operation | Description |
-|-----------|-----------|-------------|
-| **IngestProcessor** | 1:N | Discovery phase. Emits `Sample` instances (e.g., PE parsing & hash extraction). |
-| **MapProcessor** | 1:1 | Parallelized 1:1 worker (filters, decompilers, generic commands, LLM renderers). |
-| **BulkMapProcessor** | N:Bulk | Evaluates all active samples via a single external invocation (e.g., Semgrep). |
-| **ReduceProcessor**| N:K | Synchronization barrier used for sorting or truncating the corpus (e.g., `top_k` ranking). |
+```bash
+export GEMINI_API_KEY="your-api-key-here"
 
-## File Database Structure
-
-No heavy databases needed. Everything is transparent to the user and accessible to LLM agents:
-
-```
-work/<pipeline_name>/
-├── run_manifest.json          # Global fast-index of current active/skipped/failed samples
-└── samples/
-    └── <sample_id>/           # Safe, truncated SHA256 (e.g. 132fd1b8)
-        ├── state.json         # Strict namespaced execution ledger (history.<processor_name>.data)
-        ├── context.md         # Auto-generated sync barrier artifact for the LLM
-        └── decompiled/        # Work-in-progress artifacts cleanly isolated
+deepzero run ./drivers/ \
+  --pipeline pipelines/loldrivers/pipeline.yaml \
+  --model vertex_ai/gemini-2.5-pro
 ```
 
-## Built-in Processors
+### Checking Status & Interactive Mode
 
-Available natively off-the-shelf and addressable by bare names in `pipeline.yaml`:
-- `file_discovery` - Fast local filesystem crawler.
-- `metadata_filter` - Declarative thresholding, checking, and deduping.
-- `hash_exclude` - Filter by list or file.
-- `generic_command` - Universal shell escape hatch.
-- `ghidra_decompile` - Headless GHIDRA integration with extraction script support.
-- `semgrep_scanner` - High-performance batched symlink/hardlink rule runner.
-- `top_k` - Sort active corpus by any nested `stage.metric` and truncate losers.
-- `generic_llm` - Jinja2-rendered structured context builder for LiteLLM.
-- `sort` - Sorting mechanism used alongside Reduce primitives.
+Because DeepZero writes state purely to the filesystem ledger, you can check the status of live runs or drop into an LLM-backed REPL to ask questions about your findings:
 
-## CLI Commands
+```bash
+# Get live progress and success/failure statistics
+deepzero status -w ./work/
 
-```
-deepzero run <target>       - run a pipeline
-deepzero resume             - resume an interrupted/killed run
-deepzero status             - show run progress and sample outcomes
-deepzero interactive        - LLM-backed analysis REPL
-deepzero serve              - start REST API (requires deepzero[serve])
-deepzero validate <path>    - syntax validity check for pipelines
-deepzero list-processors    - list registered Python processors
-deepzero init <name>        - scaffold a new pipeline
+# Drop into a REPL that has access to the full pipeline context
+deepzero interactive -w ./work/ -m openai/gpt-4o
 ```
 
-## License
+---
 
-MIT
+## 🛠️ Building Your Own Pipeline
+
+Pipelines are natively defined in YAML. The built-in framework supports resolving external custom Python classes automatically from your `processors/` directory.
+
+### Example: Basic Vulnerability Funnel
+```yaml
+name: custom-vr-funnel
+settings:
+  work_dir: work
+  max_workers: 4
+
+stages:
+  # 1. Expand the target dataset
+  - name: discover
+    processor: pe_ingest/pe_ingest.py
+    config: { extensions: [".exe", ".dll"] }
+
+  # 2. Decompile parallelized via GHIDRA
+  - name: decompile
+    processor: ghidra_decompile/ghidra_decompile.py
+    timeout: 600
+
+  # 3. Assess with AI
+  - name: final_assessment
+    processor: generic_llm
+    config:
+      prompt: pipelines/prompts/assessment.j2
+```
+
+## 🎯 Third-Party Dependencies
+
+DeepZero acts as an orchestrator. Depending on the processors you utilize in your pipelines, ensure the following are available in your environment:
+* **Headless Ghidra**: `GHIDRA_INSTALL_DIR` must point to a valid unzipped Ghidra release.
+* **Semgrep**: Required on your system `PATH` if using `semgrep_scanner.py`.
+
+## 🤝 Contributing
+
+We welcome community pull requests! If you're adapting DeepZero for new architectures, writing custom processors (like IDA Pro integrations), or optimizing the File-Ledger overhead, please feel free to fork and open a PR. 
+
+## 📄 License
+Released under the [MIT License](LICENSE).

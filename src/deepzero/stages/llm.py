@@ -11,17 +11,15 @@ import jinja2
 from deepzero.engine.stage import (
     MapProcessor,
     ProcessorContext,
-    ProcessorResult,
     ProcessorEntry,
+    ProcessorResult,
 )
 
 _log = logging.getLogger("deepzero.stages.llm")
 
 
 class GenericLLM(MapProcessor):
-    description = (
-        "generic LLM assessment - sends context to an LLM via a jinja2 prompt template"
-    )
+    description = "generic LLM assessment - sends context to an LLM via a jinja2 prompt template"
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         errors = []
@@ -50,9 +48,7 @@ class GenericLLM(MapProcessor):
                             f"LLM backend '{model}' missing credentials in environment. Need: {missing_keys}"
                         )
             except ImportError:
-                errors.append(
-                    "LLM configured, but 'litellm' framework is not installed"
-                )
+                errors.append("LLM configured, but 'litellm' framework is not installed")
 
         return errors
 
@@ -107,9 +103,7 @@ class GenericLLM(MapProcessor):
             data=data,
         )
 
-    def _render_prompt(
-        self, prompt_ref: str, ctx: ProcessorContext, entry: ProcessorEntry
-    ) -> str:
+    def _render_prompt(self, prompt_ref: str, ctx: ProcessorContext, entry: ProcessorEntry) -> str:
         template_path = self._resolve_template(prompt_ref, ctx)
 
         if template_path is not None:
@@ -126,13 +120,9 @@ class GenericLLM(MapProcessor):
 
         return prompt_ref
 
-    def _build_template_vars(
-        self, ctx: ProcessorContext, entry: ProcessorEntry
-    ) -> dict[str, Any]:
+    def _build_template_vars(self, ctx: ProcessorContext, entry: ProcessorEntry) -> dict[str, Any]:
         template_vars: dict[str, Any] = {
-            "sample_name": entry.upstream_data(
-                "discover", "filename", entry.source_path.name
-            ),
+            "sample_name": entry.upstream_data("discover", "filename", entry.source_path.name),
             "sample_path": str(entry.source_path),
             "history": {name: output.data for name, output in entry.history.items()},
             "config": self.config,

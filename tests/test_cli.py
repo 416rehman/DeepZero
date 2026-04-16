@@ -42,10 +42,7 @@ class TestListToolsCommand:
         result = runner.invoke(main, ["list-processors"])
         assert result.exit_code == 0
         # should show registered tools header
-        assert (
-            "registered tools" in result.output.lower()
-            or "name" in result.output.lower()
-        )
+        assert "registered tools" in result.output.lower() or "name" in result.output.lower()
 
 
 class TestInitCommand:

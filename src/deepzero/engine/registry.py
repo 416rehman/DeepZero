@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import sys
 from pathlib import Path
 from typing import Any
-import sys
-
 
 _PROCESSOR_REGISTRY: dict[str, type[Any]] = {}
 
@@ -42,11 +41,11 @@ def resolve_processor_class(processor_ref: str) -> type[Any]:
 
 def _get_base_classes() -> tuple:
     from deepzero.engine.stage import (
-        Processor,
+        BulkMapProcessor,
         IngestProcessor,
         MapProcessor,
+        Processor,
         ReduceProcessor,
-        BulkMapProcessor,
     )
 
     return Processor, IngestProcessor, MapProcessor, ReduceProcessor, BulkMapProcessor
@@ -67,8 +66,7 @@ def _resolve_from_processors_dir(processor_ref: str) -> type[Any]:
 
     if not abs_path.exists():
         raise FileNotFoundError(
-            f"processor not found: {abs_path} "
-            f"(resolved '{processor_ref}' relative to processors/)"
+            f"processor not found: {abs_path} (resolved '{processor_ref}' relative to processors/)"
         )
 
     if abs_path.is_file():
@@ -90,9 +88,7 @@ def _resolve_from_processors_dir(processor_ref: str) -> type[Any]:
 def _load_specific_class(file_path: Path, class_name: str) -> type[Any]:
     Processor = _get_base_classes()[0]
 
-    spec = importlib.util.spec_from_file_location(
-        f"deepzero.custom.{file_path.stem}", file_path
-    )
+    spec = importlib.util.spec_from_file_location(f"deepzero.custom.{file_path.stem}", file_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load processor from {file_path}")
 
@@ -115,9 +111,7 @@ def _load_processor_from_file(file_path: Path) -> type[Any] | None:
         _get_base_classes()
     )
 
-    spec = importlib.util.spec_from_file_location(
-        f"deepzero.custom.{file_path.stem}", file_path
-    )
+    spec = importlib.util.spec_from_file_location(f"deepzero.custom.{file_path.stem}", file_path)
     if spec is None or spec.loader is None:
         return None
 
@@ -127,11 +121,7 @@ def _load_processor_from_file(file_path: Path) -> type[Any] | None:
 
     for attr_name in dir(module):
         attr = getattr(module, attr_name)
-        if (
-            isinstance(attr, type)
-            and issubclass(attr, Processor)
-            and attr is not Processor
-        ):
+        if isinstance(attr, type) and issubclass(attr, Processor) and attr is not Processor:
             if any(
                 attr is base
                 for base in (
@@ -156,8 +146,6 @@ def _resolve_from_dotted(processor_ref: str) -> type[Any]:
     if cls is None:
         raise AttributeError(f"module '{module_path}' has no attribute '{class_name}'")
     if not (isinstance(cls, type) and issubclass(cls, Processor)):
-        raise TypeError(
-            f"'{class_name}' in '{module_path}' is not a Processor subclass"
-        )
+        raise TypeError(f"'{class_name}' in '{module_path}' is not a Processor subclass")
 
     return cls

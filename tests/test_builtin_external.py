@@ -14,9 +14,7 @@ class TestGenericCommand:
         sample_dir.mkdir(parents=True)
 
         history = {"discover": StageOutput(status="completed", data={"sha256": "abc"})}
-        ctx = ProcessorContext(
-            pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm")
-        )
+        ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm"))
         from deepzero.engine.stage import ProcessorEntry
 
         try:
@@ -81,9 +79,7 @@ class TestGenericCommand:
         assert result.data["command_exit_code"] == 0
 
     def test_command_failure(self, tmp_path, monkeypatch):
-        spec = StageSpec(
-            name="cmd", processor="generic_command", config={"run": "false"}
-        )
+        spec = StageSpec(name="cmd", processor="generic_command", config={"run": "false"})
         processor = GenericCommand(spec)
         ctx, entry = self._make_ctx(tmp_path, spec.config)
 

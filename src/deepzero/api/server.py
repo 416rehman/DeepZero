@@ -28,9 +28,7 @@ def create_app(work_dir: Path):
         from starlette.responses import JSONResponse
         from starlette.routing import Route
     except ImportError as exc:
-        raise ImportError(
-            "starlette required for serve mode: pip install deepzero[serve]"
-        ) from exc
+        raise ImportError("starlette required for serve mode: pip install deepzero[serve]") from exc
 
     from deepzero.engine.state import StateStore
 
@@ -101,9 +99,7 @@ def create_app(work_dir: Path):
         state = await _run_sync(store.load_sample, sample_id)
 
         if state is None:
-            return JSONResponse(
-                {"error": f"sample {sample_id} not found"}, status_code=404
-            )
+            return JSONResponse({"error": f"sample {sample_id} not found"}, status_code=404)
 
         from deepzero.engine.state import sample_to_dict
 
@@ -125,16 +121,10 @@ def create_app(work_dir: Path):
                 if aname == artifact_name:
                     full_path = sample_dir / apath
                     if full_path.exists():
-                        content = full_path.read_text(
-                            encoding="utf-8", errors="replace"
-                        )
-                        return JSONResponse(
-                            {"artifact": artifact_name, "content": content}
-                        )
+                        content = full_path.read_text(encoding="utf-8", errors="replace")
+                        return JSONResponse({"artifact": artifact_name, "content": content})
 
-        return JSONResponse(
-            {"error": f"artifact '{artifact_name}' not found"}, status_code=404
-        )
+        return JSONResponse({"error": f"artifact '{artifact_name}' not found"}, status_code=404)
 
     routes = [
         Route("/api/health", health),

@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
-
-from deepzero.engine.stage import StageSpec, ProcessorContext
-
-
+from deepzero.engine.stage import ProcessorContext, StageSpec
 from processors.pe_ingest.pe_ingest import PEIngest
 
 

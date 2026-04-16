@@ -13,9 +13,7 @@ class TestMetadataFilter:
         from deepzero.engine.state import StageOutput
 
         history = {"discover": StageOutput(status="completed", data=data)}
-        ctx = ProcessorContext(
-            pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm")
-        )
+        ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm"))
         from deepzero.engine.stage import ProcessorEntry
 
         try:
@@ -61,9 +59,7 @@ class TestMetadataFilter:
         from deepzero.engine.stage import StageSpec
         from deepzero.stages.filter import MetadataFilter
 
-        spec = StageSpec(
-            name="test_filter", processor="metadata_filter", config=config or {}
-        )
+        spec = StageSpec(name="test_filter", processor="metadata_filter", config=config or {})
         return MetadataFilter(spec)
 
     def test_passes_when_requirements_met(self):
@@ -84,9 +80,7 @@ class TestMetadataFilter:
 
     def test_min_threshold(self):
         f = self._make_filter({"min_priority_score": 5.0})
-        ctx, entry = self._make_ctx(
-            {"priority_score": 2.0}, {"min_priority_score": 5.0}
-        )
+        ctx, entry = self._make_ctx({"priority_score": 2.0}, {"min_priority_score": 5.0})
         result = f.process(ctx, entry)
         assert result.verdict == "filter"
 
@@ -123,9 +117,7 @@ class TestHashExclude:
         from deepzero.engine.state import StageOutput
 
         history = {"discover": StageOutput(status="completed", data=data)}
-        ctx = ProcessorContext(
-            pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm")
-        )
+        ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm"))
         from deepzero.engine.stage import ProcessorEntry
 
         try:
@@ -199,10 +191,11 @@ class TestHashExclude:
 
 class TestTopKSelector:
     def test_keeps_top_k(self):
-        from deepzero.engine.stage import StageSpec, ProcessorContext, ProcessorEntry
-        from deepzero.stages.top_k import TopKSelector
-        from deepzero.engine.state import StageOutput
         from pathlib import Path
+
+        from deepzero.engine.stage import ProcessorContext, ProcessorEntry, StageSpec
+        from deepzero.engine.state import StageOutput
+        from deepzero.stages.top_k import TopKSelector
 
         spec = StageSpec(
             name="pick",
@@ -217,9 +210,7 @@ class TestTopKSelector:
 
         import tempfile
 
-        ctx = ProcessorContext(
-            pipeline_dir=Path(tempfile.gettempdir()), global_config={}, llm=None
-        )
+        ctx = ProcessorContext(pipeline_dir=Path(tempfile.gettempdir()), global_config={}, llm=None)
 
         entries = []
         for i in range(5):
@@ -230,9 +221,7 @@ class TestTopKSelector:
                 sample_dir=Path(tempfile.gettempdir()) / f"s{i}",
                 _store=None,
             )
-            entry._history = {
-                "scan": StageOutput(status="completed", data={"finding_count": i})
-            }
+            entry._history = {"scan": StageOutput(status="completed", data={"finding_count": i})}
             entries.append(entry)
 
         active_ids = processor.process(ctx, entries)
@@ -242,17 +231,16 @@ class TestTopKSelector:
         assert "s3" in active_ids
 
     def test_passthrough_without_metric(self):
-        from deepzero.engine.stage import StageSpec, ProcessorContext
-        from deepzero.stages.top_k import TopKSelector
         from pathlib import Path
+
+        from deepzero.engine.stage import ProcessorContext, StageSpec
+        from deepzero.stages.top_k import TopKSelector
 
         spec = StageSpec(name="pick", processor="top_k", config={})
         processor = TopKSelector(spec)
         import tempfile
 
-        ctx = ProcessorContext(
-            pipeline_dir=Path(tempfile.gettempdir()), global_config={}, llm=None
-        )
+        ctx = ProcessorContext(pipeline_dir=Path(tempfile.gettempdir()), global_config={}, llm=None)
 
         errors = processor.validate(ctx)
         assert len(errors) == 1

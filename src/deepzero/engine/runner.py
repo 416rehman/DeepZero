@@ -12,31 +12,31 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.progress import (
+    BarColumn,
     Progress,
     SpinnerColumn,
-    TextColumn,
-    BarColumn,
     TaskProgressColumn,
+    TextColumn,
     TimeRemainingColumn,
 )
 
 from deepzero.engine.context import generate_context
 from deepzero.engine.stage import (
+    BulkMapProcessor,
     FailurePolicy,
     GlobalConfig,
     IngestProcessor,
     LLMProtocol,
     MapProcessor,
-    ReduceProcessor,
-    BulkMapProcessor,
-    ProcessorContext,
-    ProcessorResult,
-    StageSpec,
     Processor,
+    ProcessorContext,
     ProcessorEntry,
+    ProcessorResult,
+    ReduceProcessor,
+    StageSpec,
 )
-from deepzero.engine.types import StageStatus, Verdict, SampleStatus, RunStatus
 from deepzero.engine.state import RunState, SampleState, StateStore
+from deepzero.engine.types import RunStatus, SampleStatus, StageStatus, Verdict
 
 log = logging.getLogger("deepzero.runner")
 
@@ -200,9 +200,7 @@ class PipelineRunner:
                 "--- resume --- found %d existing sample states, skipping ingest",
                 len(existing_states),
             )
-            sample_states: dict[str, SampleState] = {
-                s.sample_id: s for s in existing_states
-            }
+            sample_states: dict[str, SampleState] = {s.sample_id: s for s in existing_states}
             run_state.stats["discovered"] = len(sample_states)
             run_state.stages = stage_names
             self.state_store.save_run(run_state)
@@ -299,9 +297,7 @@ class PipelineRunner:
         pending = [s for s in active if not s.is_stage_done(spec.name)]
         cached = len(active) - len(pending)
         if cached > 0:
-            log.info(
-                "  %d already completed (cached), %d pending", cached, len(pending)
-            )
+            log.info("  %d already completed (cached), %d pending", cached, len(pending))
             stage_stats["completed"] += cached
 
         if not pending:
@@ -319,9 +315,7 @@ class PipelineRunner:
 
         try:
             with self._create_progress_bar(spec.name, len(pending)) as progress:
-                task = progress.add_task(
-                    f"[cyan]running {spec.name}[/]", total=len(pending)
-                )
+                task = progress.add_task(f"[cyan]running {spec.name}[/]", total=len(pending))
 
                 if parallelism <= 1:
                     for state in pending:
@@ -333,13 +327,9 @@ class PipelineRunner:
                         progress.advance(task)
                 else:
                     max_workers = min(parallelism, len(pending))
-                    with concurrent.futures.ThreadPoolExecutor(
-                        max_workers=max_workers
-                    ) as executor:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                         future_map = {
-                            executor.submit(
-                                self._process_one_map, s, spec, processor
-                            ): s
+                            executor.submit(self._process_one_map, s, spec, processor): s
                             for s in pending
                         }
                         for future in concurrent.futures.as_completed(future_map):
@@ -349,12 +339,8 @@ class PipelineRunner:
                             state = future_map[future]
                             exc = future.exception()
                             if exc:
-                                log.error(
-                                    "  %s unhandled error: %s", state.filename, exc
-                                )
-                                state.mark_stage_failed(
-                                    spec.name, f"{type(exc).__name__}: {exc}"
-                                )
+                                log.error("  %s unhandled error: %s", state.filename, exc)
+                                state.mark_stage_failed(spec.name, f"{type(exc).__name__}: {exc}")
                                 self.state_store.save_sample(state)
 
                             outcome = self._classify_outcome(state, spec.name)
@@ -390,9 +376,7 @@ class PipelineRunner:
         self.state_store.save_sample(state)
 
         attempts = 0
-        max_attempts = (
-            spec.max_retries + 1 if spec.on_failure == FailurePolicy.RETRY else 1
-        )
+        max_attempts = spec.max_retries + 1 if spec.on_failure == FailurePolicy.RETRY else 1
 
         while attempts < max_attempts:
             attempts += 1
@@ -451,9 +435,7 @@ class PipelineRunner:
                         raise RuntimeError(
                             f"failed to explicitly close descriptor for {state.filename}"
                         ) from cleanup_exc
-                    raise RuntimeError(
-                        f"failed to write error log for {state.filename}"
-                    ) from exc
+                    raise RuntimeError(f"failed to write error log for {state.filename}") from exc
 
                 if attempts < max_attempts:
                     backoff = min(2**attempts, 30)
@@ -525,9 +507,7 @@ class PipelineRunner:
         pending = [s for s in active if not s.is_stage_done(spec.name)]
         cached = len(active) - len(pending)
         if cached > 0:
-            log.info(
-                "  %d already completed (cached), %d pending", cached, len(pending)
-            )
+            log.info("  %d already completed (cached), %d pending", cached, len(pending))
             stage_stats["completed"] += cached
 
         if not pending:
@@ -564,9 +544,7 @@ class PipelineRunner:
                         data=result.data,
                     )
                 else:
-                    state.mark_stage_failed(
-                        spec.name, result.error or "batch item failed"
-                    )
+                    state.mark_stage_failed(spec.name, result.error or "batch item failed")
             else:
                 state.mark_stage_failed(
                     spec.name, "batch processor returned fewer results than entries"

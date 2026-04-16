@@ -42,14 +42,11 @@ class LLMProvider:
 
             # capture exception classes with safe fallbacks for test mocks
             self._rate_limit_error = _resolve_exc(litellm, "RateLimitError")
-            self._context_window_error = _resolve_exc(
-                litellm, "ContextWindowExceededError"
-            )
+            self._context_window_error = _resolve_exc(litellm, "ContextWindowExceededError")
 
             # build the retryable error tuple once at init
             api_errors = tuple(
-                _resolve_exc(litellm, name)
-                for name in ("APIConnectionError", "APIError")
+                _resolve_exc(litellm, name) for name in ("APIConnectionError", "APIError")
             )
             self._retryable_errors = api_errors + (OSError, ValueError, RuntimeError)
 

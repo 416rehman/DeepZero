@@ -1,5 +1,4 @@
 from deepzero.engine.stage import register_processor
-
 from deepzero.stages.command import GenericCommand
 from deepzero.stages.filter import MetadataFilter
 from deepzero.stages.hash_filter import HashExclude

@@ -1,8 +1,10 @@
-import pytest
 from pathlib import Path
+
+import pytest
 from starlette.testclient import TestClient
+
 from deepzero.api.server import create_app
-from deepzero.engine.state import StateStore, SampleState, RunState
+from deepzero.engine.state import RunState, SampleState, StateStore
 
 
 @pytest.fixture
@@ -21,9 +23,7 @@ def test_app(tmp_path: Path):
             stats={},
         )
     )
-    store.save_sample(
-        SampleState(sample_id="123", filename="foo.exe", current_stage="discovery")
-    )
+    store.save_sample(SampleState(sample_id="123", filename="foo.exe", current_stage="discovery"))
     return create_app(tmp_path)
 
 

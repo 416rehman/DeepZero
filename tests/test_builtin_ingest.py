@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import hashlib
 
-from deepzero.engine.stage import StageSpec
+from deepzero.engine.stage import ProcessorContext, StageSpec
 from deepzero.stages.ingest import FileDiscovery
-from deepzero.engine.stage import ProcessorContext
 
 
 class TestFileDiscovery:

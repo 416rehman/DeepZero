@@ -75,9 +75,9 @@ def _load_env() -> None:
 
 def _build_runner(pipeline_def: Any) -> tuple[Any, Any]:
     # shared setup for run/resume - builds PipelineRunner and optional LLM provider
+    from deepzero.engine.llm import LLMProvider
     from deepzero.engine.runner import PipelineRunner
     from deepzero.engine.state import StateStore
-    from deepzero.engine.llm import LLMProvider
 
     llm = LLMProvider(pipeline_def.model) if pipeline_def.model else None
 
@@ -108,39 +108,30 @@ def main(ctx: click.Context):
 @main.command()
 @click.argument("target", type=click.Path(exists=True))
 @click.option("--pipeline", "-p", required=True, help="pipeline name or path")
-@click.option(
-    "--model", "-m", default=None, help="llm model override (e.g. openai/gpt-4o)"
-)
+@click.option("--model", "-m", default=None, help="llm model override (e.g. openai/gpt-4o)")
 @click.option("--work-dir", "-w", default=None, help="work directory override")
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
-def run(
-    target: str, pipeline: str, model: str | None, work_dir: str | None, verbose: bool
-):
+def run(target: str, pipeline: str, model: str | None, work_dir: str | None, verbose: bool):
     """run a pipeline against a target file or directory"""
     _setup_logging(verbose)
 
     _load_env()
 
-    from deepzero.engine.pipeline import load_pipeline
-    from deepzero.engine.state import RunState, StateStore
-
     # ensure built-in stages are registered
     import deepzero.stages  # noqa: F401
+    from deepzero.engine.pipeline import load_pipeline
+    from deepzero.engine.state import RunState, StateStore
 
     target_path = Path(target).resolve()
     console.print(f"\n[bold cyan]deepzero[/] - running pipeline [bold]{pipeline}[/]")
     console.print(f"  target: {target_path}")
 
     try:
-        pipeline_def = load_pipeline(
-            pipeline, model_override=model, work_dir_override=work_dir
-        )
+        pipeline_def = load_pipeline(pipeline, model_override=model, work_dir_override=work_dir)
     except ValueError as e:
         console.print(f"[bold red]X ERROR[/]: {e}")
         raise SystemExit(1)
-    console.print(
-        f"  pipeline: {pipeline_def.name} ({len(pipeline_def.stage_specs)} stages)"
-    )
+    console.print(f"  pipeline: {pipeline_def.name} ({len(pipeline_def.stage_specs)} stages)")
     console.print(f"  stages: {' -> '.join(pipeline_def.stage_names)}")
 
     runner, llm = _build_runner(pipeline_def)
@@ -169,13 +160,9 @@ def run(
     if run_state.status == RunStatus.COMPLETED:
         console.print("[bold green]pipeline completed[/]")
     elif run_state.status == RunStatus.INTERRUPTED:
-        console.print(
-            "[bold yellow]pipeline interrupted - use 'deepzero resume' to continue[/]"
-        )
+        console.print("[bold yellow]pipeline interrupted - use 'deepzero resume' to continue[/]")
     else:
-        console.print(
-            f"[bold red]pipeline failed: {run_state.stats.get('error', 'unknown')}[/]"
-        )
+        console.print(f"[bold red]pipeline failed: {run_state.stats.get('error', 'unknown')}[/]")
 
 
 @main.command()
@@ -185,9 +172,7 @@ def run(
     required=True,
     help="pipeline name or path (for processor resolution)",
 )
-@click.option(
-    "--model", "-m", default=None, help="llm model override (e.g. openai/gpt-4o)"
-)
+@click.option("--model", "-m", default=None, help="llm model override (e.g. openai/gpt-4o)")
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
 def resume(pipeline: str, model: str | None, verbose: bool):
     """resume an interrupted pipeline run"""
@@ -376,9 +361,7 @@ stages:
 
 
 @main.command()
-@click.option(
-    "--model", "-m", default="openai/gpt-4o", help="llm model for interactive mode"
-)
+@click.option("--model", "-m", default="openai/gpt-4o", help="llm model for interactive mode")
 @click.option("--work-dir", "-w", default="work", help="work directory for context")
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
 def interactive(model: str, work_dir: str, verbose: bool):
@@ -423,9 +406,7 @@ def interactive(model: str, work_dir: str, verbose: bool):
         if user_input == "/status":
             run_state = state_store.load_run()
             if run_state:
-                console.print(
-                    f"  pipeline: {run_state.pipeline}, status: {run_state.status}"
-                )
+                console.print(f"  pipeline: {run_state.pipeline}, status: {run_state.status}")
                 _print_stats(run_state)
             else:
                 console.print("  [dim]no run data found[/]")
@@ -454,9 +435,7 @@ def interactive(model: str, work_dir: str, verbose: bool):
 
 
 @main.command()
-@click.option(
-    "--host", default="127.0.0.1", help="bind host (use 0.0.0.0 for all interfaces)"
-)
+@click.option("--host", default="127.0.0.1", help="bind host (use 0.0.0.0 for all interfaces)")
 @click.option("--port", default=8420, type=int, help="bind port")
 @click.option("--work-dir", "-w", default="work", help="work directory")
 def serve(host: str, port: int, work_dir: str):
@@ -520,15 +499,11 @@ def _build_interactive_system_prompt(state_store) -> str:
 
         manifest = state_store.load_manifest()
         if manifest:
-            active = [
-                e for e in manifest if e.get("verdict") in ("active", "completed")
-            ]
+            active = [e for e in manifest if e.get("verdict") in ("active", "completed")]
             prompt_parts.append(f"\ntotal samples: {len(manifest)}")
             if active:
                 prompt_parts.append(f"active/completed: {len(active)}")
                 for e in active[:10]:
-                    prompt_parts.append(
-                        f"  - {e.get('filename', '?')} ({e.get('sample_id', '?')})"
-                    )
+                    prompt_parts.append(f"  - {e.get('filename', '?')} ({e.get('sample_id', '?')})")
 
     return "\n".join(prompt_parts)

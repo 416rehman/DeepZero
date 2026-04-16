@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from deepzero.engine.registry import (
-    register_processor,
     get_registered_processors,
+    register_processor,
     resolve_processor_class,
 )
 
@@ -42,9 +42,7 @@ class TestRegistryModule:
         assert cls.__name__ == "MetadataFilter"
 
     def test_resolve_unknown_raises(self):
-        with pytest.raises(
-            ValueError, match="bare names match built-in processors only"
-        ):
+        with pytest.raises(ValueError, match="bare names match built-in processors only"):
             resolve_processor_class("_definitely_not_registered_xyz")
 
     def test_resolve_file_path(self, tmp_path):

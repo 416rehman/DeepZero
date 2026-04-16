@@ -9,25 +9,20 @@ from pathlib import Path
 from typing import Any
 
 from deepzero.engine.stage import (
-    Sample,
     BulkMapProcessor,
-    ProcessorResult,
     ProcessorContext,
     ProcessorEntry,
+    ProcessorResult,
 )
 
 
 class SemgrepScanner(BulkMapProcessor):
-    description = (
-        "runs semgrep batch scan against decompiled source across all active samples"
-    )
+    description = "runs semgrep batch scan against decompiled source across all active samples"
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         errors = []
         if not shutil.which("semgrep"):
-            errors.append(
-                "semgrep CLI not found in PATH - install with: pip install semgrep"
-            )
+            errors.append("semgrep CLI not found in PATH - install with: pip install semgrep")
 
         rules_dir = self.config.get("rules_dir")
         if not rules_dir:
@@ -62,9 +57,7 @@ class SemgrepScanner(BulkMapProcessor):
                     results[i] = self._make_result(findings, min_findings, cached=True)
                     continue
                 except (json.JSONDecodeError, OSError) as exc:
-                    self.log.debug(
-                        "cache read failed for %s, rescanning: %s", entry.sample_id, exc
-                    )
+                    self.log.debug("cache read failed for %s, rescanning: %s", entry.sample_id, exc)
 
             scan_dir = entry.sample_dir / target_subdir
             if not scan_dir.exists():
@@ -167,20 +160,14 @@ class SemgrepScanner(BulkMapProcessor):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except OSError:
             for idx, _ in uncached_entries:
-                results[idx] = ProcessorResult.fail(
-                    "semgrep not installed - pip install semgrep"
-                )
+                results[idx] = ProcessorResult.fail("semgrep not installed - pip install semgrep")
             return [r for r in results if r is not None]
         except asyncio.TimeoutError:
             for idx, _ in uncached_entries:
-                results[idx] = ProcessorResult.fail(
-                    f"semgrep batch timed out after {timeout}s"
-                )
+                results[idx] = ProcessorResult.fail(f"semgrep batch timed out after {timeout}s")
             return [r for r in results if r is not None]
 
         if proc.returncode not in (0, 1):
@@ -194,14 +181,10 @@ class SemgrepScanner(BulkMapProcessor):
             output = json.loads(out_str) if out_str.strip() else {}
         except json.JSONDecodeError:
             for idx, _ in uncached_entries:
-                results[idx] = ProcessorResult.fail(
-                    "failed to parse semgrep json output"
-                )
+                results[idx] = ProcessorResult.fail("failed to parse semgrep json output")
             return [r for r in results if r is not None]
 
-        self._distribute_findings(
-            output, file_to_sample, uncached_entries, results, min_findings
-        )
+        self._distribute_findings(output, file_to_sample, uncached_entries, results, min_findings)
         return [r for r in results if r is not None]
 
     def _distribute_findings(
@@ -213,9 +196,7 @@ class SemgrepScanner(BulkMapProcessor):
         min_findings: int,
     ) -> None:
         sev_map = {"ERROR": "HIGH", "WARNING": "MEDIUM", "INFO": "LOW"}
-        per_sample_findings: dict[int, list[dict]] = {
-            idx: [] for idx, _ in uncached_entries
-        }
+        per_sample_findings: dict[int, list[dict]] = {idx: [] for idx, _ in uncached_entries}
 
         for result_entry in output.get("results", []):
             file_path = result_entry.get("path", "")
@@ -250,9 +231,7 @@ class SemgrepScanner(BulkMapProcessor):
                     os.close(fd)
                 except OSError:
                     self.log.debug("cleanup of failed temp json ignored")
-                self.log.debug(
-                    "failed to write findings for %s: %s", entry.sample_id, exc
-                )
+                self.log.debug("failed to write findings for %s: %s", entry.sample_id, exc)
             results[idx] = self._make_result(findings, min_findings, cached=False)
 
     def _make_result(

@@ -169,9 +169,7 @@ def _resolve_processors(pipeline: PipelineDefinition) -> None:
                     f"stage '{spec.name}' at position {i} is an IngestProcessor. "
                     f"only the first stage can be an ingest processor."
                 )
-            if not isinstance(
-                instance, (MapProcessor, ReduceProcessor, BulkMapProcessor)
-            ):
+            if not isinstance(instance, (MapProcessor, ReduceProcessor, BulkMapProcessor)):
                 raise ValueError(
                     f"stage '{spec.name}' at position {i} must be a MapProcessor, ReduceProcessor, or BulkMapProcessor. "
                     f"got {cls.__name__}."
@@ -214,9 +212,7 @@ def _validate_pipeline_graph(pipeline: PipelineDefinition) -> None:
             errors.append(f"processor '{proc.spec.name}': {p}")
 
     if errors:
-        raise ValueError(
-            "pipeline validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
-        )
+        raise ValueError("pipeline validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
 
 
 def _resolve_pipeline_path(ref: str) -> tuple[Path, Path]:
@@ -253,8 +249,7 @@ def _resolve_pipeline_path(ref: str) -> tuple[Path, Path]:
             return yaml_file.parent, yaml_file
 
     raise FileNotFoundError(
-        f"pipeline '{ref}' not found. searched:\n"
-        + "\n".join(f"  - {p}" for p in search_paths)
+        f"pipeline '{ref}' not found. searched:\n" + "\n".join(f"  - {p}" for p in search_paths)
     )
 
 
@@ -312,9 +307,7 @@ def validate_pipeline(pipeline_ref: str) -> list[str]:
 
     has_map = any(st == ProcessorType.MAP for _, st in proc_types)
     if not has_map:
-        warnings.append(
-            "no map processors found - pipeline has no sample processing stages"
-        )
+        warnings.append("no map processors found - pipeline has no sample processing stages")
 
     if not warnings:
         warnings.append("pipeline is valid - no issues found")

@@ -5,13 +5,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol, TypedDict, runtime_checkable, ClassVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypedDict, runtime_checkable
 
 if TYPE_CHECKING:
     from deepzero.engine.state import StateStore
 
-from deepzero.engine.types import StageStatus, Verdict
 from deepzero.engine.state import StageOutput
+from deepzero.engine.types import StageStatus, Verdict
 
 
 @runtime_checkable
@@ -107,9 +107,7 @@ class ProcessorContext:
     # llm provider if configured
     llm: LLMProtocol | None
     # logger scoped to this processor instance
-    log: logging.Logger = field(
-        default_factory=lambda: logging.getLogger("deepzero.processor")
-    )
+    log: logging.Logger = field(default_factory=lambda: logging.getLogger("deepzero.processor"))
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         # shorthand to grab a pipeline setting
@@ -138,14 +136,10 @@ class ProcessorResult:
         cls, data: dict[str, Any] | None = None, artifacts: dict[str, str] | None = None
     ) -> ProcessorResult:
         # sample processed successfully, continue downstream
-        return cls(
-            status=StageStatus.COMPLETED, data=data or {}, artifacts=artifacts or {}
-        )
+        return cls(status=StageStatus.COMPLETED, data=data or {}, artifacts=artifacts or {})
 
     @classmethod
-    def filter(
-        cls, reason: str = "", data: dict[str, Any] | None = None
-    ) -> ProcessorResult:
+    def filter(cls, reason: str = "", data: dict[str, Any] | None = None) -> ProcessorResult:
         # sample intentionally excluded from further processing
         d = dict(data) if data else {}
         if reason:
@@ -289,9 +283,7 @@ class MapProcessor(Processor):
     processor_type = ProcessorType.MAP
 
     @abstractmethod
-    def process(
-        self, ctx: ProcessorContext, entry: ProcessorEntry
-    ) -> ProcessorResult: ...
+    def process(self, ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult: ...
 
     def should_skip(self, ctx: ProcessorContext, entry: ProcessorEntry) -> str | None:
         # override to skip already-processed samples (e.g. cached output files).
@@ -317,9 +309,7 @@ class ReduceProcessor(Processor):
     processor_type = ProcessorType.REDUCE
 
     @abstractmethod
-    def process(
-        self, ctx: ProcessorContext, entries: list[ProcessorEntry]
-    ) -> list[str]: ...
+    def process(self, ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[str]: ...
 
 
 class BulkMapProcessor(Processor):
@@ -344,7 +334,7 @@ class BulkMapProcessor(Processor):
 
 # re-export registry functions so existing imports from stage.py keep working
 from deepzero.engine.registry import (  # noqa: E402, F401
-    register_processor,
     get_registered_processors,
+    register_processor,
     resolve_processor_class,
 )

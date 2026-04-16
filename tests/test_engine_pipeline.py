@@ -1,5 +1,7 @@
-import pytest
 from pathlib import Path
+
+import pytest
+
 from deepzero.engine.pipeline import load_pipeline, validate_pipeline
 
 

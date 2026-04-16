@@ -66,7 +66,7 @@ class TestNamespacedState:
 
 class TestStateStore:
     def test_save_and_load_run(self, tmp_path):
-        from deepzero.engine.state import StateStore, RunState
+        from deepzero.engine.state import RunState, StateStore
 
         store = StateStore(tmp_path / "work")
         run = RunState(run_id="test-001", pipeline="loldrivers", status="running")
@@ -85,7 +85,7 @@ class TestStateStore:
         assert store.load_run() is None
 
     def test_save_and_load_sample(self, tmp_path):
-        from deepzero.engine.state import StateStore, SampleState
+        from deepzero.engine.state import SampleState, StateStore
 
         store = StateStore(tmp_path / "work")
         sample = SampleState(
@@ -132,19 +132,17 @@ class TestStateStore:
         assert loaded is None
 
     def test_list_samples(self, tmp_path):
-        from deepzero.engine.state import StateStore, SampleState
+        from deepzero.engine.state import SampleState, StateStore
 
         store = StateStore(tmp_path / "work")
         for i in range(3):
-            s = SampleState(
-                sample_id=f"sample_{i}", filename=f"file_{i}.sys", verdict="active"
-            )
+            s = SampleState(sample_id=f"sample_{i}", filename=f"file_{i}.sys", verdict="active")
             store.save_sample(s)
         samples = store.list_samples()
         assert len(samples) == 3
 
     def test_manifest_roundtrip(self, tmp_path):
-        from deepzero.engine.state import StateStore, SampleState
+        from deepzero.engine.state import SampleState, StateStore
 
         store = StateStore(tmp_path / "work")
         states = [
@@ -161,7 +159,7 @@ class TestStateStore:
         assert verdicts["c"] == "failed"
 
     def test_manifest_counts(self, tmp_path):
-        from deepzero.engine.state import StateStore, SampleState
+        from deepzero.engine.state import SampleState, StateStore
 
         store = StateStore(tmp_path / "work")
         store.save_manifest(
@@ -222,7 +220,7 @@ class TestAtomicWrites:
         assert not src.exists()
 
     def test_atomic_write_via_state_store(self, tmp_path):
-        from deepzero.engine.state import StateStore, SampleState
+        from deepzero.engine.state import SampleState, StateStore
 
         store = StateStore(tmp_path / "work")
         s = SampleState(sample_id="atomic_test", filename="test.sys", verdict="active")

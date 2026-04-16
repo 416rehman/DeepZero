@@ -4,17 +4,16 @@ from pathlib import Path
 
 from deepzero.engine.runner import PipelineRunner
 from deepzero.engine.stage import (
-    ProcessorEntry,
     BulkMapProcessor,
     MapProcessor,
-    ReduceProcessor,
     ProcessorContext,
+    ProcessorEntry,
     ProcessorResult,
-    StageSpec,
+    ReduceProcessor,
     Sample,
+    StageSpec,
 )
 from deepzero.engine.state import RunState, SampleState, StateStore
-
 
 # -- mock tools --
 
@@ -49,15 +48,11 @@ class MockBulkMapProcessor(BulkMapProcessor):
     ) -> list[ProcessorResult]:
         if self.config.get("crash"):
             raise RuntimeError("intentional batch crash")
-        return [ProcessorResult(status="completed", data={"batched": True})] * len(
-            entries
-        )
+        return [ProcessorResult(status="completed", data={"batched": True})] * len(entries)
 
 
 class MockReduceProcessor(ReduceProcessor):
-    def process(
-        self, ctx: ProcessorContext, entries: list[ProcessorEntry]
-    ) -> list[str]:
+    def process(self, ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[str]:
         if self.config.get("crash"):
             raise RuntimeError("intentional reduce crash")
         # truncate half
@@ -72,9 +67,7 @@ class TestPipelineRunner:
     def _make_samples(self, n=5) -> list[Sample]:
         samples = []
         for i in range(n):
-            samples.append(
-                Sample(f"s{i}", Path(f"s{i}.sys"), f"s{i}.sys", {"sha256": f"s{i}"})
-            )
+            samples.append(Sample(f"s{i}", Path(f"s{i}.sys"), f"s{i}.sys", {"sha256": f"s{i}"}))
         return samples
 
     def test_run_executes_pipeline(self, tmp_path):
@@ -125,9 +118,7 @@ class TestPipelineRunner:
                 raise RuntimeError("should not happen")
 
         map_tool = MockMapProcessor(StageSpec(name="m", processor="mock", parallel=1))
-        runner = PipelineRunner(
-            CrashIngest(), [(map_tool.spec, map_tool)], store, tmp_path, {}
-        )
+        runner = PipelineRunner(CrashIngest(), [(map_tool.spec, map_tool)], store, tmp_path, {})
         result = runner.run(Path("."), run_state)
 
         assert result.status == "completed"
@@ -144,9 +135,7 @@ class TestPipelineRunner:
             StageSpec(name="m", processor="mock", config={"crash": True}, parallel=1)
         )
 
-        runner = PipelineRunner(
-            ingest, [(map_tool.spec, map_tool)], store, tmp_path, {}
-        )
+        runner = PipelineRunner(ingest, [(map_tool.spec, map_tool)], store, tmp_path, {})
         result = runner.run(Path("."), run_state)
 
         assert result.status == "completed"
@@ -166,9 +155,7 @@ class TestPipelineRunner:
             StageSpec(name="b", processor="mock", config={"crash": True})
         )
 
-        runner = PipelineRunner(
-            ingest, [(batch_tool.spec, batch_tool)], store, tmp_path, {}
-        )
+        runner = PipelineRunner(ingest, [(batch_tool.spec, batch_tool)], store, tmp_path, {})
         result = runner.run(Path("."), run_state)
 
         assert result.status == "completed"
@@ -186,9 +173,7 @@ class TestPipelineRunner:
         # use parallel=4
         map_tool = MockMapProcessor(StageSpec(name="m", processor="mock", parallel=4))
 
-        runner = PipelineRunner(
-            ingest, [(map_tool.spec, map_tool)], store, tmp_path, {}
-        )
+        runner = PipelineRunner(ingest, [(map_tool.spec, map_tool)], store, tmp_path, {})
         result = runner.run(Path("."), run_state)
 
         assert result.status == "completed"
@@ -205,9 +190,7 @@ class TestPipelineRunner:
             StageSpec(name="m", processor="mock", config={"limit": 2}, parallel=1)
         )
 
-        runner = PipelineRunner(
-            ingest, [(map_tool.spec, map_tool)], store, tmp_path, {}
-        )
+        runner = PipelineRunner(ingest, [(map_tool.spec, map_tool)], store, tmp_path, {})
         result = runner.run(Path("."), run_state)
 
         assert result.status == "completed"

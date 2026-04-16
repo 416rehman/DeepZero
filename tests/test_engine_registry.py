@@ -1,8 +1,9 @@
 import pytest
+
 from deepzero.engine.registry import (
+    get_registered_processors,
     register_processor,
     resolve_processor_class,
-    get_registered_processors,
 )
 from deepzero.engine.stage import (
     IngestProcessor,

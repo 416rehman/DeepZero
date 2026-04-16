@@ -4,11 +4,13 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-from deepzero.engine.stage import IngestProcessor, Sample, ProcessorContext
+from deepzero.engine.stage import IngestProcessor, ProcessorContext, Sample
 
 
 class PEIngest(IngestProcessor):
-    description = "discovers portable executable files, parses PE headers, and extracts driver metadata"
+    description = (
+        "discovers portable executable files, parses PE headers, and extracts driver metadata"
+    )
     version = "2.0"
 
     def process(self, ctx: ProcessorContext, target: Path) -> list[Sample]:
@@ -32,27 +34,19 @@ class PEIngest(IngestProcessor):
         self.log.info("single file mode: %s", path.name)
         data = self._extract_metadata(path)
         sample_id = data.get("sha256", "")[:16] or path.stem
-        return [
-            Sample(sample_id=sample_id, source_path=path, filename=path.name, data=data)
-        ]
+        return [Sample(sample_id=sample_id, source_path=path, filename=path.name, data=data)]
 
     def _ingest_filtered(
         self, root: Path, subdirs: list[str], extensions: list[str]
     ) -> list[Sample]:
         all_dirs = sorted(d for d in root.iterdir() if d.is_dir())
-        matching = [
-            d for d in all_dirs if any(p.lower() in d.name.lower() for p in subdirs)
-        ]
+        matching = [d for d in all_dirs if any(p.lower() in d.name.lower() for p in subdirs)]
 
         if not matching:
-            self.log.warning(
-                "no subdirectories matched patterns %s in %s", subdirs, root
-            )
+            self.log.warning("no subdirectories matched patterns %s in %s", subdirs, root)
             return self._ingest_directory(root, extensions, True)
 
-        self.log.info(
-            "scanning %d/%d matching subdirectories", len(matching), len(all_dirs)
-        )
+        self.log.info("scanning %d/%d matching subdirectories", len(matching), len(all_dirs))
 
         files: list[Path] = []
         for pack_dir in matching:
@@ -90,9 +84,7 @@ class PEIngest(IngestProcessor):
         for i, f in enumerate(files):
             data = self._extract_metadata(f)
             sample_id = data.get("sha256", "")[:16] or f.stem
-            samples.append(
-                Sample(sample_id=sample_id, source_path=f, filename=f.name, data=data)
-            )
+            samples.append(Sample(sample_id=sample_id, source_path=f, filename=f.name, data=data))
 
             if (i + 1) % 500 == 0 or (i + 1) == total:
                 elapsed = time.monotonic() - start
@@ -153,9 +145,7 @@ class PEIngest(IngestProcessor):
         subsys_names = {1: "NATIVE", 2: "WINDOWS_GUI", 3: "WINDOWS_CUI"}
         is_kernel_driver = subsys == 1
         machine_types = {0x14C: "I386", 0x8664: "AMD64", 0xAA64: "ARM64"}
-        machine = machine_types.get(
-            pe.FILE_HEADER.Machine, f"0x{pe.FILE_HEADER.Machine:04X}"
-        )
+        machine = machine_types.get(pe.FILE_HEADER.Machine, f"0x{pe.FILE_HEADER.Machine:04X}")
 
         meta: dict[str, Any] = {
             "is_valid_pe": True,
@@ -165,9 +155,7 @@ class PEIngest(IngestProcessor):
         }
 
         if subsystem_filter and subsys not in subsystem_filter:
-            meta["reject_reason"] = (
-                f"subsystem {subsys} not in filter {subsystem_filter}"
-            )
+            meta["reject_reason"] = f"subsystem {subsys} not in filter {subsystem_filter}"
             pe.close()
             return meta
 
@@ -189,9 +177,7 @@ class PEIngest(IngestProcessor):
                 imported_dlls.append(dll)
                 for imp in entry.imports:
                     if imp.name:
-                        imported_functions.append(
-                            imp.name.decode("utf-8", errors="replace")
-                        )
+                        imported_functions.append(imp.name.decode("utf-8", errors="replace"))
 
         meta["imported_dlls"] = imported_dlls
         meta["imported_functions"] = imported_functions

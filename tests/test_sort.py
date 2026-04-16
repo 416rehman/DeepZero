@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from deepzero.engine.stage import StageSpec, ProcessorContext, ProcessorEntry
+from deepzero.engine.stage import ProcessorContext, ProcessorEntry, StageSpec
 from deepzero.engine.state import StageOutput, StageStatus
 from deepzero.engine.types import Verdict
 from deepzero.stages.sort import Sort
@@ -24,9 +24,7 @@ def ctx():
     return ProcessorContext(pipeline_dir=Path("."), global_config={}, llm=None)
 
 
-def _make_entry(
-    sample_id: str, history: dict[str, StageOutput] | None = None
-) -> ProcessorEntry:
+def _make_entry(sample_id: str, history: dict[str, StageOutput] | None = None) -> ProcessorEntry:
     entry = ProcessorEntry(
         sample_id=sample_id,
         source_path=Path(f"{sample_id}.sys"),

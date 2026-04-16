@@ -9,9 +9,7 @@ from processors.loldrivers_filter.loldrivers_filter import LoldriversFilter
 
 class TestLoldriversFilterLoad:
     def _make_filter(self, config: dict | None = None):
-        spec = StageSpec(
-            name="loldrivers", processor="loldrivers_filter", config=config or {}
-        )
+        spec = StageSpec(name="loldrivers", processor="loldrivers_filter", config=config or {})
         return LoldriversFilter(spec)
 
     def test_load_valid_db(self, tmp_path):
@@ -22,19 +20,13 @@ class TestLoldriversFilterLoad:
                 [
                     {
                         "KnownVulnerableSamples": [
-                            {
-                                "SHA256": "AAAA1111bbbb2222cccc3333dddd4444eeee5555ffff6666"
-                            },
-                            {
-                                "SHA256": "1234567890abcdef1234567890abcdef1234567890abcdef"
-                            },
+                            {"SHA256": "AAAA1111bbbb2222cccc3333dddd4444eeee5555ffff6666"},
+                            {"SHA256": "1234567890abcdef1234567890abcdef1234567890abcdef"},
                         ]
                     },
                     {
                         "KnownVulnerableSamples": [
-                            {
-                                "SHA256": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-                            },
+                            {"SHA256": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
                         ]
                     },
                 ]
@@ -86,9 +78,7 @@ class TestLoldriversFilterProcess:
                 data={"sha256": sha256, "size_bytes": 1024},
             )
         }
-        ctx = ProcessorContext(
-            pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm")
-        )
+        ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm"))
         from deepzero.engine.stage import ProcessorEntry
 
         try:

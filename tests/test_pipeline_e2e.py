@@ -4,18 +4,16 @@ from pathlib import Path
 from deepzero.engine.runner import PipelineRunner
 from deepzero.engine.stage import (
     BulkMapProcessor,
+    IngestProcessor,
     MapProcessor,
-    ReduceProcessor,
     ProcessorContext,
-    ProcessorResult,
-    StageSpec,
-    Sample,
     ProcessorEntry,
+    ProcessorResult,
+    ReduceProcessor,
+    Sample,
+    StageSpec,
 )
 from deepzero.engine.state import RunState, StateStore
-
-
-from deepzero.engine.stage import IngestProcessor
 
 
 class E2EIngest(IngestProcessor):
@@ -70,9 +68,7 @@ class E2EBatchProcessor(BulkMapProcessor):
 
 
 class E2EReduceProcessor(ReduceProcessor):
-    def process(
-        self, ctx: ProcessorContext, entries: list[ProcessorEntry]
-    ) -> list[str]:
+    def process(self, ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[str]:
         threshold = self.config.get("drop_threshold", 0)
         if threshold > 0:
             return [s.sample_id for i, s in enumerate(entries) if i < threshold]
@@ -138,9 +134,7 @@ class TestPipelineE2E:
 
         ingest = E2EIngest(self._make_samples(5))
         m_proc = E2EMapProcessor(
-            StageSpec(
-                name="m", processor="mock", config={"behavior": "filter"}, parallel=1
-            )
+            StageSpec(name="m", processor="mock", config={"behavior": "filter"}, parallel=1)
         )
         b_proc = E2EBatchProcessor(StageSpec(name="b", processor="mock"))
 
@@ -159,9 +153,7 @@ class TestPipelineE2E:
         run_state = RunState(run_id="test_fail", pipeline="e2e")
 
         ingest = E2EIngest(self._make_samples(1))
-        m_proc = E2EMapProcessor(
-            StageSpec(name="m", processor="mock", config={"behavior": "fail"})
-        )
+        m_proc = E2EMapProcessor(StageSpec(name="m", processor="mock", config={"behavior": "fail"}))
 
         logger = logging.getLogger("deepzero")
         logger.setLevel(logging.DEBUG)
@@ -204,13 +196,9 @@ class TestPipelineE2E:
 
         # resume with cache - m1 should be skipped via should_skip()
         m_proc1_resumed = E2EMapProcessor(
-            StageSpec(
-                name="m1", processor="mock_success", config={"cache_marker": True}
-            )
+            StageSpec(name="m1", processor="mock_success", config={"cache_marker": True})
         )
-        m_proc2_resumed = E2EMapProcessor(
-            StageSpec(name="m2", processor="mock_success")
-        )
+        m_proc2_resumed = E2EMapProcessor(StageSpec(name="m2", processor="mock_success"))
 
         runner2 = PipelineRunner(
             ingest,

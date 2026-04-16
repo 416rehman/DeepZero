@@ -17,9 +17,7 @@ def _make_ctx(tmp_path, config=None, llm=None, history_data=None):
 
     discover_data = history_data or {"sha256": "abc123", "filename": "test.sys"}
     history = {"discover": StageOutput(status="completed", data=discover_data)}
-    ctx = ProcessorContext(
-        pipeline_dir=tmp_path, global_config={}, llm=llm
-    )
+    ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=llm)
     from deepzero.engine.stage import ProcessorEntry
 
     class MockStore:
@@ -87,9 +85,7 @@ class TestGenericLLMProcess:
         assert output.read_text() == "this driver is vulnerable"
 
     def test_cached_output_skips_llm_call(self, tmp_path):
-        processor = self._make_tool(
-            config={"prompt": "analyze", "output_file": "result.md"}
-        )
+        processor = self._make_tool(config={"prompt": "analyze", "output_file": "result.md"})
         mock_llm = MagicMock()
 
         ctx, entry = _make_ctx(
@@ -127,9 +123,7 @@ class TestGenericLLMClassify:
         assert result.data.get("classification") == "vulnerable"
 
     def test_no_classification_without_match(self, tmp_path):
-        processor = self._make_tool(
-            config={"prompt": "analyze", "classify_by": r"\[EXPLOIT\]"}
-        )
+        processor = self._make_tool(config={"prompt": "analyze", "classify_by": r"\[EXPLOIT\]"})
         mock_llm = MagicMock()
         mock_llm.complete.return_value = "no classification marker here"
 

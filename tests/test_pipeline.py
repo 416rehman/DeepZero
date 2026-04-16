@@ -6,21 +6,15 @@ import pytest
 
 
 class TestPipelineLoading:
-    def _write_pipeline(
-        self, tmp_path, yaml_content: str, tool_code: str | None = None
-    ):
+    def _write_pipeline(self, tmp_path, yaml_content: str, tool_code: str | None = None):
         pipeline_dir = tmp_path / "pipelines" / "test"
         pipeline_dir.mkdir(parents=True)
-        (pipeline_dir / "pipeline.yaml").write_text(
-            textwrap.dedent(yaml_content), encoding="utf-8"
-        )
+        (pipeline_dir / "pipeline.yaml").write_text(textwrap.dedent(yaml_content), encoding="utf-8")
 
         if tool_code:
             tool_dir = tmp_path / "processors" / "test_ingest"
             tool_dir.mkdir(parents=True)
-            (tool_dir / "test_ingest.py").write_text(
-                textwrap.dedent(tool_code), encoding="utf-8"
-            )
+            (tool_dir / "test_ingest.py").write_text(textwrap.dedent(tool_code), encoding="utf-8")
 
         return pipeline_dir
 

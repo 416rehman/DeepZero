@@ -12,9 +12,7 @@ class TestContextGeneration:
             verdict="active",
             current_stage="filter",
         )
-        s.mark_stage_completed(
-            "discover", data={"sha256": "deadbeef", "size_bytes": 1024}
-        )
+        s.mark_stage_completed("discover", data={"sha256": "deadbeef", "size_bytes": 1024})
         s.verdict = "active"
 
         sample_dir = tmp_path / "samples" / "abc"

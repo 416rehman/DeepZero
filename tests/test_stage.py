@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
 # -- fixtures --
 
 
@@ -61,13 +60,11 @@ class TestToolResolution:
     def test_unknown_bare_name_fails(self):
         from deepzero.engine.stage import resolve_processor_class
 
-        with pytest.raises(
-            ValueError, match="bare names match built-in processors only"
-        ):
+        with pytest.raises(ValueError, match="bare names match built-in processors only"):
             resolve_processor_class("nonexistent_tool")
 
     def test_slash_path_resolves_tool_file(self, make_tool):
-        from deepzero.engine.stage import resolve_processor_class, MapProcessor
+        from deepzero.engine.stage import MapProcessor, resolve_processor_class
 
         make_tool(
             "my_filter",
@@ -182,7 +179,7 @@ class TestToolTypes:
         assert FileDiscovery.processor_type == ProcessorType.INGEST
 
     def test_batch_tool_type(self):
-        from deepzero.engine.stage import ProcessorType, BulkMapProcessor
+        from deepzero.engine.stage import BulkMapProcessor, ProcessorType
 
         class DummyBulk(BulkMapProcessor):
             def process(self, ctx, entries):
@@ -218,7 +215,7 @@ class TestDataClasses:
         assert r.error is None
 
     def test_stage_spec_defaults(self):
-        from deepzero.engine.stage import StageSpec, FailurePolicy
+        from deepzero.engine.stage import FailurePolicy, StageSpec
 
         s = StageSpec(name="test", processor="metadata_filter")
         assert s.config == {}
@@ -227,7 +224,7 @@ class TestDataClasses:
         assert s.timeout == 0
 
     def test_stage_context_creation(self):
-        from deepzero.engine.stage import ProcessorContext, GlobalConfig
+        from deepzero.engine.stage import GlobalConfig, ProcessorContext
 
         ctx = ProcessorContext(
             pipeline_dir=Path("."),
@@ -254,11 +251,11 @@ class TestDataClasses:
 class TestToolRegistry:
     def test_register_and_resolve(self):
         from deepzero.engine.stage import (
-            register_processor,
-            resolve_processor_class,
             MapProcessor,
             ProcessorContext,
             ProcessorResult,
+            register_processor,
+            resolve_processor_class,
         )
 
         class CustomRegistered(MapProcessor):

@@ -8,22 +8,18 @@ from pathlib import Path
 from deepzero.engine.stage import (
     MapProcessor,
     ProcessorContext,
-    ProcessorResult,
     ProcessorEntry,
+    ProcessorResult,
 )
 
 
 class GenericCommand(MapProcessor):
-    description = (
-        "runs any external command as a pipeline stage - the universal escape hatch"
-    )
+    description = "runs any external command as a pipeline stage - the universal escape hatch"
 
     def process(self, ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult:
         run_template = self.config.get("run", "")
         if not run_template:
-            return ProcessorResult.fail(
-                "command processor requires a 'run' config field"
-            )
+            return ProcessorResult.fail("command processor requires a 'run' config field")
 
         timeout = self.config.get("timeout", 300)
         stdout_to = self.config.get("stdout_to", "")
@@ -74,12 +70,8 @@ class GenericCommand(MapProcessor):
         if returncode != 0:
             stderr_text = stderr.decode("utf-8", errors="replace")[:500]
             if on_error == "skip":
-                return ProcessorResult.filter(
-                    f"exit code {returncode}: {stderr_text[:200]}"
-                )
-            return ProcessorResult.fail(
-                f"command exited with code {returncode}: {stderr_text}"
-            )
+                return ProcessorResult.filter(f"exit code {returncode}: {stderr_text[:200]}")
+            return ProcessorResult.fail(f"command exited with code {returncode}: {stderr_text}")
 
         artifacts: dict[str, str] = {}
         if stdout_to:
@@ -121,7 +113,5 @@ class GenericCommand(MapProcessor):
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=5)
                 except asyncio.TimeoutError as kill_exc:
-                    raise RuntimeError(
-                        "Failed to cleanly kill the command process"
-                    ) from kill_exc
+                    raise RuntimeError("Failed to cleanly kill the command process") from kill_exc
             raise TimeoutError()

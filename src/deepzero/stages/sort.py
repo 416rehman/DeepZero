@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from deepzero.engine.stage import ReduceProcessor, ProcessorEntry, ProcessorContext
+from deepzero.engine.stage import ProcessorContext, ProcessorEntry, ReduceProcessor
 
 
 class Sort(ReduceProcessor):
@@ -15,16 +15,12 @@ class Sort(ReduceProcessor):
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         if not self.config.by:
-            return [
-                "sort processor requires 'by' configured in format 'stage_name.data_key'"
-            ]
+            return ["sort processor requires 'by' configured in format 'stage_name.data_key'"]
         if len(self.config.by.split(".", 1)) != 2:
             return [f"'by' must be 'processor_name.key', got '{self.config.by}'"]
         return []
 
-    def process(
-        self, ctx: ProcessorContext, samples: list[ProcessorEntry]
-    ) -> list[str]:
+    def process(self, ctx: ProcessorContext, samples: list[ProcessorEntry]) -> list[str]:
         parts = self.config.by.split(".", 1)
         stage_name, data_key = parts
 

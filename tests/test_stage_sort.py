@@ -1,12 +1,10 @@
-from deepzero.stages.sort import Sort
-from deepzero.engine.stage import ProcessorEntry, StageSpec, ProcessorContext
+from deepzero.engine.stage import ProcessorContext, ProcessorEntry, StageSpec
 from deepzero.engine.state import StageOutput
+from deepzero.stages.sort import Sort
 
 
 def test_sort_processor():
-    spec = StageSpec(
-        name="sort", processor="sort", config={"by": "parse.score", "order": "desc"}
-    )
+    spec = StageSpec(name="sort", processor="sort", config={"by": "parse.score", "order": "desc"})
     sorter = Sort(spec)
 
     ctx = ProcessorContext(pipeline_dir=None, global_config={}, llm=None)
@@ -41,9 +39,7 @@ def test_sort_processor():
     # descending: 2 (50) -> 3 (30) -> 1 (10)
     assert res == ["2", "3", "1"]
 
-    spec = StageSpec(
-        name="sort", processor="sort", config={"by": "parse.score", "order": "asc"}
-    )
+    spec = StageSpec(name="sort", processor="sort", config={"by": "parse.score", "order": "asc"})
     sorter = Sort(spec)
     res = sorter.process(ctx, [e1, e2, e3])
     assert res == ["1", "3", "2"]

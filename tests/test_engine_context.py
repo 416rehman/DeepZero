@@ -1,6 +1,7 @@
 from pathlib import Path
-from deepzero.engine.state import SampleState, StageOutput
+
 from deepzero.engine.context import generate_context
+from deepzero.engine.state import SampleState, StageOutput
 
 
 def test_generate_context(tmp_path: Path):

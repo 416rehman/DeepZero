@@ -11,9 +11,9 @@ from typing import Any
 from deepzero.engine.stage import (
     MapProcessor,
     ProcessorContext,
+    ProcessorEntry,
     ProcessorResult,
     StageSpec,
-    ProcessorEntry,
 )
 
 LOLDRIVERS_URL = "https://www.loldrivers.io/api/drivers.json"
@@ -27,7 +27,9 @@ class LoldriversFilterConfig:
 
 
 class LoldriversFilter(MapProcessor):
-    description = "excludes samples whose sha256 matches a known entry in the loldrivers.io database"
+    description = (
+        "excludes samples whose sha256 matches a known entry in the loldrivers.io database"
+    )
     Config = LoldriversFilterConfig
 
     def __init__(self, spec: StageSpec):
@@ -45,9 +47,7 @@ class LoldriversFilter(MapProcessor):
             db_path = Path(raw_path)
             if db_path.is_absolute() and db_path.exists():
                 return db_path
-            self.log.info(
-                "db_path '%s' not found, will auto-download", self.config.db_path
-            )
+            self.log.info("db_path '%s' not found, will auto-download", self.config.db_path)
 
         cached = self.cache_dir / LOLDRIVERS_CACHE_FILE
         ttl = self.config.cache_ttl_days
@@ -57,9 +57,7 @@ class LoldriversFilter(MapProcessor):
             if age_days < ttl:
                 self.log.info("using cached db (%.1f days old)", age_days)
                 return cached
-            self.log.info(
-                "cached db is %.1f days old (ttl=%d), refreshing", age_days, ttl
-            )
+            self.log.info("cached db is %.1f days old (ttl=%d), refreshing", age_days, ttl)
 
         return self._download(cached)
 

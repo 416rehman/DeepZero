@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from deepzero.engine.stage import ReduceProcessor, ProcessorEntry, ProcessorContext
+from deepzero.engine.stage import ProcessorContext, ProcessorEntry, ReduceProcessor
 
 
 class TopKSelector(ReduceProcessor):
@@ -20,14 +20,10 @@ class TopKSelector(ReduceProcessor):
                 "top_k processor requires 'metric_path' configured in format 'stage_name.data_key'"
             ]
         if len(self.config.metric_path.split(".", 1)) != 2:
-            return [
-                f"metric_path must be 'processor_name.key', got '{self.config.metric_path}'"
-            ]
+            return [f"metric_path must be 'processor_name.key', got '{self.config.metric_path}'"]
         return []
 
-    def process(
-        self, ctx: ProcessorContext, entries: list[ProcessorEntry]
-    ) -> list[str]:
+    def process(self, ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[str]:
         parts = self.config.metric_path.split(".", 1)
         stage_name, data_key = parts
 

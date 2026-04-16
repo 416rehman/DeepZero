@@ -61,9 +61,7 @@ async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
             try:
                 await asyncio.wait_for(kproc.communicate(), timeout=10)
             except asyncio.TimeoutError:
-                log.warning(
-                    "taskkill timed out for pid %d - process may be orphaned", proc.pid
-                )
+                log.warning("taskkill timed out for pid %d - process may be orphaned", proc.pid)
         else:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except (OSError, ProcessLookupError) as exc:
@@ -73,9 +71,7 @@ async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
     try:
         await asyncio.wait_for(proc.wait(), timeout=5)
     except asyncio.TimeoutError:
-        log.warning(
-            "process %d did not exit within 5s after kill - abandoning", proc.pid
-        )
+        log.warning("process %d did not exit within 5s after kill - abandoning", proc.pid)
 
 
 def run_subprocess_with_kill(

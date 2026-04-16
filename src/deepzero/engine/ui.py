@@ -4,11 +4,11 @@ from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import (
+    BarColumn,
     Progress,
     SpinnerColumn,
-    TextColumn,
-    BarColumn,
     TaskProgressColumn,
+    TextColumn,
     TimeRemainingColumn,
 )
 from rich.table import Table
@@ -22,8 +22,7 @@ class PipelineDashboard:
         self.stage_specs = stages
         self.stage_names = [s["name"] for s in stages]
         self.stats: dict[str, dict[str, int]] = {
-            s: {"passed": 0, "filtered": 0, "failed": 0, "pending": 0}
-            for s in self.stage_names
+            s: {"passed": 0, "filtered": 0, "failed": 0, "pending": 0} for s in self.stage_names
         }
         self.active_stage: str | None = None
 
@@ -58,9 +57,7 @@ class PipelineDashboard:
         self.active_stage = stage
         self.refresh()
 
-    def update_stats(
-        self, stage: str, passed=None, filtered=None, failed=None, pending=None
-    ):
+    def update_stats(self, stage: str, passed=None, filtered=None, failed=None, pending=None):
         if passed is not None:
             self.stats[stage]["passed"] = passed
         if filtered is not None:
@@ -83,15 +80,9 @@ class PipelineDashboard:
                 graph_parts.append(f"[bold cyan]\\[ {s} ][/]")
             else:
                 total_done = (
-                    self.stats[s]["passed"]
-                    + self.stats[s]["filtered"]
-                    + self.stats[s]["failed"]
+                    self.stats[s]["passed"] + self.stats[s]["filtered"] + self.stats[s]["failed"]
                 )
-                if (
-                    total_done > 0
-                    and self.stats[s]["pending"] == 0
-                    and s != self.active_stage
-                ):
+                if total_done > 0 and self.stats[s]["pending"] == 0 and s != self.active_stage:
                     graph_parts.append(f"[dim green]\\[ {s} ][/]")
                 else:
                     graph_parts.append(f"[dim]\\[ {s} ][/]")

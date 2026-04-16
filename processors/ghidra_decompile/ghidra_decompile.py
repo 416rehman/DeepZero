@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import asyncio
-import sys
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,15 +12,17 @@ from typing import Any
 from deepzero.engine.stage import (
     MapProcessor,
     ProcessorContext,
-    ProcessorResult,
     ProcessorEntry,
+    ProcessorResult,
 )
 
 log = logging.getLogger("deepzero.processor.ghidra")
 
 
 class GhidraDecompile(MapProcessor):
-    description = "decompiles binaries using ghidra headless analysis with a configurable post-script"
+    description = (
+        "decompiles binaries using ghidra headless analysis with a configurable post-script"
+    )
     version = "2.0"
 
     @dataclass
@@ -79,9 +81,7 @@ class GhidraDecompile(MapProcessor):
         if self.config.max_depth is not None:
             extra_env["DEEPZERO_MAX_DEPTH"] = str(self.config.max_depth)
 
-        active_timeout = (
-            self.spec.timeout if self.spec.timeout > 0 else self.config.timeout
-        )
+        active_timeout = self.spec.timeout if self.spec.timeout > 0 else self.config.timeout
         result = self._run_ghidra_headless(
             binary_path=entry.source_path,
             output_dir=output_dir,
@@ -188,9 +188,7 @@ class GhidraDecompile(MapProcessor):
         stdout_log = output_dir / "ghidra_stdout.log"
         stderr_log = output_dir / "ghidra_stderr.log"
 
-        log.info(
-            "starting ghidra analysis of %s (timeout=%ds)", binary_path.name, timeout
-        )
+        log.info("starting ghidra analysis of %s (timeout=%ds)", binary_path.name, timeout)
 
         try:
             return asyncio.run(
@@ -234,9 +232,7 @@ class GhidraDecompile(MapProcessor):
         if proc.returncode != 0:
             stderr_text = ""
             if stderr_log.exists():
-                stderr_text = stderr_log.read_text(encoding="utf-8", errors="replace")[
-                    -500:
-                ]
+                stderr_text = stderr_log.read_text(encoding="utf-8", errors="replace")[-500:]
             return {
                 "success": False,
                 "error": f"ghidra exited with code {proc.returncode}: {stderr_text}",

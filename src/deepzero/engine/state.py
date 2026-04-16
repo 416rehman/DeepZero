@@ -7,7 +7,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
-from deepzero.engine.types import Verdict, StageStatus, SampleStatus, RunStatus
+
+from deepzero.engine.types import RunStatus, SampleStatus, StageStatus, Verdict
 
 log = logging.getLogger("deepzero.state")
 
@@ -186,9 +187,7 @@ class StateStore:
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return RunState(
-                **{k: v for k, v in data.items() if k in RunState.__dataclass_fields__}
-            )
+            return RunState(**{k: v for k, v in data.items() if k in RunState.__dataclass_fields__})
         except (json.JSONDecodeError, TypeError) as e:
             log.warning("failed to load run state: %s", e)
             return None
@@ -255,17 +254,11 @@ class StateStore:
             "_version": STATE_VERSION,
             "total": len(entries),
             "active": sum(
-                1
-                for e in entries
-                if e["verdict"] in (SampleStatus.PENDING, SampleStatus.ACTIVE)
+                1 for e in entries if e["verdict"] in (SampleStatus.PENDING, SampleStatus.ACTIVE)
             ),
-            "filtered": sum(
-                1 for e in entries if e["verdict"] == SampleStatus.FILTERED
-            ),
+            "filtered": sum(1 for e in entries if e["verdict"] == SampleStatus.FILTERED),
             "failed": sum(1 for e in entries if e["verdict"] == SampleStatus.FAILED),
-            "completed": sum(
-                1 for e in entries if e["verdict"] == SampleStatus.COMPLETED
-            ),
+            "completed": sum(1 for e in entries if e["verdict"] == SampleStatus.COMPLETED),
             "samples": entries,
         }
         path = self.work_dir / "run_manifest.json"

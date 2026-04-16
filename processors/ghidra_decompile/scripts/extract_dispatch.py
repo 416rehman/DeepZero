@@ -8,7 +8,7 @@ import json
 import os
 import re
 
-from ghidra.app.decompiler import DecompInterface, DecompileOptions
+from ghidra.app.decompiler import DecompileOptions, DecompInterface
 
 
 def get_decompiler():
@@ -315,8 +315,7 @@ def main():
                         get_subfuncs(called, depth + 1)
         except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
             raise RuntimeError(
-                "ghidra structural failure: failed to decompile or resolve calls: "
-                + str(exc)
+                "ghidra structural failure: failed to decompile or resolve calls: " + str(exc)
             )
 
     get_subfuncs(dispatch_func)

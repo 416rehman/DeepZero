@@ -5,14 +5,16 @@ from typing import Any
 from deepzero.engine.stage import (
     MapProcessor,
     ProcessorContext,
+    ProcessorEntry,
     ProcessorResult,
     StageSpec,
-    ProcessorEntry,
 )
 
 
 class MetadataFilter(MapProcessor):
-    description = "generic metadata condition evaluator - checks field equality, min/max thresholds, dedup"
+    description = (
+        "generic metadata condition evaluator - checks field equality, min/max thresholds, dedup"
+    )
 
     def __init__(self, spec: StageSpec):
         super().__init__(spec)
@@ -28,9 +30,7 @@ class MetadataFilter(MapProcessor):
         for field_name, expected_value in require.items():
             actual = flat.get(field_name)
             if actual != expected_value:
-                return ProcessorResult.filter(
-                    f"{field_name}={actual}, required {expected_value}"
-                )
+                return ProcessorResult.filter(f"{field_name}={actual}, required {expected_value}")
 
         # min thresholds
         for key, value in config.items():
@@ -38,9 +38,7 @@ class MetadataFilter(MapProcessor):
                 field_name = key[4:]
                 actual = flat.get(field_name, 0)
                 if isinstance(actual, (int, float)) and actual < value:
-                    return ProcessorResult.filter(
-                        f"{field_name}={actual} < min {value}"
-                    )
+                    return ProcessorResult.filter(f"{field_name}={actual} < min {value}")
 
         # max thresholds
         for key, value in config.items():
@@ -48,9 +46,7 @@ class MetadataFilter(MapProcessor):
                 field_name = key[4:]
                 actual = flat.get(field_name, 0)
                 if isinstance(actual, (int, float)) and actual > value:
-                    return ProcessorResult.filter(
-                        f"{field_name}={actual} > max {value}"
-                    )
+                    return ProcessorResult.filter(f"{field_name}={actual} > max {value}")
 
         # dedup on a data field
         dedup_field = config.get("dedup_field", "")

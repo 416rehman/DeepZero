@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from deepzero.engine.stage import IngestProcessor, Sample, ProcessorContext
+from deepzero.engine.stage import IngestProcessor, ProcessorContext, Sample
 
 
 class FileDiscovery(IngestProcessor):

@@ -215,7 +215,12 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
         from deepzero.engine.pipeline import load_pipeline
 
         _setup_logging(False)
-        pipeline_def = load_pipeline(pipeline)
+        try:
+            pipeline_def = load_pipeline(pipeline)
+        except ValueError as e:
+            console.print(f"[bold red]X ERROR[/]: {e}")
+            raise SystemExit(1)
+            
         work_path = pipeline_def.work_dir
     else:
         console.print("[red]specify --pipeline or --work-dir[/]")
@@ -405,14 +410,7 @@ def interactive(model: str, work_dir: str, verbose: bool):
             response = llm.complete(history)
             history.append({"role": "assistant", "content": response})
             console.print(f"\n[bold cyan]deepzero>[/] {response}\n")
-        except (
-            RuntimeError,
-            ValueError,
-            TypeError,
-            OSError,
-            ConnectionError,
-            TimeoutError,
-        ) as e:
+        except Exception as e:
             console.print(f"[red]llm error ({type(e).__name__}): {e}[/]")
 
 

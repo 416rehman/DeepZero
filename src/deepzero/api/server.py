@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,38 +23,47 @@ def _extract_classification(sample) -> str:
 
 
 def create_app(work_dir: Path):
-    """create a starlette asgi app that serves pipeline state over http"""
     try:
         from starlette.applications import Starlette
         from starlette.responses import JSONResponse
         from starlette.routing import Route
     except ImportError as exc:
-        raise ImportError("starlette required for serve mode: pip install deepzero[serve]") from exc
+        raise ImportError(
+            "starlette required for serve mode: pip install deepzero[serve]"
+        ) from exc
 
     from deepzero.engine.state import StateStore
+
     store = StateStore(work_dir)
+
+    async def _run_sync(fn, *args):
+        # run synchronous file I/O in a thread to avoid blocking the event loop
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, partial(fn, *args))
 
     async def health(request: Request) -> JSONResponseType:
         return JSONResponse({"status": "ok", "work_dir": str(work_dir)})
 
     async def get_runs(request: Request) -> JSONResponseType:
-        run_state = store.load_run()
+        run_state = await _run_sync(store.load_run)
         if run_state is None:
             return JSONResponse({"runs": []})
 
         from dataclasses import asdict
+
         return JSONResponse({"runs": [asdict(run_state)]})
 
     async def get_run(request: Request) -> JSONResponseType:
-        run_state = store.load_run()
+        run_state = await _run_sync(store.load_run)
         if run_state is None:
             return JSONResponse({"error": "no run found"}, status_code=404)
 
         from dataclasses import asdict
+
         return JSONResponse(asdict(run_state))
 
     async def get_samples(request: Request) -> JSONResponseType:
-        samples = store.list_samples()
+        samples = await _run_sync(store.list_samples)
 
         # filtering
         verdict = request.query_params.get("verdict")
@@ -72,33 +83,38 @@ def create_app(work_dir: Path):
                 if not any(st.status == status_filter for st in s.history.values()):
                     continue
 
-            results.append({
-                "sample_id": s.sample_id,
-                "filename": s.filename,
-                "current_stage": s.current_stage,
-                "classification": classification,
-                "verdict": s.verdict,
-                "error": s.error,
-            })
+            results.append(
+                {
+                    "sample_id": s.sample_id,
+                    "filename": s.filename,
+                    "current_stage": s.current_stage,
+                    "classification": classification,
+                    "verdict": s.verdict,
+                    "error": s.error,
+                }
+            )
 
         return JSONResponse({"samples": results, "total": len(results)})
 
     async def get_sample(request: Request) -> JSONResponseType:
         sample_id = request.path_params["sample_id"]
-        state = store.load_sample(sample_id)
+        state = await _run_sync(store.load_sample, sample_id)
 
         if state is None:
-            return JSONResponse({"error": f"sample {sample_id} not found"}, status_code=404)
+            return JSONResponse(
+                {"error": f"sample {sample_id} not found"}, status_code=404
+            )
 
-        from deepzero.engine.state import _sample_to_dict
-        return JSONResponse(_sample_to_dict(state))
+        from deepzero.engine.state import sample_to_dict
+
+        return JSONResponse(sample_to_dict(state))
 
     async def get_sample_artifact(request: Request) -> JSONResponseType:
         sample_id = request.path_params["sample_id"]
         artifact_name = request.path_params["name"]
 
         sample_dir = store.sample_dir(sample_id)
-        state = store.load_sample(sample_id)
+        state = await _run_sync(store.load_sample, sample_id)
 
         if state is None:
             return JSONResponse({"error": "sample not found"}, status_code=404)
@@ -109,10 +125,16 @@ def create_app(work_dir: Path):
                 if aname == artifact_name:
                     full_path = sample_dir / apath
                     if full_path.exists():
-                        content = full_path.read_text(encoding="utf-8", errors="replace")
-                        return JSONResponse({"artifact": artifact_name, "content": content})
+                        content = full_path.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                        return JSONResponse(
+                            {"artifact": artifact_name, "content": content}
+                        )
 
-        return JSONResponse({"error": f"artifact '{artifact_name}' not found"}, status_code=404)
+        return JSONResponse(
+            {"error": f"artifact '{artifact_name}' not found"}, status_code=404
+        )
 
     routes = [
         Route("/api/health", health),

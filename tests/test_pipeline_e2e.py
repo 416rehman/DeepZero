@@ -2,15 +2,26 @@ import logging
 from pathlib import Path
 
 from deepzero.engine.runner import PipelineRunner
-from deepzero.engine.stage import BulkMapProcessor, MapProcessor, ReduceProcessor, ProcessorContext, ProcessorResult, StageSpec, Sample, ProcessorEntry
+from deepzero.engine.stage import (
+    BulkMapProcessor,
+    MapProcessor,
+    ReduceProcessor,
+    ProcessorContext,
+    ProcessorResult,
+    StageSpec,
+    Sample,
+    ProcessorEntry,
+)
 from deepzero.engine.state import RunState, StateStore
 
 
 from deepzero.engine.stage import IngestProcessor
 
+
 class E2EIngest(IngestProcessor):
     def __init__(self, samples: list[Sample]):
         from deepzero.engine.stage import StageSpec
+
         self.spec = StageSpec(name="discover", processor="e2e_ingest")
         self.samples = samples
         self.config = {}
@@ -40,7 +51,9 @@ class E2EMapProcessor(MapProcessor):
 
 
 class E2EBatchProcessor(BulkMapProcessor):
-    def process(self, ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[ProcessorResult]:
+    def process(
+        self, ctx: ProcessorContext, entries: list[ProcessorEntry]
+    ) -> list[ProcessorResult]:
         if self.config.get("behavior") == "crash":
             raise ValueError("intentional batch crash")
 
@@ -57,7 +70,9 @@ class E2EBatchProcessor(BulkMapProcessor):
 
 
 class E2EReduceProcessor(ReduceProcessor):
-    def process(self, ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[str]:
+    def process(
+        self, ctx: ProcessorContext, entries: list[ProcessorEntry]
+    ) -> list[str]:
         threshold = self.config.get("drop_threshold", 0)
         if threshold > 0:
             return [s.sample_id for i, s in enumerate(entries) if i < threshold]
@@ -66,7 +81,15 @@ class E2EReduceProcessor(ReduceProcessor):
 
 class TestPipelineE2E:
     def _make_samples(self, n=5) -> list[Sample]:
-        return [Sample(sample_id=f"s{i}", source_path=Path(f"s{i}.bin"), filename=f"s{i}.bin", data={"sha256": f"ABC{i}"}) for i in range(n)]
+        return [
+            Sample(
+                sample_id=f"s{i}",
+                source_path=Path(f"s{i}.bin"),
+                filename=f"s{i}.bin",
+                data={"sha256": f"ABC{i}"},
+            )
+            for i in range(n)
+        ]
 
     def test_clean_flow_and_data_passing(self, tmp_path):
         store = StateStore(tmp_path / "work")
@@ -74,11 +97,26 @@ class TestPipelineE2E:
         store.save_run(run_state)
 
         ingest = E2EIngest(self._make_samples(10))
-        m_proc = E2EMapProcessor(StageSpec(name="m", processor="mock", config={"data": {"passed_map": True}}, parallel=2))
-        b_proc = E2EBatchProcessor(StageSpec(name="b", processor="mock", config={"require_map_data": True}))
+        m_proc = E2EMapProcessor(
+            StageSpec(
+                name="m",
+                processor="mock",
+                config={"data": {"passed_map": True}},
+                parallel=2,
+            )
+        )
+        b_proc = E2EBatchProcessor(
+            StageSpec(name="b", processor="mock", config={"require_map_data": True})
+        )
         r_proc = E2EReduceProcessor(StageSpec(name="r", processor="mock"))
 
-        runner = PipelineRunner(ingest, [(m_proc.spec, m_proc), (b_proc.spec, b_proc), (r_proc.spec, r_proc)], store, tmp_path, {})
+        runner = PipelineRunner(
+            ingest,
+            [(m_proc.spec, m_proc), (b_proc.spec, b_proc), (r_proc.spec, r_proc)],
+            store,
+            tmp_path,
+            {},
+        )
         result = runner.run(Path("."), run_state)
 
         assert result.status == "completed"
@@ -99,10 +137,16 @@ class TestPipelineE2E:
         run_state = RunState(run_id="test_filter", pipeline="e2e")
 
         ingest = E2EIngest(self._make_samples(5))
-        m_proc = E2EMapProcessor(StageSpec(name="m", processor="mock", config={"behavior": "filter"}, parallel=1))
+        m_proc = E2EMapProcessor(
+            StageSpec(
+                name="m", processor="mock", config={"behavior": "filter"}, parallel=1
+            )
+        )
         b_proc = E2EBatchProcessor(StageSpec(name="b", processor="mock"))
 
-        runner = PipelineRunner(ingest, [(m_proc.spec, m_proc), (b_proc.spec, b_proc)], store, tmp_path, {})
+        runner = PipelineRunner(
+            ingest, [(m_proc.spec, m_proc), (b_proc.spec, b_proc)], store, tmp_path, {}
+        )
         result = runner.run(Path("."), run_state)
 
         assert result.stats["per_stage"]["m"]["filtered"] == 5
@@ -115,7 +159,9 @@ class TestPipelineE2E:
         run_state = RunState(run_id="test_fail", pipeline="e2e")
 
         ingest = E2EIngest(self._make_samples(1))
-        m_proc = E2EMapProcessor(StageSpec(name="m", processor="mock", config={"behavior": "fail"}))
+        m_proc = E2EMapProcessor(
+            StageSpec(name="m", processor="mock", config={"behavior": "fail"})
+        )
 
         logger = logging.getLogger("deepzero")
         logger.setLevel(logging.DEBUG)
@@ -138,20 +184,44 @@ class TestPipelineE2E:
         m_proc1 = E2EMapProcessor(StageSpec(name="m1", processor="mock_success"))
 
         from deepzero.engine.stage import FailurePolicy
-        m_proc2_crash = E2EMapProcessor(StageSpec(name="m2", processor="mock_crash", config={"behavior": "crash"}))
+
+        m_proc2_crash = E2EMapProcessor(
+            StageSpec(name="m2", processor="mock_crash", config={"behavior": "crash"})
+        )
         m_proc2_crash.spec.on_failure = FailurePolicy.ABORT
 
-        runner1 = PipelineRunner(ingest, [(m_proc1.spec, m_proc1), (m_proc2_crash.spec, m_proc2_crash)], store, tmp_path, {})
+        runner1 = PipelineRunner(
+            ingest,
+            [(m_proc1.spec, m_proc1), (m_proc2_crash.spec, m_proc2_crash)],
+            store,
+            tmp_path,
+            {},
+        )
         runner1.run(Path("."), run_state)
 
         # abort causes the first crash to stop the pipeline - status depends on runner implementation
         assert run_state.status in ("interrupted", "completed", "failed")
 
         # resume with cache - m1 should be skipped via should_skip()
-        m_proc1_resumed = E2EMapProcessor(StageSpec(name="m1", processor="mock_success", config={"cache_marker": True}))
-        m_proc2_resumed = E2EMapProcessor(StageSpec(name="m2", processor="mock_success"))
+        m_proc1_resumed = E2EMapProcessor(
+            StageSpec(
+                name="m1", processor="mock_success", config={"cache_marker": True}
+            )
+        )
+        m_proc2_resumed = E2EMapProcessor(
+            StageSpec(name="m2", processor="mock_success")
+        )
 
-        runner2 = PipelineRunner(ingest, [(m_proc1_resumed.spec, m_proc1_resumed), (m_proc2_resumed.spec, m_proc2_resumed)], store, tmp_path, {})
+        runner2 = PipelineRunner(
+            ingest,
+            [
+                (m_proc1_resumed.spec, m_proc1_resumed),
+                (m_proc2_resumed.spec, m_proc2_resumed),
+            ],
+            store,
+            tmp_path,
+            {},
+        )
         res = runner2.run(Path("."), run_state)
 
         assert res.status == "completed"

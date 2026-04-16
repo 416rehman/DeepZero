@@ -51,9 +51,14 @@ class TestRunSubprocessWithKill:
 
     def test_env_argument(self):
         import os
+
         env = {**os.environ, "DEEPZERO_TEST_VAR": "test_val_123"}
         rc, stdout, _ = run_subprocess_with_kill(
-            [sys.executable, "-c", "import os; print(os.environ.get('DEEPZERO_TEST_VAR', ''))"],
+            [
+                sys.executable,
+                "-c",
+                "import os; print(os.environ.get('DEEPZERO_TEST_VAR', ''))",
+            ],
             timeout=10,
             env=env,
         )
@@ -66,7 +71,9 @@ class TestKillProcessTree:
     async def test_kill_already_exited(self):
         # process that exits immediately
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-c", "pass",
+            sys.executable,
+            "-c",
+            "pass",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -95,7 +102,10 @@ class TestKillProcessTree:
         assert r"C:\Windows\System32\taskkill.exe" in call_args
         assert str(12345) in call_args
 
-    @patch("deepzero.engine.process.asyncio.create_subprocess_exec", side_effect=OSError("no such process"))
+    @patch(
+        "deepzero.engine.process.asyncio.create_subprocess_exec",
+        side_effect=OSError("no such process"),
+    )
     async def test_kill_handles_os_error(self, mock_create):
         # on windows, taskkill creation might raise OSError if path is broken
         proc = MagicMock()
@@ -106,4 +116,3 @@ class TestKillProcessTree:
             mock_sys.platform = "win32"
             # should not raise - OSError is caught locally or at asyncio level
             await _kill_process_tree(proc)
-

@@ -14,14 +14,19 @@ class TopKSelector(ReduceProcessor):
         keep_top: int = 10
         sort_order: str = "desc"
 
-    def process(self, ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[str]:
+    def process(
+        self, ctx: ProcessorContext, entries: list[ProcessorEntry]
+    ) -> list[str]:
         if not self.config.metric_path:
             self.log.warning("no metric_path configured, passing all samples through")
             return [s.sample_id for s in entries]
 
         parts = self.config.metric_path.split(".", 1)
         if len(parts) != 2:
-            self.log.warning("metric_path must be 'processor_name.key', got '%s'", self.config.metric_path)
+            self.log.warning(
+                "metric_path must be 'processor_name.key', got '%s'",
+                self.config.metric_path,
+            )
             return [s.sample_id for s in entries]
 
         stage_name, data_key = parts
@@ -39,12 +44,15 @@ class TopKSelector(ReduceProcessor):
         reverse = self.config.sort_order == "desc"
         scored = sorted(entries, key=_get_metric, reverse=reverse)
 
-        kept = scored[:self.config.keep_top]
+        kept = scored[: self.config.keep_top]
         dropped = len(scored) - len(kept)
         if dropped > 0:
             self.log.info(
                 "top_k: kept %d, dropped %d (metric: %s, order: %s)",
-                len(kept), dropped, self.config.metric_path, self.config.sort_order,
+                len(kept),
+                dropped,
+                self.config.metric_path,
+                self.config.sort_order,
             )
 
         return [s.sample_id for s in kept]

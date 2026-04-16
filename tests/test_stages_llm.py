@@ -18,29 +18,34 @@ def _make_ctx(tmp_path, config=None, llm=None, history_data=None):
     discover_data = history_data or {"sha256": "abc123", "filename": "test.sys"}
     history = {"discover": StageOutput(status="completed", data=discover_data)}
     ctx = ProcessorContext(
-        pipeline_dir=tmp_path,
-        global_config={},
-        llm=locals().get("llm")
+        pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm")
     )
     from deepzero.engine.stage import ProcessorEntry
+
     try:
         hist = history
     except NameError:
         hist = {}
-        
+
     class MockStore:
-        def __init__(self, history): self._history = history
+        def __init__(self, history):
+            self._history = history
+
         def load_sample(self, sid):
             class S:
-                def __init__(self, history): self._history = history
+                def __init__(self, history):
+                    self._history = history
+
                 @property
-                def history(self): return self._history
+                def history(self):
+                    return self._history
+
             return S(self._history)
-            
+
     try:
         sample_path_val = sample_path
     except NameError:
-        sample_path_val = tmp_path / 'test.bin'
+        sample_path_val = tmp_path / "test.bin"
 
     try:
         sample_dir_val = sample_dir
@@ -52,7 +57,7 @@ def _make_ctx(tmp_path, config=None, llm=None, history_data=None):
         source_path=sample_path_val,
         filename=sample_path_val.name,
         sample_dir=sample_dir_val,
-        _store=MockStore(hist)
+        _store=MockStore(hist),
     )
     return ctx, entry
 
@@ -78,7 +83,9 @@ class TestGenericLLMProcess:
         assert "prompt" in result.error
 
     def test_successful_assessment(self, tmp_path):
-        processor = self._make_tool(config={"prompt": "analyze {{sample_name}}", "output_file": "result.md"})
+        processor = self._make_tool(
+            config={"prompt": "analyze {{sample_name}}", "output_file": "result.md"}
+        )
         mock_llm = MagicMock()
         mock_llm.complete.return_value = "this driver is vulnerable"
 
@@ -96,7 +103,9 @@ class TestGenericLLMProcess:
         assert output.read_text() == "this driver is vulnerable"
 
     def test_cached_output_skips_llm_call(self, tmp_path):
-        processor = self._make_tool(config={"prompt": "analyze", "output_file": "result.md"})
+        processor = self._make_tool(
+            config={"prompt": "analyze", "output_file": "result.md"}
+        )
         mock_llm = MagicMock()
 
         ctx, entry = _make_ctx(
@@ -117,10 +126,12 @@ class TestGenericLLMClassify:
         return GenericLLM(spec)
 
     def test_classify_by_pattern(self, tmp_path):
-        processor = self._make_tool(config={
-            "prompt": "analyze",
-            "classify_by": r"\[(VULNERABLE|NOT_VULNERABLE)\]",
-        })
+        processor = self._make_tool(
+            config={
+                "prompt": "analyze",
+                "classify_by": r"\[(VULNERABLE|NOT_VULNERABLE)\]",
+            }
+        )
         mock_llm = MagicMock()
         mock_llm.complete.return_value = "[VULNERABLE] buffer overflow found"
 
@@ -132,7 +143,9 @@ class TestGenericLLMClassify:
         assert result.data.get("classification") == "vulnerable"
 
     def test_no_classification_without_match(self, tmp_path):
-        processor = self._make_tool(config={"prompt": "analyze", "classify_by": r"\[EXPLOIT\]"})
+        processor = self._make_tool(
+            config={"prompt": "analyze", "classify_by": r"\[EXPLOIT\]"}
+        )
         mock_llm = MagicMock()
         mock_llm.complete.return_value = "no classification marker here"
 
@@ -154,7 +167,11 @@ class TestGenericLLMTemplateVars:
         ctx, entry = _make_ctx(
             tmp_path,
             config={},
-            history_data={"sha256": "abc123", "filename": "test.sys", "size_bytes": 1024},
+            history_data={
+                "sha256": "abc123",
+                "filename": "test.sys",
+                "size_bytes": 1024,
+            },
         )
         vars = processor._build_template_vars(ctx, entry)
         assert vars["sample_name"] == "test.sys"

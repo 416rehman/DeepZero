@@ -4,7 +4,7 @@ import json
 import logging
 import asyncio
 import sys
-import time
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -119,6 +119,35 @@ class GhidraDecompile(MapProcessor):
 
     # -- ghidra subprocess management (inlined from former providers/decompiler.py) --
 
+    def _build_ghidra_cmd(
+        self,
+        binary_path: Path,
+        output_dir: Path,
+        ghidra_install_dir: Path,
+        post_script: Path,
+        timeout: int,
+    ) -> list[str]:
+        analyze_headless = self._find_analyze_headless(ghidra_install_dir)
+        project_dir = output_dir / "ghidra_project"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        project_name = f"dz_{binary_path.stem[:20]}"
+        cmd = [
+            str(analyze_headless),
+            str(project_dir),
+            project_name,
+            "-import",
+            str(binary_path),
+            "-postScript",
+            str(post_script),
+            "-scriptPath",
+            str(post_script.parent),
+            "-overwrite",
+            "-deleteProject",
+            "-analysisTimeoutPerFile",
+            str(timeout),
+        ]
+        return cmd
+
     def _run_ghidra_headless(
         self,
         binary_path: Path,
@@ -138,28 +167,11 @@ class GhidraDecompile(MapProcessor):
                 return json.loads(cached_result.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as e:
                 log.warning("cached result is corrupt, re-running analysis", exc_info=e)
+                cached_result.unlink(missing_ok=True)
 
-        analyze_headless = self._find_analyze_headless(ghidra_install_dir)
-
-        project_dir = output_dir / "ghidra_project"
-        project_dir.mkdir(parents=True, exist_ok=True)
-
-        project_name = f"dz_{binary_path.stem[:20]}"
-
-        cmd = [
-            str(analyze_headless),
-            str(project_dir),
-            project_name,
-            "-import",
-            str(binary_path),
-            "-postScript",
-            str(post_script),
-            "-scriptPath",
-            str(post_script.parent),
-            "-deleteProject",
-            "-analysisTimeoutPerFile",
-            str(timeout),
-        ]
+        cmd = self._build_ghidra_cmd(
+            binary_path, output_dir, ghidra_install_dir, post_script, timeout
+        )
 
         env = dict(os.environ)
         env["DEEPZERO_OUTPUT_DIR"] = str(output_dir)
@@ -210,8 +222,10 @@ class GhidraDecompile(MapProcessor):
                     proc.kill()
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=10)
-                    except asyncio.TimeoutError:
-                        pass
+                    except asyncio.TimeoutError as kill_exc:
+                        raise RuntimeError(
+                            "ghidra process failed to terminate after kill limit"
+                        ) from kill_exc
                 return {"success": False, "error": f"ghidra timed out after {timeout}s"}
 
         if proc.returncode != 0:

@@ -4,37 +4,44 @@ from pathlib import Path
 
 # -- metadata filter (builtin map processor) --
 
+
 class TestMetadataFilter:
     def _make_ctx(self, data: dict, config: dict, tmp_path=None):
         if tmp_path is None:
             tmp_path = Path(__import__("tempfile").gettempdir())
         from deepzero.engine.stage import ProcessorContext
         from deepzero.engine.state import StageOutput
+
         history = {"discover": StageOutput(status="completed", data=data)}
         ctx = ProcessorContext(
-            pipeline_dir=tmp_path,
-            global_config={},
-            llm=locals().get("llm")
+            pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm")
         )
         from deepzero.engine.stage import ProcessorEntry
+
         try:
             hist = history
         except NameError:
             hist = {}
-            
+
         class MockStore:
-            def __init__(self, history): self._history = history
+            def __init__(self, history):
+                self._history = history
+
             def load_sample(self, sid):
                 class S:
-                    def __init__(self, history): self._history = history
+                    def __init__(self, history):
+                        self._history = history
+
                     @property
-                    def history(self): return self._history
+                    def history(self):
+                        return self._history
+
                 return S(self._history)
-                
+
         try:
             sample_path_val = sample_path
         except NameError:
-            sample_path_val = tmp_path / 'test.bin'
+            sample_path_val = tmp_path / "test.bin"
 
         try:
             sample_dir_val = sample_dir
@@ -46,31 +53,40 @@ class TestMetadataFilter:
             source_path=sample_path_val,
             filename=sample_path_val.name,
             sample_dir=sample_dir_val,
-            _store=MockStore(hist)
+            _store=MockStore(hist),
         )
         return ctx, entry
 
     def _make_filter(self, config: dict | None = None):
         from deepzero.engine.stage import StageSpec
         from deepzero.stages.filter import MetadataFilter
-        spec = StageSpec(name="test_filter", processor="metadata_filter", config=config or {})
+
+        spec = StageSpec(
+            name="test_filter", processor="metadata_filter", config=config or {}
+        )
         return MetadataFilter(spec)
 
     def test_passes_when_requirements_met(self):
         f = self._make_filter({"require": {"is_kernel_driver": True}})
-        ctx, entry = self._make_ctx({"is_kernel_driver": True}, {"require": {"is_kernel_driver": True}})
+        ctx, entry = self._make_ctx(
+            {"is_kernel_driver": True}, {"require": {"is_kernel_driver": True}}
+        )
         result = f.process(ctx, entry)
         assert result.verdict == "continue"
 
     def test_skips_when_requirement_not_met(self):
         f = self._make_filter({"require": {"is_kernel_driver": True}})
-        ctx, entry = self._make_ctx({"is_kernel_driver": False}, {"require": {"is_kernel_driver": True}})
+        ctx, entry = self._make_ctx(
+            {"is_kernel_driver": False}, {"require": {"is_kernel_driver": True}}
+        )
         result = f.process(ctx, entry)
         assert result.verdict == "filter"
 
     def test_min_threshold(self):
         f = self._make_filter({"min_priority_score": 5.0})
-        ctx, entry = self._make_ctx({"priority_score": 2.0}, {"min_priority_score": 5.0})
+        ctx, entry = self._make_ctx(
+            {"priority_score": 2.0}, {"min_priority_score": 5.0}
+        )
         result = f.process(ctx, entry)
         assert result.verdict == "filter"
 
@@ -98,37 +114,44 @@ class TestMetadataFilter:
 
 # -- hash exclude (builtin map processor) --
 
+
 class TestHashExclude:
     def _make_ctx(self, data: dict, config: dict, tmp_path=None):
         if tmp_path is None:
             tmp_path = Path(__import__("tempfile").gettempdir())
         from deepzero.engine.stage import ProcessorContext
         from deepzero.engine.state import StageOutput
+
         history = {"discover": StageOutput(status="completed", data=data)}
         ctx = ProcessorContext(
-            pipeline_dir=tmp_path,
-            global_config={},
-            llm=locals().get("llm")
+            pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm")
         )
         from deepzero.engine.stage import ProcessorEntry
+
         try:
             hist = history
         except NameError:
             hist = {}
-            
+
         class MockStore:
-            def __init__(self, history): self._history = history
+            def __init__(self, history):
+                self._history = history
+
             def load_sample(self, sid):
                 class S:
-                    def __init__(self, history): self._history = history
+                    def __init__(self, history):
+                        self._history = history
+
                     @property
-                    def history(self): return self._history
+                    def history(self):
+                        return self._history
+
                 return S(self._history)
-                
+
         try:
             sample_path_val = sample_path
         except NameError:
-            sample_path_val = tmp_path / 'test.bin'
+            sample_path_val = tmp_path / "test.bin"
 
         try:
             sample_dir_val = sample_dir
@@ -140,14 +163,17 @@ class TestHashExclude:
             source_path=sample_path_val,
             filename=sample_path_val.name,
             sample_dir=sample_dir_val,
-            _store=MockStore(hist)
+            _store=MockStore(hist),
         )
         return ctx, entry
 
     def test_inline_hashes_exclude(self):
         from deepzero.engine.stage import StageSpec
         from deepzero.stages.hash_filter import HashExclude
-        spec = StageSpec(name="hash_test", processor="hash_exclude", config={"hashes": ["ABCD1234"]})
+
+        spec = StageSpec(
+            name="hash_test", processor="hash_exclude", config={"hashes": ["ABCD1234"]}
+        )
         f = HashExclude(spec)
         f.setup({})
         ctx, entry = self._make_ctx({"sha256": "abcd1234"}, {"hash_field": "sha256"})
@@ -157,7 +183,10 @@ class TestHashExclude:
     def test_hash_not_in_list_passes(self):
         from deepzero.engine.stage import StageSpec
         from deepzero.stages.hash_filter import HashExclude
-        spec = StageSpec(name="hash_test", processor="hash_exclude", config={"hashes": ["ABCD1234"]})
+
+        spec = StageSpec(
+            name="hash_test", processor="hash_exclude", config={"hashes": ["ABCD1234"]}
+        )
         f = HashExclude(spec)
         f.setup({})
         ctx, entry = self._make_ctx({"sha256": "ffffff"}, {"hash_field": "sha256"})
@@ -167,6 +196,7 @@ class TestHashExclude:
 
 # -- top-k selector (builtin reduce processor) --
 
+
 class TestTopKSelector:
     def test_keeps_top_k(self):
         from deepzero.engine.stage import StageSpec, ProcessorContext, ProcessorEntry
@@ -174,11 +204,22 @@ class TestTopKSelector:
         from deepzero.engine.state import StageOutput
         from pathlib import Path
 
-        spec = StageSpec(name="pick", processor="top_k", config={"metric_path": "scan.finding_count", "keep_top": 2, "sort_order": "desc"})
+        spec = StageSpec(
+            name="pick",
+            processor="top_k",
+            config={
+                "metric_path": "scan.finding_count",
+                "keep_top": 2,
+                "sort_order": "desc",
+            },
+        )
         processor = TopKSelector(spec)
 
         import tempfile
-        ctx = ProcessorContext(pipeline_dir=Path(tempfile.gettempdir()), global_config={}, llm=None)
+
+        ctx = ProcessorContext(
+            pipeline_dir=Path(tempfile.gettempdir()), global_config={}, llm=None
+        )
 
         entries = []
         for i in range(5):
@@ -187,9 +228,11 @@ class TestTopKSelector:
                 source_path=Path(tempfile.gettempdir()) / f"s{i}.sys",
                 filename=f"s{i}.sys",
                 sample_dir=Path(tempfile.gettempdir()) / f"s{i}",
-                _store=None
+                _store=None,
             )
-            entry._history = {"scan": StageOutput(status="completed", data={"finding_count": i})}
+            entry._history = {
+                "scan": StageOutput(status="completed", data={"finding_count": i})
+            }
             entries.append(entry)
 
         active_ids = processor.process(ctx, entries)
@@ -206,14 +249,17 @@ class TestTopKSelector:
         spec = StageSpec(name="pick", processor="top_k", config={})
         processor = TopKSelector(spec)
         import tempfile
-        ctx = ProcessorContext(pipeline_dir=Path(tempfile.gettempdir()), global_config={}, llm=None)
-        
+
+        ctx = ProcessorContext(
+            pipeline_dir=Path(tempfile.gettempdir()), global_config={}, llm=None
+        )
+
         entry = ProcessorEntry(
             sample_id="s0",
             source_path=Path(tempfile.gettempdir()) / "s0.sys",
             filename="s0.sys",
             sample_dir=Path(tempfile.gettempdir()) / "s0",
-            _store=None
+            _store=None,
         )
 
         result = processor.process(ctx, [entry])

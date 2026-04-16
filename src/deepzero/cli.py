@@ -17,10 +17,12 @@ console = Console()
 
 
 # short name lookups for log formatting
-_LOG_PREFIX_MAP: MappingProxyType[str, str] = MappingProxyType({
-    "deepzero.runner": "engine",
-    "deepzero.pipeline": "pipeline",
-})
+_LOG_PREFIX_MAP: MappingProxyType[str, str] = MappingProxyType(
+    {
+        "deepzero.runner": "engine",
+        "deepzero.pipeline": "pipeline",
+    }
+)
 
 
 class _ShortNameFormatter(logging.Formatter):
@@ -31,17 +33,17 @@ class _ShortNameFormatter(logging.Formatter):
         short = _LOG_PREFIX_MAP.get(name)
         if short is None:
             if name.startswith("deepzero.processor."):
-                short = name[len("deepzero.processor."):]
+                short = name[len("deepzero.processor.") :]
             elif name.startswith("deepzero."):
-                short = name[len("deepzero."):]
+                short = name[len("deepzero.") :]
             else:
                 short = name
-        
+
         # force silence third-party stacktraces completely
         if not name.startswith("deepzero."):
             record.exc_info = None
             record.exc_text = None
-            
+
         record.msg = f"{short:>20} | {record.msg}"
         return super().format(record)
 
@@ -49,8 +51,11 @@ class _ShortNameFormatter(logging.Formatter):
 def _setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     handler = RichHandler(
-        console=console, rich_tracebacks=verbose, show_path=False,
-        show_level=False, show_time=True,
+        console=console,
+        rich_tracebacks=verbose,
+        show_path=False,
+        show_level=False,
+        show_time=True,
     )
     handler.setFormatter(_ShortNameFormatter("%(message)s"))
     logging.basicConfig(level=level, handlers=[handler])
@@ -58,10 +63,13 @@ def _setup_logging(verbose: bool) -> None:
         for lib in ("httpx", "httpcore", "urllib3", "litellm", "openai"):
             logging.getLogger(lib).setLevel(logging.WARNING)
 
+
 def _load_env() -> None:
     import importlib.util
+
     if importlib.util.find_spec("dotenv"):
         from dotenv import load_dotenv
+
         load_dotenv()
 
 
@@ -83,9 +91,11 @@ def _build_runner(pipeline_def: Any) -> tuple[Any, Any]:
         global_config=pipeline_def.to_global_config(),
         llm=llm,
         default_max_workers=pipeline_def.max_workers,
+        console=console,
     )
 
     return runner, llm
+
 
 @click.group()
 @click.version_option(package_name="deepzero")
@@ -98,10 +108,14 @@ def main(ctx: click.Context):
 @main.command()
 @click.argument("target", type=click.Path(exists=True))
 @click.option("--pipeline", "-p", required=True, help="pipeline name or path")
-@click.option("--model", "-m", default=None, help="llm model override (e.g. openai/gpt-4o)")
+@click.option(
+    "--model", "-m", default=None, help="llm model override (e.g. openai/gpt-4o)"
+)
 @click.option("--work-dir", "-w", default=None, help="work directory override")
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
-def run(target: str, pipeline: str, model: str | None, work_dir: str | None, verbose: bool):
+def run(
+    target: str, pipeline: str, model: str | None, work_dir: str | None, verbose: bool
+):
     """run a pipeline against a target file or directory"""
     _setup_logging(verbose)
 
@@ -117,8 +131,12 @@ def run(target: str, pipeline: str, model: str | None, work_dir: str | None, ver
     console.print(f"\n[bold cyan]deepzero[/] - running pipeline [bold]{pipeline}[/]")
     console.print(f"  target: {target_path}")
 
-    pipeline_def = load_pipeline(pipeline, model_override=model, work_dir_override=work_dir)
-    console.print(f"  pipeline: {pipeline_def.name} ({len(pipeline_def.stage_specs)} stages)")
+    pipeline_def = load_pipeline(
+        pipeline, model_override=model, work_dir_override=work_dir
+    )
+    console.print(
+        f"  pipeline: {pipeline_def.name} ({len(pipeline_def.stage_specs)} stages)"
+    )
     console.print(f"  stages: {' -> '.join(pipeline_def.stage_names)}")
 
     runner, llm = _build_runner(pipeline_def)
@@ -147,14 +165,25 @@ def run(target: str, pipeline: str, model: str | None, work_dir: str | None, ver
     if run_state.status == RunStatus.COMPLETED:
         console.print("[bold green]pipeline completed[/]")
     elif run_state.status == RunStatus.INTERRUPTED:
-        console.print("[bold yellow]pipeline interrupted - use 'deepzero resume' to continue[/]")
+        console.print(
+            "[bold yellow]pipeline interrupted - use 'deepzero resume' to continue[/]"
+        )
     else:
-        console.print(f"[bold red]pipeline failed: {run_state.stats.get('error', 'unknown')}[/]")
+        console.print(
+            f"[bold red]pipeline failed: {run_state.stats.get('error', 'unknown')}[/]"
+        )
 
 
 @main.command()
-@click.option("--pipeline", "-p", required=True, help="pipeline name or path (for processor resolution)")
-@click.option("--model", "-m", default=None, help="llm model override (e.g. openai/gpt-4o)")
+@click.option(
+    "--pipeline",
+    "-p",
+    required=True,
+    help="pipeline name or path (for processor resolution)",
+)
+@click.option(
+    "--model", "-m", default=None, help="llm model override (e.g. openai/gpt-4o)"
+)
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
 def resume(pipeline: str, model: str | None, verbose: bool):
     """resume an interrupted pipeline run"""
@@ -179,7 +208,9 @@ def resume(pipeline: str, model: str | None, verbose: bool):
         console.print("[red]no run state found in work directory[/]")
         raise SystemExit(1)
 
-    console.print(f"[bold cyan]resuming[/] pipeline '{run_state.pipeline}' (run {run_state.run_id})")
+    console.print(
+        f"[bold cyan]resuming[/] pipeline '{run_state.pipeline}' (run {run_state.run_id})"
+    )
     console.print(f"  status: {run_state.status}")
 
     runner, _ = _build_runner(pipeline_def)
@@ -207,6 +238,7 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
     elif pipeline:
         import deepzero.stages  # noqa: F401
         from deepzero.engine.pipeline import load_pipeline
+
         _setup_logging(False)
         pipeline_def = load_pipeline(pipeline)
         work_path = pipeline_def.work_dir
@@ -221,9 +253,12 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
         console.print("[yellow]no run found[/]")
         raise SystemExit(1)
 
-    color = {"completed": "green", "running": "cyan", "interrupted": "yellow", "failed": "red"}.get(
-        run_state.status, "white"
-    )
+    color = {
+        "completed": "green",
+        "running": "cyan",
+        "interrupted": "yellow",
+        "failed": "red",
+    }.get(run_state.status, "white")
     console.print(f"[bold {color}]{run_state.pipeline}[/] - {run_state.status}")
     console.print(f"  run_id: {run_state.run_id}")
     console.print(f"  target: {run_state.target}")
@@ -283,7 +318,11 @@ def list_processors():
 
     for name, cls in sorted(processors.items()):
         ptype = getattr(cls, "processor_type", "unknown")
-        table.add_row(name, str(ptype.value if hasattr(ptype, "value") else ptype), f"{cls.__module__}.{cls.__name__}")
+        table.add_row(
+            name,
+            str(ptype.value if hasattr(ptype, "value") else ptype),
+            f"{cls.__module__}.{cls.__name__}",
+        )
 
     console.print(table)
 
@@ -329,7 +368,9 @@ stages:
 
 
 @main.command()
-@click.option("--model", "-m", default="openai/gpt-4o", help="llm model for interactive mode")
+@click.option(
+    "--model", "-m", default="openai/gpt-4o", help="llm model for interactive mode"
+)
 @click.option("--work-dir", "-w", default="work", help="work directory for context")
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
 def interactive(model: str, work_dir: str, verbose: bool):
@@ -374,7 +415,9 @@ def interactive(model: str, work_dir: str, verbose: bool):
         if user_input == "/status":
             run_state = state_store.load_run()
             if run_state:
-                console.print(f"  pipeline: {run_state.pipeline}, status: {run_state.status}")
+                console.print(
+                    f"  pipeline: {run_state.pipeline}, status: {run_state.status}"
+                )
                 _print_stats(run_state)
             else:
                 console.print("  [dim]no run data found[/]")
@@ -391,18 +434,29 @@ def interactive(model: str, work_dir: str, verbose: bool):
             response = llm.complete(history)
             history.append({"role": "assistant", "content": response})
             console.print(f"\n[bold cyan]deepzero>[/] {response}\n")
-        except (RuntimeError, ValueError, TypeError, OSError, ConnectionError, TimeoutError) as e:
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            OSError,
+            ConnectionError,
+            TimeoutError,
+        ) as e:
             console.print(f"[red]llm error ({type(e).__name__}): {e}[/]")
 
 
 @main.command()
-@click.option("--host", default="127.0.0.1", help="bind host (use 0.0.0.0 for all interfaces)")
+@click.option(
+    "--host", default="127.0.0.1", help="bind host (use 0.0.0.0 for all interfaces)"
+)
 @click.option("--port", default=8420, type=int, help="bind port")
 @click.option("--work-dir", "-w", default="work", help="work directory")
 def serve(host: str, port: int, work_dir: str):
     """start the rest api server"""
     if host not in ("127.0.0.1", "localhost", "::1"):
-        console.print(f"[bold yellow]⚠ binding to {host} - server will be accessible on the network[/]")
+        console.print(
+            f"[bold yellow]⚠ binding to {host} - server will be accessible on the network[/]"
+        )
     console.print(f"[bold cyan]deepzero serve[/] - http://{host}:{port}")
     console.print(f"  work_dir: {work_dir}")
 
@@ -458,11 +512,15 @@ def _build_interactive_system_prompt(state_store) -> str:
 
         manifest = state_store.load_manifest()
         if manifest:
-            active = [e for e in manifest if e.get("verdict") in ("active", "completed")]
+            active = [
+                e for e in manifest if e.get("verdict") in ("active", "completed")
+            ]
             prompt_parts.append(f"\ntotal samples: {len(manifest)}")
             if active:
                 prompt_parts.append(f"active/completed: {len(active)}")
                 for e in active[:10]:
-                    prompt_parts.append(f"  - {e.get('filename', '?')} ({e.get('sample_id', '?')})")
+                    prompt_parts.append(
+                        f"  - {e.get('filename', '?')} ({e.get('sample_id', '?')})"
+                    )
 
     return "\n".join(prompt_parts)

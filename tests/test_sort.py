@@ -12,7 +12,11 @@ from deepzero.stages.sort import Sort
 
 @pytest.fixture
 def sort_spec():
-    return StageSpec(name="test_sort", processor="sort", config={"by": "upstream.score", "order": "desc"})
+    return StageSpec(
+        name="test_sort",
+        processor="sort",
+        config={"by": "upstream.score", "order": "desc"},
+    )
 
 
 @pytest.fixture
@@ -20,7 +24,9 @@ def ctx():
     return ProcessorContext(pipeline_dir=Path("."), global_config={}, llm=None)
 
 
-def _make_entry(sample_id: str, history: dict[str, StageOutput] | None = None) -> ProcessorEntry:
+def _make_entry(
+    sample_id: str, history: dict[str, StageOutput] | None = None
+) -> ProcessorEntry:
     entry = ProcessorEntry(
         sample_id=sample_id,
         source_path=Path(f"{sample_id}.sys"),
@@ -36,19 +42,68 @@ class TestSort:
     def test_sorts_descending_by_default(self, sort_spec, ctx):
         sorter = Sort(sort_spec)
         entries = [
-            _make_entry("a", {"upstream": StageOutput(status=StageStatus.COMPLETED, verdict=Verdict.CONTINUE, data={"score": 10})}),
-            _make_entry("b", {"upstream": StageOutput(status=StageStatus.COMPLETED, verdict=Verdict.CONTINUE, data={"score": 30})}),
-            _make_entry("c", {"upstream": StageOutput(status=StageStatus.COMPLETED, verdict=Verdict.CONTINUE, data={"score": 20})}),
+            _make_entry(
+                "a",
+                {
+                    "upstream": StageOutput(
+                        status=StageStatus.COMPLETED,
+                        verdict=Verdict.CONTINUE,
+                        data={"score": 10},
+                    )
+                },
+            ),
+            _make_entry(
+                "b",
+                {
+                    "upstream": StageOutput(
+                        status=StageStatus.COMPLETED,
+                        verdict=Verdict.CONTINUE,
+                        data={"score": 30},
+                    )
+                },
+            ),
+            _make_entry(
+                "c",
+                {
+                    "upstream": StageOutput(
+                        status=StageStatus.COMPLETED,
+                        verdict=Verdict.CONTINUE,
+                        data={"score": 20},
+                    )
+                },
+            ),
         ]
         result = sorter.process(ctx, entries)
         assert result == ["b", "c", "a"]
 
     def test_sorts_ascending(self, ctx):
-        spec = StageSpec(name="test_sort", processor="sort", config={"by": "upstream.score", "order": "asc"})
+        spec = StageSpec(
+            name="test_sort",
+            processor="sort",
+            config={"by": "upstream.score", "order": "asc"},
+        )
         sorter = Sort(spec)
         entries = [
-            _make_entry("a", {"upstream": StageOutput(status=StageStatus.COMPLETED, verdict=Verdict.CONTINUE, data={"score": 10})}),
-            _make_entry("b", {"upstream": StageOutput(status=StageStatus.COMPLETED, verdict=Verdict.CONTINUE, data={"score": 30})}),
+            _make_entry(
+                "a",
+                {
+                    "upstream": StageOutput(
+                        status=StageStatus.COMPLETED,
+                        verdict=Verdict.CONTINUE,
+                        data={"score": 10},
+                    )
+                },
+            ),
+            _make_entry(
+                "b",
+                {
+                    "upstream": StageOutput(
+                        status=StageStatus.COMPLETED,
+                        verdict=Verdict.CONTINUE,
+                        data={"score": 30},
+                    )
+                },
+            ),
         ]
         result = sorter.process(ctx, entries)
         assert result == ["a", "b"]
@@ -70,7 +125,16 @@ class TestSort:
     def test_missing_upstream_data_returns_zero(self, sort_spec, ctx):
         sorter = Sort(sort_spec)
         entries = [
-            _make_entry("a", {"upstream": StageOutput(status=StageStatus.COMPLETED, verdict=Verdict.CONTINUE, data={"score": 5})}),
+            _make_entry(
+                "a",
+                {
+                    "upstream": StageOutput(
+                        status=StageStatus.COMPLETED,
+                        verdict=Verdict.CONTINUE,
+                        data={"score": 5},
+                    )
+                },
+            ),
             _make_entry("b"),
         ]
         result = sorter.process(ctx, entries)

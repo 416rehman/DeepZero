@@ -53,10 +53,35 @@ def find_driver_entry():
 
 # known external api prefixes and names to skip when following subfunctions
 EXTERNAL_PREFIXES = (
-    "Nt", "Zw", "Ke", "Io", "Mm", "Ob", "Ps", "Se", "Ex", "Rtl", "Hal",
-    "Wdf", "WDF", "Ndis", "Pc", "Ks", "Stor", "Scsi", "Hid",
-    "__security_check_cookie", "__C_specific_handler", "__report_rangecheckfailure",
-    "memcpy", "memset", "memmove", "strlen", "strcmp", "wcscpy", "wcslen",
+    "Nt",
+    "Zw",
+    "Ke",
+    "Io",
+    "Mm",
+    "Ob",
+    "Ps",
+    "Se",
+    "Ex",
+    "Rtl",
+    "Hal",
+    "Wdf",
+    "WDF",
+    "Ndis",
+    "Pc",
+    "Ks",
+    "Stor",
+    "Scsi",
+    "Hid",
+    "__security_check_cookie",
+    "__C_specific_handler",
+    "__report_rangecheckfailure",
+    "memcpy",
+    "memset",
+    "memmove",
+    "strlen",
+    "strcmp",
+    "wcscpy",
+    "wcslen",
 )
 
 
@@ -76,6 +101,7 @@ def _resolve_handler_name(fm, name):
         sym = syms.next()
         addr = sym.getAddress()
         from ghidra.app.cmd.function import CreateFunctionCmd
+
         cmd = CreateFunctionCmd(addr)
         cmd.applyTo(currentProgram)
         return fm.getFunctionAt(addr)
@@ -99,18 +125,18 @@ def find_dispatch_assignment(decomp, driver_entry=None):
 
     patterns = [
         # x64 raw offset pattern (handles &LAB_XXXX)
-        r'\*\s*\([^)]*\+\s*0xe0\)\s*=\s*&?(\w+)',
-        r'\*\s*\([^)]*\+\s*0x0?e0\)\s*=\s*&?(\w+)',
+        r"\*\s*\([^)]*\+\s*0xe0\)\s*=\s*&?(\w+)",
+        r"\*\s*\([^)]*\+\s*0x0?e0\)\s*=\s*&?(\w+)",
         # x64 with cast
-        r'\*\s*\([^)]*\)\s*\([^)]*\+\s*0xe0\)\s*=\s*&?(\w+)',
+        r"\*\s*\([^)]*\)\s*\([^)]*\+\s*0xe0\)\s*=\s*&?(\w+)",
         # array index pattern (x64: index 0x1c = 0xe0/8)
-        r'\[0x1c\]\s*=\s*&?(\w+)',
+        r"\[0x1c\]\s*=\s*&?(\w+)",
         # MajorFunction pattern (if types are applied)
-        r'MajorFunction\s*\[\s*0xe\s*\]\s*=\s*&?(\w+)',
-        r'MajorFunction\s*\[\s*14\s*\]\s*=\s*&?(\w+)',
+        r"MajorFunction\s*\[\s*0xe\s*\]\s*=\s*&?(\w+)",
+        r"MajorFunction\s*\[\s*14\s*\]\s*=\s*&?(\w+)",
         # x86 offset pattern
-        r'\*\s*\([^)]*\+\s*0x70\)\s*=\s*&?(\w+)',
-        r'\*\s*\([^)]*\)\s*\([^)]*\+\s*0x70\)\s*=\s*&?(\w+)',
+        r"\*\s*\([^)]*\+\s*0x70\)\s*=\s*&?(\w+)",
+        r"\*\s*\([^)]*\)\s*\([^)]*\+\s*0x70\)\s*=\s*&?(\w+)",
     ]
 
     fm = currentProgram.getFunctionManager()
@@ -125,8 +151,11 @@ def find_dispatch_assignment(decomp, driver_entry=None):
                 # also grab one level deeper - some drivers have DriverEntry -> InitDevice -> SetupDispatch
                 for sub in called.getCalledFunctions(getMonitor()):
                     priority_funcs.append(sub)
-        except Exception as exc:
-            raise RuntimeError("ghidra structural failure: failed to enumerate callees from driver entry: " + str(exc))
+        except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
+            raise RuntimeError(
+                "ghidra structural failure: failed to enumerate callees from driver entry: "
+                + str(exc)
+            )
 
     seen_addrs = set()
     for func in priority_funcs:
@@ -170,18 +199,18 @@ def extract_ioctl_codes(decompiled_c):
 
     # look for comparisons: if (local_var == 0x80002000) or switch cases
     # ghidra style: iVar == 0x222004, param_2 == -1294821, case 2236420:
-    hex_pattern = r'(?:==|case)\s*(-?0x[0-9a-fA-F]+|-?\d{6,10})'
+    hex_pattern = r"(?:==|case)\s*(-?0x[0-9a-fA-F]+|-?\d{6,10})"
     for match in re.finditer(hex_pattern, decompiled_c):
         raw_val = match.group(1).lower()
-        if raw_val.startswith('0x') or raw_val.startswith('-0x'):
+        if raw_val.startswith("0x") or raw_val.startswith("-0x"):
             code = int(raw_val, 16)
         else:
             code = int(raw_val, 10)
-            
+
         # Convert signed 32-bit negatives back to 32-bit unsigned uint32 representation
         if code < 0:
             code = code & 0xFFFFFFFF
-            
+
         # basic sanity: ioctl codes have device type in upper 16 bits
         if (code >> 16) > 0 and (code >> 16) < 0xFFFF:
             codes.append(code)
@@ -195,9 +224,17 @@ def main():
         os.makedirs(output_dir)
 
     decomp = get_decompiler()
-    result = {"success": False, "error": "", "driver_entry_c": "",
-              "dispatch_name": "", "dispatch_c": "", "device_name": "",
-              "symbolic_link": "", "ioctl_handlers": [], "function_count": 0}
+    result = {
+        "success": False,
+        "error": "",
+        "driver_entry_c": "",
+        "dispatch_name": "",
+        "dispatch_c": "",
+        "device_name": "",
+        "symbolic_link": "",
+        "ioctl_handlers": [],
+        "function_count": 0,
+    }
 
     # count functions
     fm = currentProgram.getFunctionManager()
@@ -222,13 +259,13 @@ def main():
     for s in currentProgram.getListing().getDefinedData(True):
         try:
             val = s.getValue()
-            if hasattr(val, '__str__'):
+            if hasattr(val, "__str__"):
                 sv = str(val)
                 if "\\Device\\" in sv:
                     result["device_name"] = sv.strip('"').strip("u'")
                 elif "\\DosDevices\\" in sv:
                     result["symbolic_link"] = sv.strip('"').strip("u'")
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
             print("ghidra warning: failed to read data entry:", str(exc))
             continue
 
@@ -276,16 +313,19 @@ def main():
                     if c:
                         subfuncs_c.append(c)
                         get_subfuncs(called, depth + 1)
-        except Exception as exc:
-            raise RuntimeError("ghidra structural failure: failed to decompile or resolve calls: " + str(exc))
+        except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
+            raise RuntimeError(
+                "ghidra structural failure: failed to decompile or resolve calls: "
+                + str(exc)
+            )
 
     get_subfuncs(dispatch_func)
-    
+
     # append subfunctions to the dispatch text so they are included in all output files
     if subfuncs_c:
-        dispatch_c += "\n\n// " + "="*40 + " //\n"
-        dispatch_c += "//   INTERNAL SUBFUNCTIONS CALLED BY DISPATCH   //\n"               
-        dispatch_c += "// " + "="*40 + " //\n\n"
+        dispatch_c += "\n\n// " + "=" * 40 + " //\n"
+        dispatch_c += "//   INTERNAL SUBFUNCTIONS CALLED BY DISPATCH   //\n"
+        dispatch_c += "// " + "=" * 40 + " //\n\n"
         dispatch_c += "\n\n".join(subfuncs_c)
 
     # write full decompiled payload
@@ -329,8 +369,9 @@ def write_result(output_dir, result):
 
 try:
     main()
-except Exception:
+except (RuntimeError, ValueError, TypeError, AttributeError, OSError):
     import traceback
+
     output_dir = os.environ.get("DEEPZERO_OUTPUT_DIR", ".")
     res = {
         "success": False,

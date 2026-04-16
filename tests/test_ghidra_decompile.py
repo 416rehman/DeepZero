@@ -16,29 +16,34 @@ def _make_ctx(tmp_path, config=None, global_config=None):
 
     history = {"discover": StageOutput(status="completed", data={"sha256": "abc123"})}
     ctx = ProcessorContext(
-        pipeline_dir=tmp_path,
-        global_config={},
-        llm=locals().get("llm")
+        pipeline_dir=tmp_path, global_config={}, llm=locals().get("llm")
     )
     from deepzero.engine.stage import ProcessorEntry
+
     try:
         hist = history
     except NameError:
         hist = {}
-        
+
     class MockStore:
-        def __init__(self, history): self._history = history
+        def __init__(self, history):
+            self._history = history
+
         def load_sample(self, sid):
             class S:
-                def __init__(self, history): self._history = history
+                def __init__(self, history):
+                    self._history = history
+
                 @property
-                def history(self): return self._history
+                def history(self):
+                    return self._history
+
             return S(self._history)
-            
+
     try:
         sample_path_val = sample_path
     except NameError:
-        sample_path_val = tmp_path / 'test.bin'
+        sample_path_val = tmp_path / "test.bin"
 
     try:
         sample_dir_val = sample_dir
@@ -50,14 +55,16 @@ def _make_ctx(tmp_path, config=None, global_config=None):
         source_path=sample_path_val,
         filename=sample_path_val.name,
         sample_dir=sample_dir_val,
-        _store=MockStore(hist)
+        _store=MockStore(hist),
     )
     return ctx, entry
 
 
 class TestGhidraDecompileProcess:
     def _make_tool(self, tmp_path, config=None):
-        spec = StageSpec(name="decompile", processor="ghidra_decompile", config=config or {})
+        spec = StageSpec(
+            name="decompile", processor="ghidra_decompile", config=config or {}
+        )
         processor = GhidraDecompile(spec)
         processor._tool_dir = tmp_path / "processor"
         processor._tool_dir.mkdir(parents=True, exist_ok=True)
@@ -71,7 +78,9 @@ class TestGhidraDecompileProcess:
         assert "ghidra" in result.error.lower()
 
     def test_ghidra_not_found(self, tmp_path):
-        processor = self._make_tool(tmp_path, config={"ghidra_install_dir": "/nonexistent/ghidra"})
+        processor = self._make_tool(
+            tmp_path, config={"ghidra_install_dir": "/nonexistent/ghidra"}
+        )
         ctx, entry = _make_ctx(tmp_path)
         result = processor.process(ctx, entry)
         assert result.status == "failed"
@@ -80,13 +89,17 @@ class TestGhidraDecompileProcess:
     def test_no_strategy(self, tmp_path):
         ghidra_dir = tmp_path / "ghidra"
         ghidra_dir.mkdir()
-        processor = self._make_tool(tmp_path, config={"ghidra_install_dir": str(ghidra_dir)})
+        processor = self._make_tool(
+            tmp_path, config={"ghidra_install_dir": str(ghidra_dir)}
+        )
         ctx, entry = _make_ctx(tmp_path)
         result = processor.process(ctx, entry)
         assert result.status == "failed"
         assert "strategy" in result.error
 
-    @patch("processors.ghidra_decompile.ghidra_decompile.GhidraDecompile._run_ghidra_headless")
+    @patch(
+        "processors.ghidra_decompile.ghidra_decompile.GhidraDecompile._run_ghidra_headless"
+    )
     def test_successful_decompilation(self, mock_run, tmp_path):
         processor = self._make_tool(tmp_path)
         ghidra_dir = tmp_path / "ghidra"
@@ -102,10 +115,13 @@ class TestGhidraDecompileProcess:
             "function_count": 42,
         }
 
-        processor = self._make_tool(tmp_path, config={
-            "strategy": "extract_dispatch.py",
-            "ghidra_install_dir": str(ghidra_dir)
-        })
+        processor = self._make_tool(
+            tmp_path,
+            config={
+                "strategy": "extract_dispatch.py",
+                "ghidra_install_dir": str(ghidra_dir),
+            },
+        )
 
         ctx, entry = _make_ctx(tmp_path)
         result = processor.process(ctx, entry)
@@ -114,7 +130,9 @@ class TestGhidraDecompileProcess:
         assert result.data["function_count"] == 42
         mock_run.assert_called_once()
 
-    @patch("processors.ghidra_decompile.ghidra_decompile.GhidraDecompile._run_ghidra_headless")
+    @patch(
+        "processors.ghidra_decompile.ghidra_decompile.GhidraDecompile._run_ghidra_headless"
+    )
     def test_failed_decompilation(self, mock_run, tmp_path):
         processor = self._make_tool(tmp_path)
         ghidra_dir = tmp_path / "ghidra"
@@ -126,10 +144,13 @@ class TestGhidraDecompileProcess:
 
         mock_run.return_value = {"success": False, "error": "timeout after 300s"}
 
-        processor = self._make_tool(tmp_path, config={
-            "strategy": "extract_dispatch.py",
-            "ghidra_install_dir": str(ghidra_dir)
-        })
+        processor = self._make_tool(
+            tmp_path,
+            config={
+                "strategy": "extract_dispatch.py",
+                "ghidra_install_dir": str(ghidra_dir),
+            },
+        )
 
         ctx, entry = _make_ctx(tmp_path)
         result = processor.process(ctx, entry)

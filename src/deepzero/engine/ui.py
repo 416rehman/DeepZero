@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rich.console import Group, RenderableType
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import (
@@ -13,13 +13,12 @@ from rich.progress import (
 )
 from rich.table import Table
 
-import deepzero.cli
-
 
 class PipelineDashboard:
-    """Manages a dynamic TUI for the pipeline execution."""
+    # manages a dynamic TUI for pipeline execution
 
-    def __init__(self, stages: list[dict]):
+    def __init__(self, stages: list[dict], console: Console | None = None):
+        self._console = console or Console()
         self.stage_specs = stages
         self.stage_names = [s["name"] for s in stages]
         self.stats: dict[str, dict[str, int]] = {
@@ -35,7 +34,7 @@ class PipelineDashboard:
             TaskProgressColumn(),
             TextColumn("[cyan]{task.completed}/{task.total} completed"),
             TimeRemainingColumn(),
-            console=deepzero.cli.console,
+            console=self._console,
             transient=True,
         )
         self._live: Live | None = None
@@ -43,7 +42,7 @@ class PipelineDashboard:
     def start(self):
         self._live = Live(
             self._generate_layout(),
-            console=deepzero.cli.console,
+            console=self._console,
             refresh_per_second=4,
             transient=False,
         )
@@ -59,7 +58,9 @@ class PipelineDashboard:
         self.active_stage = stage
         self.refresh()
 
-    def update_stats(self, stage: str, passed=None, filtered=None, failed=None, pending=None):
+    def update_stats(
+        self, stage: str, passed=None, filtered=None, failed=None, pending=None
+    ):
         if passed is not None:
             self.stats[stage]["passed"] = passed
         if filtered is not None:
@@ -81,8 +82,16 @@ class PipelineDashboard:
             if s == self.active_stage:
                 graph_parts.append(f"[bold cyan]\\[ {s} ][/]")
             else:
-                total_done = self.stats[s]["passed"] + self.stats[s]["filtered"] + self.stats[s]["failed"]
-                if total_done > 0 and self.stats[s]["pending"] == 0 and s != self.active_stage:
+                total_done = (
+                    self.stats[s]["passed"]
+                    + self.stats[s]["filtered"]
+                    + self.stats[s]["failed"]
+                )
+                if (
+                    total_done > 0
+                    and self.stats[s]["pending"] == 0
+                    and s != self.active_stage
+                ):
                     graph_parts.append(f"[dim green]\\[ {s} ][/]")
                 else:
                     graph_parts.append(f"[dim]\\[ {s} ][/]")
@@ -99,7 +108,7 @@ class PipelineDashboard:
         table.add_column("filtered", style="yellow", justify="right")
         table.add_column("failed", style="red", justify="right")
         table.add_column("pending", style="bright_black", justify="right")
-        
+
         for spec in self.stage_specs:
             s = spec["name"]
             st = self.stats[s]
@@ -109,7 +118,7 @@ class PipelineDashboard:
                 w_str = str(w_val) if w_val > 0 else "auto"
                 if spec.get("type") in ("reduce", "batch", "ingest"):
                     w_str = "-"
-                    
+
                 table.add_row(
                     s,
                     spec.get("type", "unknown"),
@@ -123,8 +132,8 @@ class PipelineDashboard:
         # 3. Overall Group
         # Render the task list inside if there are active tasks
         content: list[RenderableType] = [Panel(graph, title="Pipeline Flow"), table]
-        
+
         if self.progress.tasks:
             content.append(self.progress)
-            
+
         return Group(*content)

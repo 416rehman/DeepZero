@@ -2,10 +2,11 @@ from pathlib import Path
 from deepzero.engine.state import SampleState, StageOutput
 from deepzero.engine.context import generate_context
 
+
 def test_generate_context(tmp_path: Path):
     sample_dir = tmp_path / "sample1"
     sample_dir.mkdir()
-    
+
     # Create an artifact file so it shows in artifacts
     art_path = sample_dir / "out.txt"
     art_path.write_text("hello")
@@ -20,13 +21,10 @@ def test_generate_context(tmp_path: Path):
                 status="completed",
                 verdict="suspicious",
                 artifacts={"txt": "out.txt"},
-                data={"size": 1024, "long_string": "A" * 300}
+                data={"size": 1024, "long_string": "A" * 300},
             ),
-            "disasm": StageOutput(
-                status="failed",
-                error="too large"
-            )
-        }
+            "disasm": StageOutput(status="failed", error="too large"),
+        },
     )
 
     generate_context(sample_dir, state)

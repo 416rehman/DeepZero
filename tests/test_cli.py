@@ -42,7 +42,10 @@ class TestListToolsCommand:
         result = runner.invoke(main, ["list-processors"])
         assert result.exit_code == 0
         # should show registered tools header
-        assert "registered tools" in result.output.lower() or "name" in result.output.lower()
+        assert (
+            "registered tools" in result.output.lower()
+            or "name" in result.output.lower()
+        )
 
 
 class TestInitCommand:
@@ -68,7 +71,11 @@ class TestStatusCommand:
     def test_status_no_pipeline_no_workdir(self):
         runner = CliRunner()
         result = runner.invoke(main, ["status"])
-        assert result.exit_code != 0 or "must provide" in result.output.lower() or "Error" in result.output
+        assert (
+            result.exit_code != 0
+            or "must provide" in result.output.lower()
+            or "Error" in result.output
+        )
 
     def test_status_with_workdir(self, tmp_path):
         runner = CliRunner()

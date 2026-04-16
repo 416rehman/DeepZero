@@ -10,6 +10,16 @@ import time
 import traceback as tb_module
 from pathlib import Path
 
+from rich.console import Console
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+    TimeRemainingColumn,
+)
+
 from deepzero.engine.context import generate_context
 from deepzero.engine.stage import (
     FailurePolicy,
@@ -30,6 +40,23 @@ from deepzero.engine.state import RunState, SampleState, StateStore
 
 log = logging.getLogger("deepzero.runner")
 
+# exception types that processors are allowed to raise without being a framework bug
+PROCESSOR_ERRORS = (
+    RuntimeError,
+    ValueError,
+    TypeError,
+    OSError,
+    AttributeError,
+    LookupError,
+    AssertionError,
+)
+
+
+# suppresses info-level logs while a progress bar is active
+class _ProgressFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno >= logging.WARNING
+
 
 class PipelineRunner:
     # breadth-first pipeline executor with sync barriers
@@ -43,6 +70,7 @@ class PipelineRunner:
         global_config: GlobalConfig,
         llm: LLMProtocol | None = None,
         default_max_workers: int = 4,
+        console: Console | None = None,
     ):
         self.ingest = ingest
         self.stages = stages
@@ -51,8 +79,19 @@ class PipelineRunner:
         self.global_config = global_config
         self.llm = llm
         self.default_max_workers = default_max_workers
+        self.console = console or Console()
         self._shutdown_event = threading.Event()
         self._original_sigint = None
+
+    def _make_entry(self, state: SampleState) -> ProcessorEntry:
+        # centralizes ProcessorEntry construction for map/reduce/batch
+        return ProcessorEntry(
+            sample_id=state.sample_id,
+            source_path=Path(state.source_path),
+            filename=state.filename,
+            sample_dir=self.state_store.sample_dir(state.sample_id),
+            _store=self.state_store,
+        )
 
     def run(
         self,
@@ -70,7 +109,7 @@ class PipelineRunner:
             run_state.status = RunStatus.INTERRUPTED
             self.state_store.save_run(run_state)
             return run_state
-        except (RuntimeError, ValueError, TypeError, OSError, AttributeError, LookupError, AssertionError) as e:
+        except PROCESSOR_ERRORS as e:
             log.error("pipeline failed: %s", e)
             run_state.mark_failed(str(e))
             self.state_store.save_run(run_state)
@@ -94,50 +133,9 @@ class PipelineRunner:
         log.info("--- setup complete ---")
         log.info("pipeline: %s", " -> ".join(stage_names))
 
-        # fast resume: if states already exist on disk, skip the expensive ingest
-        existing_states = self.state_store.list_samples()
-        if existing_states:
-            log.info("--- resume --- found %d existing sample states, skipping ingest", len(existing_states))
-            sample_states: dict[str, SampleState] = {s.sample_id: s for s in existing_states}
-            run_state.stats["discovered"] = len(sample_states)
-            run_state.stages = stage_names
-            self.state_store.save_run(run_state)
-        else:
-            # fresh run - execute ingest
-            log.info("--- %s (ingest) ---", self.ingest.spec.name)
-            ctx = ProcessorContext(pipeline_dir=self.pipeline_dir, global_config=self.global_config, llm=self.llm)
-            samples = self.ingest.process(ctx, target)
-
-            run_state.stats["discovered"] = len(samples)
-            run_state.stages = stage_names
-            self.state_store.save_run(run_state)
-
-            log.info("--- %s -> %d samples ---", self.ingest.spec.name, len(samples))
-
-            if not samples:
-                run_state.mark_completed()
-                self.state_store.save_run(run_state)
-                return run_state
-
-            sample_states = {}
-            for sample in samples:
-                state = SampleState(
-                    sample_id=sample.sample_id,
-                    sha256=sample.data.get("sha256", ""),
-                    source_path=str(sample.source_path),
-                    filename=sample.filename,
-                    verdict=SampleStatus.ACTIVE,
-                )
-                state.mark_stage_completed(
-                    self.ingest.spec.name,
-                    verdict=Verdict.CONTINUE,
-                    data=sample.data,
-                )
-                state.verdict = SampleStatus.ACTIVE
-                sample_states[sample.sample_id] = state
-                self.state_store.save_sample(state)
-
-            self.state_store.save_manifest(list(sample_states.values()))
+        sample_states = self._resume_or_ingest(target, run_state, stage_names)
+        if sample_states is None:
+            return run_state
 
         # breadth-first stage execution
         for spec, processor in self.stages:
@@ -162,17 +160,7 @@ class PipelineRunner:
             else:
                 self._run_map(processor, active, spec, stage_stats)
 
-            # dumb limit - pure truncation, no sorting
-            limit = spec.config.get("limit", 0)
-            if limit > 0:
-                still_active = [s for s in sample_states.values() if s.is_active()]
-                if len(still_active) > limit:
-                    excess = still_active[limit:]
-                    log.info("  %s limit (%d): truncating %d excess samples", spec.name, limit, len(excess))
-                    for s in excess:
-                        s.mark_stage_skipped(spec.name, "limit reached")
-                        self.state_store.save_sample(s)
-                        stage_stats["filtered"] += 1
+            self._apply_stage_limit(spec, sample_states, stage_stats)
 
             # sync barrier
             self.state_store.save_manifest(list(sample_states.values()))
@@ -186,14 +174,118 @@ class PipelineRunner:
             passed = stage_stats["completed"]
             filtered = stage_stats["filtered"]
             failed = stage_stats["failed"]
-            log.info("--- %s -> %d passed, %d filtered, %d failed ---", spec.name, passed, filtered, failed)
+            log.info(
+                "--- %s -> %d passed, %d filtered, %d failed ---",
+                spec.name,
+                passed,
+                filtered,
+                failed,
+            )
 
         run_state.mark_completed()
         self.state_store.save_run(run_state)
         self.state_store.save_manifest(list(sample_states.values()))
         return run_state
 
+    def _resume_or_ingest(
+        self,
+        target: Path,
+        run_state: RunState,
+        stage_names: list[str],
+    ) -> dict[str, SampleState] | None:
+        # fast resume: if states already exist on disk, skip the expensive ingest
+        existing_states = self.state_store.list_samples()
+        if existing_states:
+            log.info(
+                "--- resume --- found %d existing sample states, skipping ingest",
+                len(existing_states),
+            )
+            sample_states: dict[str, SampleState] = {
+                s.sample_id: s for s in existing_states
+            }
+            run_state.stats["discovered"] = len(sample_states)
+            run_state.stages = stage_names
+            self.state_store.save_run(run_state)
+            return sample_states
+
+        # fresh run
+        log.info("--- %s (ingest) ---", self.ingest.spec.name)
+        ctx = ProcessorContext(
+            pipeline_dir=self.pipeline_dir,
+            global_config=self.global_config,
+            llm=self.llm,
+        )
+        samples = self.ingest.process(ctx, target)
+
+        run_state.stats["discovered"] = len(samples)
+        run_state.stages = stage_names
+        self.state_store.save_run(run_state)
+
+        log.info("--- %s -> %d samples ---", self.ingest.spec.name, len(samples))
+
+        if not samples:
+            run_state.mark_completed()
+            self.state_store.save_run(run_state)
+            return None
+
+        sample_states = {}
+        for sample in samples:
+            state = SampleState(
+                sample_id=sample.sample_id,
+                sha256=sample.data.get("sha256", ""),
+                source_path=str(sample.source_path),
+                filename=sample.filename,
+                verdict=SampleStatus.ACTIVE,
+            )
+            state.mark_stage_completed(
+                self.ingest.spec.name,
+                verdict=Verdict.CONTINUE,
+                data=sample.data,
+            )
+            state.verdict = SampleStatus.ACTIVE
+            sample_states[sample.sample_id] = state
+            self.state_store.save_sample(state)
+
+        self.state_store.save_manifest(list(sample_states.values()))
+        return sample_states
+
+    def _apply_stage_limit(
+        self,
+        spec: StageSpec,
+        sample_states: dict[str, SampleState],
+        stage_stats: dict[str, int],
+    ) -> None:
+        limit = spec.config.get("limit", 0)
+        if limit <= 0:
+            return
+        still_active = [s for s in sample_states.values() if s.is_active()]
+        if len(still_active) <= limit:
+            return
+        excess = still_active[limit:]
+        log.info(
+            "  %s limit (%d): truncating %d excess samples",
+            spec.name,
+            limit,
+            len(excess),
+        )
+        for s in excess:
+            s.mark_stage_skipped(spec.name, "limit reached")
+            self.state_store.save_sample(s)
+            stage_stats["filtered"] += 1
+
     # -- map execution --
+
+    def _create_progress_bar(self, description: str, total: int) -> Progress:
+        return Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("[cyan]{task.completed}/{task.total} completed"),
+            TimeRemainingColumn(),
+            console=self.console,
+            transient=True,
+        )
 
     def _run_map(
         self,
@@ -207,7 +299,9 @@ class PipelineRunner:
         pending = [s for s in active if not s.is_stage_done(spec.name)]
         cached = len(active) - len(pending)
         if cached > 0:
-            log.info("  %d already completed (cached), %d pending", cached, len(pending))
+            log.info(
+                "  %d already completed (cached), %d pending", cached, len(pending)
+            )
             stage_stats["completed"] += cached
 
         if not pending:
@@ -215,33 +309,22 @@ class PipelineRunner:
 
         parallelism = spec.parallel
         if parallelism <= 0:
-            import os
             parallelism = os.cpu_count() or 4
             log.info("  %s auto-scaled to %d workers", spec.name, parallelism)
 
-        from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
-        import deepzero.cli
-        
-        # Mute ALL deepzero INFO logs temporarily so they don't break the progress bar UI buffer
+        # suppress info logs during progress bar
+        progress_filter = _ProgressFilter()
         dz_logger = logging.getLogger("deepzero")
-        old_level = dz_logger.level
-        dz_logger.setLevel(logging.WARNING)
+        dz_logger.addFilter(progress_filter)
 
         try:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TextColumn("[cyan]{task.completed}/{task.total} completed"),
-                TimeRemainingColumn(),
-                console=deepzero.cli.console,
-                transient=True,
-            ) as progress:
-                task = progress.add_task(f"[cyan]running {spec.name}[/]", total=len(pending))
+            with self._create_progress_bar(spec.name, len(pending)) as progress:
+                task = progress.add_task(
+                    f"[cyan]running {spec.name}[/]", total=len(pending)
+                )
 
                 if parallelism <= 1:
-                    for idx, state in enumerate(pending):
+                    for state in pending:
                         if self._shutdown_event.is_set():
                             break
                         self._process_one_map(state, spec, processor)
@@ -250,9 +333,13 @@ class PipelineRunner:
                         progress.advance(task)
                 else:
                     max_workers = min(parallelism, len(pending))
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=max_workers
+                    ) as executor:
                         future_map = {
-                            executor.submit(self._process_one_map, s, spec, processor): s
+                            executor.submit(
+                                self._process_one_map, s, spec, processor
+                            ): s
                             for s in pending
                         }
                         for future in concurrent.futures.as_completed(future_map):
@@ -262,15 +349,19 @@ class PipelineRunner:
                             state = future_map[future]
                             exc = future.exception()
                             if exc:
-                                log.error("  %s unhandled error: %s", state.filename, exc)
-                                state.mark_stage_failed(spec.name, f"{type(exc).__name__}: {exc}")
+                                log.error(
+                                    "  %s unhandled error: %s", state.filename, exc
+                                )
+                                state.mark_stage_failed(
+                                    spec.name, f"{type(exc).__name__}: {exc}"
+                                )
                                 self.state_store.save_sample(state)
 
                             outcome = self._classify_outcome(state, spec.name)
                             stage_stats[outcome] += 1
                             progress.advance(task)
         finally:
-            dz_logger.setLevel(old_level)
+            dz_logger.removeFilter(progress_filter)
 
     def _process_one_map(
         self,
@@ -279,7 +370,6 @@ class PipelineRunner:
         processor: MapProcessor,
     ) -> None:
         sample_dir = self.state_store.sample_dir(state.sample_id)
-        source_path = Path(state.source_path)
 
         ctx = ProcessorContext(
             pipeline_dir=self.pipeline_dir,
@@ -287,13 +377,7 @@ class PipelineRunner:
             llm=self.llm,
             log=logging.getLogger(f"deepzero.processor.{spec.name}"),
         )
-        entry = ProcessorEntry(
-            sample_id=state.sample_id,
-            source_path=source_path,
-            filename=state.filename,
-            sample_dir=sample_dir,
-            _store=self.state_store,
-        )
+        entry = self._make_entry(state)
 
         # optional skip hook (e.g. cached decompilation)
         skip_reason = processor.should_skip(ctx, entry)
@@ -306,7 +390,9 @@ class PipelineRunner:
         self.state_store.save_sample(state)
 
         attempts = 0
-        max_attempts = spec.max_retries + 1 if spec.on_failure == FailurePolicy.RETRY else 1
+        max_attempts = (
+            spec.max_retries + 1 if spec.on_failure == FailurePolicy.RETRY else 1
+        )
 
         while attempts < max_attempts:
             attempts += 1
@@ -325,15 +411,22 @@ class PipelineRunner:
                     return
 
                 if attempts < max_attempts:
-                    backoff = min(2 ** attempts, 30)
+                    backoff = min(2**attempts, 30)
                     log.warning(
                         "[%s] %s failed (attempt %d/%d), retrying in %ds: %s",
-                        spec.name, state.filename, attempts, max_attempts, backoff, result.error,
+                        spec.name,
+                        state.filename,
+                        attempts,
+                        max_attempts,
+                        backoff,
+                        result.error,
                     )
                     time.sleep(backoff)
                     continue
 
-                state.mark_stage_failed(spec.name, result.error or "processor returned failed status")
+                state.mark_stage_failed(
+                    spec.name, result.error or "processor returned failed status"
+                )
                 log.error("[%s] %s failed: %s", spec.name, state.filename, result.error)
                 self.state_store.save_sample(state)
 
@@ -341,7 +434,7 @@ class PipelineRunner:
                     self._shutdown_event.set()
                 return
 
-            except (RuntimeError, ValueError, TypeError, OSError, AttributeError, LookupError, AssertionError) as exc:
+            except PROCESSOR_ERRORS as exc:
                 error_msg = f"{type(exc).__name__}: {exc}"
 
                 # capture traceback out of band
@@ -351,18 +444,27 @@ class PipelineRunner:
                     os.write(fd, tb_module.format_exc().encode("utf-8"))
                     os.close(fd)
                     os.replace(tmp, str(err_log))
-                except OSError:
+                except OSError as exc:
                     try:
                         os.close(fd)
-                    except OSError:
-                        log.debug("fd already closed for %s", state.filename)
-                    log.debug("failed to write error log for %s", state.filename)
+                    except OSError as cleanup_exc:
+                        raise RuntimeError(
+                            f"failed to explicitly close descriptor for {state.filename}"
+                        ) from cleanup_exc
+                    raise RuntimeError(
+                        f"failed to write error log for {state.filename}"
+                    ) from exc
 
                 if attempts < max_attempts:
-                    backoff = min(2 ** attempts, 30)
+                    backoff = min(2**attempts, 30)
                     log.warning(
                         "[%s] %s exception (attempt %d/%d), retrying in %ds: %s",
-                        spec.name, state.filename, attempts, max_attempts, backoff, error_msg,
+                        spec.name,
+                        state.filename,
+                        attempts,
+                        max_attempts,
+                        backoff,
+                        error_msg,
                     )
                     time.sleep(backoff)
                     continue
@@ -385,19 +487,15 @@ class PipelineRunner:
         stage_stats: dict[str, int],
     ) -> None:
         log.info("  reduce: %d active samples -> %s", len(active), spec.name)
-        ctx = ProcessorContext(pipeline_dir=self.pipeline_dir, global_config=self.global_config, llm=self.llm)
-        entries = []
-        for state in active:
-            entries.append(ProcessorEntry(
-                sample_id=state.sample_id,
-                source_path=Path(state.source_path),
-                filename=state.filename,
-                sample_dir=self.state_store.sample_dir(state.sample_id),
-                _store=self.state_store
-            ))
+        ctx = ProcessorContext(
+            pipeline_dir=self.pipeline_dir,
+            global_config=self.global_config,
+            llm=self.llm,
+        )
+        entries = [self._make_entry(state) for state in active]
         try:
             results = processor.process(ctx, entries)
-        except (RuntimeError, ValueError, TypeError, OSError, AttributeError, LookupError, AssertionError) as exc:
+        except PROCESSOR_ERRORS as exc:
             log.error("  reduce processor '%s' crashed: %s", spec.name, exc)
             return
 
@@ -427,29 +525,26 @@ class PipelineRunner:
         pending = [s for s in active if not s.is_stage_done(spec.name)]
         cached = len(active) - len(pending)
         if cached > 0:
-            log.info("  %d already completed (cached), %d pending", cached, len(pending))
+            log.info(
+                "  %d already completed (cached), %d pending", cached, len(pending)
+            )
             stage_stats["completed"] += cached
 
         if not pending:
             return
 
-        entries = []
-        for state in pending:
-            sample_dir = self.state_store.sample_dir(state.sample_id)
-            entries.append(ProcessorEntry(
-                sample_id=state.sample_id,
-                source_path=Path(state.source_path),
-                filename=state.filename,
-                sample_dir=sample_dir,
-                _store=self.state_store
-            ))
+        entries = [self._make_entry(state) for state in pending]
 
         log.info("  batch: processing %d samples with %s", len(entries), spec.name)
 
         try:
-            ctx = ProcessorContext(pipeline_dir=self.pipeline_dir, global_config=self.global_config, llm=self.llm)
+            ctx = ProcessorContext(
+                pipeline_dir=self.pipeline_dir,
+                global_config=self.global_config,
+                llm=self.llm,
+            )
             results = processor.process(ctx, entries)
-        except (RuntimeError, ValueError, TypeError, OSError, AttributeError, LookupError, AssertionError) as exc:
+        except PROCESSOR_ERRORS as exc:
             log.error("  batch processor '%s' crashed: %s", spec.name, exc)
             for state in pending:
                 state.mark_stage_failed(spec.name, f"batch processor crashed: {exc}")
@@ -469,9 +564,13 @@ class PipelineRunner:
                         data=result.data,
                     )
                 else:
-                    state.mark_stage_failed(spec.name, result.error or "batch item failed")
+                    state.mark_stage_failed(
+                        spec.name, result.error or "batch item failed"
+                    )
             else:
-                state.mark_stage_failed(spec.name, "batch processor returned fewer results than entries")
+                state.mark_stage_failed(
+                    spec.name, "batch processor returned fewer results than entries"
+                )
 
             self.state_store.save_sample(state)
             outcome = self._classify_outcome(state, spec.name)
@@ -489,7 +588,13 @@ class PipelineRunner:
             return output.status.value
         return "completed"
 
-    def _execute_with_timeout(self, processor: MapProcessor, ctx: ProcessorContext, entry: ProcessorEntry, timeout: int) -> ProcessorResult:
+    def _execute_with_timeout(
+        self,
+        processor: MapProcessor,
+        ctx: ProcessorContext,
+        entry: ProcessorEntry,
+        timeout: int,
+    ) -> ProcessorResult:
         if timeout <= 0:
             return processor.process(ctx, entry)
 
@@ -506,10 +611,18 @@ class PipelineRunner:
                 sample_dir = self.state_store.sample_dir(sid)
                 try:
                     generate_context(sample_dir, state)
-                except (ValueError, TypeError, OSError, RuntimeError, AttributeError) as exc:
+                except (
+                    ValueError,
+                    TypeError,
+                    OSError,
+                    RuntimeError,
+                    AttributeError,
+                ) as exc:
                     log.warning(
                         "context generation failed for %s: %s - %s",
-                        sid, type(exc).__name__, exc,
+                        sid,
+                        type(exc).__name__,
+                        exc,
                     )
 
     def _teardown_tools(self) -> None:
@@ -529,18 +642,16 @@ class PipelineRunner:
             log.warning("%d processor(s) failed teardown", len(errors))
 
     def _install_signal_handler(self) -> None:
-        try:
+        if threading.current_thread() is threading.main_thread():
             self._original_sigint = signal.getsignal(signal.SIGINT)
             signal.signal(signal.SIGINT, self._handle_signal)
-        except (OSError, ValueError) as exc:
-            log.debug("cannot install signal handler: %s", exc)
 
     def _restore_signal_handler(self) -> None:
-        if self._original_sigint is not None:
-            try:
-                signal.signal(signal.SIGINT, self._original_sigint)
-            except (OSError, ValueError) as exc:
-                log.debug("cannot restore signal handler: %s", exc)
+        if (
+            self._original_sigint is not None
+            and threading.current_thread() is threading.main_thread()
+        ):
+            signal.signal(signal.SIGINT, self._original_sigint)
 
     def _handle_signal(self, signum, frame) -> None:
         if self._shutdown_event.is_set():

@@ -25,14 +25,18 @@ class FileDiscovery(IngestProcessor):
     def _discover_single(self, path: Path) -> list[Sample]:
         self.log.info("single file mode: %s", path.name)
         sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
-        return [Sample(
-            sample_id=sha256[:16],
-            source_path=path,
-            filename=path.name,
-            data={"sha256": sha256, "size_bytes": path.stat().st_size},
-        )]
+        return [
+            Sample(
+                sample_id=sha256[:16],
+                source_path=path,
+                filename=path.name,
+                data={"sha256": sha256, "size_bytes": path.stat().st_size},
+            )
+        ]
 
-    def _discover_directory(self, directory: Path, extensions: list[str], recursive: bool) -> list[Sample]:
+    def _discover_directory(
+        self, directory: Path, extensions: list[str], recursive: bool
+    ) -> list[Sample]:
         files: list[Path] = []
 
         if recursive:
@@ -61,12 +65,14 @@ class FileDiscovery(IngestProcessor):
                 self.log.debug("skipping unreadable file %s: %s", f.name, e)
                 continue
 
-            samples.append(Sample(
-                sample_id=sha256[:16],
-                source_path=f,
-                filename=f.name,
-                data={"sha256": sha256, "size_bytes": f.stat().st_size},
-            ))
+            samples.append(
+                Sample(
+                    sample_id=sha256[:16],
+                    source_path=f,
+                    filename=f.name,
+                    data={"sha256": sha256, "size_bytes": f.stat().st_size},
+                )
+            )
 
         self.log.info("discovered %d samples", len(samples))
         return samples

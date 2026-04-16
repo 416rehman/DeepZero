@@ -8,13 +8,20 @@ from typing import Any
 
 import jinja2
 
-from deepzero.engine.stage import MapProcessor, ProcessorContext, ProcessorResult, ProcessorEntry
+from deepzero.engine.stage import (
+    MapProcessor,
+    ProcessorContext,
+    ProcessorResult,
+    ProcessorEntry,
+)
 
 _log = logging.getLogger("deepzero.stages.llm")
 
 
 class GenericLLM(MapProcessor):
-    description = "generic LLM assessment - sends context to an LLM via a jinja2 prompt template"
+    description = (
+        "generic LLM assessment - sends context to an LLM via a jinja2 prompt template"
+    )
 
     def process(self, ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult:
         if ctx.llm is None:
@@ -59,6 +66,7 @@ class GenericLLM(MapProcessor):
         classify_by = self.config.get("classify_by", "")
         if classify_by:
             import re
+
             match = re.search(classify_by, content[:200], re.IGNORECASE)
             if match:
                 verdict_text = match.group(0).strip("[]").lower()
@@ -69,7 +77,9 @@ class GenericLLM(MapProcessor):
             data=data,
         )
 
-    def _render_prompt(self, prompt_ref: str, ctx: ProcessorContext, entry: ProcessorEntry) -> str:
+    def _render_prompt(
+        self, prompt_ref: str, ctx: ProcessorContext, entry: ProcessorEntry
+    ) -> str:
         template_path = self._resolve_template(prompt_ref)
 
         if template_path is not None:
@@ -86,9 +96,13 @@ class GenericLLM(MapProcessor):
 
         return prompt_ref
 
-    def _build_template_vars(self, ctx: ProcessorContext, entry: ProcessorEntry) -> dict[str, Any]:
+    def _build_template_vars(
+        self, ctx: ProcessorContext, entry: ProcessorEntry
+    ) -> dict[str, Any]:
         template_vars: dict[str, Any] = {
-            "sample_name": entry.upstream_data("discover", "filename", entry.source_path.name),
+            "sample_name": entry.upstream_data(
+                "discover", "filename", entry.source_path.name
+            ),
             "sample_path": str(entry.source_path),
             "history": {name: output.data for name, output in entry.history.items()},
             "config": self.config,
@@ -118,7 +132,10 @@ class GenericLLM(MapProcessor):
                     max_tokens = self.config.get("max_context_tokens", 900_000)
                     char_budget = max_tokens * 4
                     if len(content) > char_budget:
-                        content = content[:char_budget] + f"\n... [truncated: {len(content)} -> {char_budget} chars]"
+                        content = (
+                            content[:char_budget]
+                            + f"\n... [truncated: {len(content)} -> {char_budget} chars]"
+                        )
                     template_vars[key] = content
                 except OSError as exc:
                     _log.debug("skipping unreadable text artifact %s: %s", f.name, exc)

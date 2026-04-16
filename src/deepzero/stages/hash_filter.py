@@ -3,11 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from deepzero.engine.stage import MapProcessor, ProcessorContext, ProcessorResult, ProcessorEntry, StageSpec
+from deepzero.engine.stage import (
+    MapProcessor,
+    ProcessorContext,
+    ProcessorResult,
+    ProcessorEntry,
+    StageSpec,
+)
 
 
 class HashExclude(MapProcessor):
-    description = "hash-based exclusion filter - skips samples whose hash matches a known set"
+    description = (
+        "hash-based exclusion filter - skips samples whose hash matches a known set"
+    )
 
     def __init__(self, spec: StageSpec):
         super().__init__(spec)
@@ -32,7 +40,9 @@ class HashExclude(MapProcessor):
                     h = line.strip().lower()
                     if h and not h.startswith("#"):
                         self._exclude_hashes.add(h)
-                self.log.info("loaded %d hashes from %s", len(self._exclude_hashes), path.name)
+                self.log.info(
+                    "loaded %d hashes from %s", len(self._exclude_hashes), path.name
+                )
             else:
                 self.log.warning("hash_file not found: %s", path)
 

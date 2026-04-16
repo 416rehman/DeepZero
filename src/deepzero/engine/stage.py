@@ -5,7 +5,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol, TypedDict, runtime_checkable, ClassVar
+from typing import Any, Protocol, TypedDict, runtime_checkable, ClassVar, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from deepzero.engine.state import StateStore
 
 from deepzero.engine.types import StageStatus, Verdict
 from deepzero.engine.state import StageOutput
@@ -64,12 +67,12 @@ class ProcessorEntry:
     sample_id: str
     source_path: Path
     filename: str
-    
+
     # working directory for this sample (work/<pipeline>/samples/<id>/)
     sample_dir: Path | None = None
-    
+
     # attached automatically by the runner to enable memory-efficient lazy-loading
-    _store: Any = field(default=None, repr=False, compare=False)
+    _store: StateStore | None = field(default=None, repr=False, compare=False)
 
     @property
     def history(self) -> dict[str, StageOutput]:
@@ -78,7 +81,10 @@ class ProcessorEntry:
             return self._history
         if self._store is None:
             return {}
-        return self._store.load_sample(self.sample_id).history
+        loaded = self._store.load_sample(self.sample_id)
+        if loaded is None:
+            return {}
+        return loaded.history
 
     def upstream(self, processor_name: str) -> StageOutput | None:
         # get the full output from a previous processor
@@ -101,7 +107,9 @@ class ProcessorContext:
     # llm provider if configured
     llm: LLMProtocol | None
     # logger scoped to this processor instance
-    log: logging.Logger = field(default_factory=lambda: logging.getLogger("deepzero.processor"))
+    log: logging.Logger = field(
+        default_factory=lambda: logging.getLogger("deepzero.processor")
+    )
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         # shorthand to grab a pipeline setting
@@ -126,12 +134,18 @@ class ProcessorResult:
     error: str | None = None
 
     @classmethod
-    def ok(cls, data: dict[str, Any] | None = None, artifacts: dict[str, str] | None = None) -> ProcessorResult:
+    def ok(
+        cls, data: dict[str, Any] | None = None, artifacts: dict[str, str] | None = None
+    ) -> ProcessorResult:
         # sample processed successfully, continue downstream
-        return cls(status=StageStatus.COMPLETED, data=data or {}, artifacts=artifacts or {})
+        return cls(
+            status=StageStatus.COMPLETED, data=data or {}, artifacts=artifacts or {}
+        )
 
     @classmethod
-    def filter(cls, reason: str = "", data: dict[str, Any] | None = None) -> ProcessorResult:
+    def filter(
+        cls, reason: str = "", data: dict[str, Any] | None = None
+    ) -> ProcessorResult:
         # sample intentionally excluded from further processing
         d = dict(data) if data else {}
         if reason:
@@ -229,6 +243,7 @@ class Processor(ABC):
         if self._source_file is not None:
             return self._source_file.parent
         import inspect
+
         return Path(inspect.getfile(type(self))).parent
 
     @property
@@ -258,8 +273,7 @@ class IngestProcessor(Processor):
     processor_type = ProcessorType.INGEST
 
     @abstractmethod
-    def process(self, ctx: ProcessorContext, target: Path) -> list[Sample]:
-        ...
+    def process(self, ctx: ProcessorContext, target: Path) -> list[Sample]: ...
 
 
 class MapProcessor(Processor):
@@ -275,8 +289,9 @@ class MapProcessor(Processor):
     processor_type = ProcessorType.MAP
 
     @abstractmethod
-    def process(self, ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult:
-        ...
+    def process(
+        self, ctx: ProcessorContext, entry: ProcessorEntry
+    ) -> ProcessorResult: ...
 
     def should_skip(self, ctx: ProcessorContext, entry: ProcessorEntry) -> str | None:
         # override to skip already-processed samples (e.g. cached output files).
@@ -302,8 +317,9 @@ class ReduceProcessor(Processor):
     processor_type = ProcessorType.REDUCE
 
     @abstractmethod
-    def process(self, ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[str]:
-        ...
+    def process(
+        self, ctx: ProcessorContext, entries: list[ProcessorEntry]
+    ) -> list[str]: ...
 
 
 class BulkMapProcessor(Processor):
@@ -321,125 +337,14 @@ class BulkMapProcessor(Processor):
     processor_type = ProcessorType.BULK_MAP
 
     @abstractmethod
-    def process(self, ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[ProcessorResult]:
-        ...
+    def process(
+        self, ctx: ProcessorContext, entries: list[ProcessorEntry]
+    ) -> list[ProcessorResult]: ...
 
 
-# -- processor registry --
-
-
-_PROCESSOR_REGISTRY: dict[str, type[Processor]] = {}
-
-
-def register_processor(name: str, cls: type[Processor]) -> None:
-    _PROCESSOR_REGISTRY[name] = cls
-
-
-def get_registered_processors() -> dict[str, type[Processor]]:
-    return dict(_PROCESSOR_REGISTRY)
-
-
-def resolve_processor_class(processor_ref: str) -> type[Processor]:
-    # resolution order:
-    #   bare name              = built-in registry (e.g. "metadata_filter")
-    #   dir/file.py            = processors/<dir>/<file>.py, first Processor subclass
-    #   dir/file.py:ClassName  = processors/<dir>/<file>.py, specific class
-
-    if "/" in processor_ref or "\\" in processor_ref:
-        return _resolve_from_processors_dir(processor_ref)
-
-    if processor_ref in _PROCESSOR_REGISTRY:
-        return _PROCESSOR_REGISTRY[processor_ref]
-
-    if ":" in processor_ref:
-        return _resolve_from_dotted(processor_ref)
-
-    raise ValueError(
-        f"unknown processor '{processor_ref}'. bare names match built-in processors only. "
-        f"for external processors use '<dir>/<file>.py' (relative to processors/). "
-        f"built-ins: {list(_PROCESSOR_REGISTRY.keys())}"
-    )
-
-
-def _resolve_from_processors_dir(processor_ref: str) -> type[Processor]:
-    processors_root = Path.cwd() / "processors"
-
-    class_name = None
-    path_part = processor_ref
-    if ":" in processor_ref:
-        path_part, class_name = processor_ref.rsplit(":", 1)
-
-    abs_path = (processors_root / path_part).resolve()
-
-    if not abs_path.exists():
-        raise FileNotFoundError(
-            f"processor not found: {abs_path} "
-            f"(resolved '{processor_ref}' relative to processors/)"
-        )
-
-    if abs_path.is_file():
-        if class_name:
-            cls = _load_specific_class(abs_path, class_name)
-        else:
-            cls = _load_processor_from_file(abs_path)
-            if cls is None:
-                raise ImportError(f"no Processor subclass found in {abs_path}")
-        cls._source_file = abs_path
-        return cls
-
-    raise FileNotFoundError(
-        f"'{processor_ref}' resolved to '{abs_path}' which is not a .py file. "
-        f"use '<dir>/<file>.py' format, e.g. 'ghidra_decompile/ghidra_decompile.py'"
-    )
-
-
-def _load_specific_class(file_path: Path, class_name: str) -> type[Processor]:
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(f"deepzero.custom.{file_path.stem}", file_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load processor from {file_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    cls = getattr(module, class_name, None)
-    if cls is None:
-        raise AttributeError(f"processor file {file_path} has no class '{class_name}'")
-    if not (isinstance(cls, type) and issubclass(cls, Processor)):
-        raise TypeError(f"'{class_name}' in {file_path} is not a Processor subclass")
-
-    cls._source_file = file_path
-    return cls
-
-
-def _load_processor_from_file(file_path: Path) -> type[Processor] | None:
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(f"deepzero.custom.{file_path.stem}", file_path)
-    if spec is None or spec.loader is None:
-        return None
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    for attr_name in dir(module):
-        attr = getattr(module, attr_name)
-        if isinstance(attr, type) and issubclass(attr, Processor) and attr is not Processor:
-            if any(attr is base for base in (IngestProcessor, MapProcessor, ReduceProcessor, BulkMapProcessor)):
-                continue
-            return attr
-
-    return None
-
-
-def _resolve_from_dotted(processor_ref: str) -> type[Processor]:
-    module_path, class_name = processor_ref.rsplit(":", 1)
-    import importlib
-    module = importlib.import_module(module_path)
-    cls = getattr(module, class_name, None)
-
-    if cls is None:
-        raise AttributeError(f"module '{module_path}' has no attribute '{class_name}'")
-    if not (isinstance(cls, type) and issubclass(cls, Processor)):
-        raise TypeError(f"'{class_name}' in '{module_path}' is not a Processor subclass")
-
-    return cls
+# re-export registry functions so existing imports from stage.py keep working
+from deepzero.engine.registry import (  # noqa: E402, F401
+    register_processor,
+    get_registered_processors,
+    resolve_processor_class,
+)

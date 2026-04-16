@@ -22,7 +22,11 @@ def _register_builtins():
 
 class TestRegistryModule:
     def test_register_and_retrieve(self):
-        from deepzero.engine.stage import MapProcessor, ProcessorContext, ProcessorResult
+        from deepzero.engine.stage import (
+            MapProcessor,
+            ProcessorContext,
+            ProcessorResult,
+        )
 
         class StubProcessor(MapProcessor):
             def process(self, ctx: ProcessorContext, entry) -> ProcessorResult:
@@ -38,7 +42,9 @@ class TestRegistryModule:
         assert cls.__name__ == "MetadataFilter"
 
     def test_resolve_unknown_raises(self):
-        with pytest.raises(ValueError, match="bare names match built-in processors only"):
+        with pytest.raises(
+            ValueError, match="bare names match built-in processors only"
+        ):
             resolve_processor_class("_definitely_not_registered_xyz")
 
     def test_resolve_file_path(self, tmp_path):

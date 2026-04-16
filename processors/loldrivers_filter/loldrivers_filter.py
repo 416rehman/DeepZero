@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from deepzero.engine.stage import MapProcessor, ProcessorContext, ProcessorResult, StageSpec, ProcessorEntry
+from deepzero.engine.stage import (
+    MapProcessor,
+    ProcessorContext,
+    ProcessorResult,
+    StageSpec,
+    ProcessorEntry,
+)
 
 LOLDRIVERS_URL = "https://www.loldrivers.io/api/drivers.json"
 LOLDRIVERS_CACHE_FILE = "loldrivers.io.json"
@@ -36,7 +42,9 @@ class LoldriversFilter(MapProcessor):
             db_path = Path(self.config.db_path)
             if db_path.is_absolute() and db_path.exists():
                 return db_path
-            self.log.info("db_path '%s' not found, will auto-download", self.config.db_path)
+            self.log.info(
+                "db_path '%s' not found, will auto-download", self.config.db_path
+            )
 
         cached = self.cache_dir / LOLDRIVERS_CACHE_FILE
         ttl = self.config.cache_ttl_days
@@ -46,7 +54,9 @@ class LoldriversFilter(MapProcessor):
             if age_days < ttl:
                 self.log.info("using cached db (%.1f days old)", age_days)
                 return cached
-            self.log.info("cached db is %.1f days old (ttl=%d), refreshing", age_days, ttl)
+            self.log.info(
+                "cached db is %.1f days old (ttl=%d), refreshing", age_days, ttl
+            )
 
         return self._download(cached)
 
@@ -54,6 +64,7 @@ class LoldriversFilter(MapProcessor):
         self.log.info("downloading loldrivers database from %s", LOLDRIVERS_URL)
 
         from urllib.parse import urlparse
+
         parsed = urlparse(LOLDRIVERS_URL)
         if parsed.scheme != "https":
             self.log.warning("refusing to fetch non-https url: %s", LOLDRIVERS_URL)

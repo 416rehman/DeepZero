@@ -119,7 +119,9 @@ def load_pipeline(
         try:
             on_failure = FailurePolicy(on_failure_raw)
         except ValueError as exc:
-            raise ValueError(f"stage '{stage_name}': invalid on_failure '{on_failure_raw}', must be skip/retry/abort") from exc
+            raise ValueError(
+                f"stage '{stage_name}': invalid on_failure '{on_failure_raw}', must be skip/retry/abort"
+            ) from exc
 
         spec = StageSpec(
             name=stage_name,
@@ -167,7 +169,9 @@ def _resolve_processors(pipeline: PipelineDefinition) -> None:
                     f"stage '{spec.name}' at position {i} is an IngestProcessor. "
                     f"only the first stage can be an ingest processor."
                 )
-            if not isinstance(instance, (MapProcessor, ReduceProcessor, BulkMapProcessor)):
+            if not isinstance(
+                instance, (MapProcessor, ReduceProcessor, BulkMapProcessor)
+            ):
                 raise ValueError(
                     f"stage '{spec.name}' at position {i} must be a MapProcessor, ReduceProcessor, or BulkMapProcessor. "
                     f"got {cls.__name__}."
@@ -285,13 +289,21 @@ def validate_pipeline(pipeline_ref: str) -> list[str]:
             cls = resolve_processor_class(spec.processor)
             stype = getattr(cls, "processor_type", None)
             proc_types.append((spec.name, stype))
-        except (ValueError, FileNotFoundError, ImportError, AttributeError, TypeError) as exc:
+        except (
+            ValueError,
+            FileNotFoundError,
+            ImportError,
+            AttributeError,
+            TypeError,
+        ) as exc:
             log.debug("processor resolution failed for '%s': %s", spec.name, exc)
             proc_types.append((spec.name, None))
 
     has_map = any(st == ProcessorType.MAP for _, st in proc_types)
     if not has_map:
-        warnings.append("no map processors found - pipeline has no sample processing stages")
+        warnings.append(
+            "no map processors found - pipeline has no sample processing stages"
+        )
 
     if not warnings:
         warnings.append("pipeline is valid - no issues found")

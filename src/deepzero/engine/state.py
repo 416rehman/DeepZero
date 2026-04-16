@@ -43,7 +43,7 @@ def atomic_replace(src: Path, dst: Path, retries: int = 5) -> None:
 @dataclass
 class StageOutput:
     status: StageStatus = StageStatus.PENDING
-    verdict: Verdict | str = ""
+    verdict: Verdict = Verdict.CONTINUE
     started_at: str = ""
     completed_at: str = ""
     artifacts: dict[str, str] = field(default_factory=dict)
@@ -75,7 +75,7 @@ class SampleState:
     def mark_stage_completed(
         self,
         stage_name: str,
-        verdict: Verdict | str = Verdict.CONTINUE,
+        verdict: Verdict = Verdict.CONTINUE,
         artifacts: dict[str, str] | None = None,
         data: dict[str, Any] | None = None,
     ) -> None:
@@ -119,7 +119,11 @@ class SampleState:
         s = self.history.get(stage_name)
         if s is None:
             return False
-        return s.status in (StageStatus.COMPLETED, StageStatus.FILTERED, StageStatus.FAILED)
+        return s.status in (
+            StageStatus.COMPLETED,
+            StageStatus.FILTERED,
+            StageStatus.FAILED,
+        )
 
     def is_active(self) -> bool:
         return self.verdict in (SampleStatus.PENDING, SampleStatus.ACTIVE)
@@ -182,7 +186,9 @@ class StateStore:
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return RunState(**{k: v for k, v in data.items() if k in RunState.__dataclass_fields__})
+            return RunState(
+                **{k: v for k, v in data.items() if k in RunState.__dataclass_fields__}
+            )
         except (json.JSONDecodeError, TypeError) as e:
             log.warning("failed to load run state: %s", e)
             return None
@@ -197,7 +203,7 @@ class StateStore:
     def save_sample(self, state: SampleState) -> None:
         d = self.sample_dir(state.sample_id)
         path = d / "state.json"
-        self._atomic_write(path, self._dumps(_sample_to_dict(state)))
+        self._atomic_write(path, self._dumps(sample_to_dict(state)))
 
     def load_sample(self, sample_id: str) -> SampleState | None:
         path = self.sample_dir(sample_id) / "state.json"
@@ -207,7 +213,12 @@ class StateStore:
             data = json.loads(path.read_text(encoding="utf-8"))
             version = data.get("_version", 1)
             if version < STATE_VERSION:
-                log.warning("sample %s has v%d state, expected v%d - skipping", sample_id, version, STATE_VERSION)
+                log.warning(
+                    "sample %s has v%d state, expected v%d - skipping",
+                    sample_id,
+                    version,
+                    STATE_VERSION,
+                )
                 return None
             return _sample_from_dict(data)
         except (json.JSONDecodeError, TypeError, KeyError) as e:
@@ -230,21 +241,31 @@ class StateStore:
     def save_manifest(self, samples: list[SampleState]) -> None:
         entries = []
         for s in samples:
-            entries.append({
-                "sample_id": s.sample_id,
-                "filename": s.filename,
-                "verdict": s.verdict,
-                "current_stage": s.current_stage,
-                "sha256": s.sha256,
-            })
+            entries.append(
+                {
+                    "sample_id": s.sample_id,
+                    "filename": s.filename,
+                    "verdict": s.verdict,
+                    "current_stage": s.current_stage,
+                    "sha256": s.sha256,
+                }
+            )
 
         manifest = {
             "_version": STATE_VERSION,
             "total": len(entries),
-            "active": sum(1 for e in entries if e["verdict"] in (SampleStatus.PENDING, SampleStatus.ACTIVE)),
-            "filtered": sum(1 for e in entries if e["verdict"] == SampleStatus.FILTERED),
+            "active": sum(
+                1
+                for e in entries
+                if e["verdict"] in (SampleStatus.PENDING, SampleStatus.ACTIVE)
+            ),
+            "filtered": sum(
+                1 for e in entries if e["verdict"] == SampleStatus.FILTERED
+            ),
             "failed": sum(1 for e in entries if e["verdict"] == SampleStatus.FAILED),
-            "completed": sum(1 for e in entries if e["verdict"] == SampleStatus.COMPLETED),
+            "completed": sum(
+                1 for e in entries if e["verdict"] == SampleStatus.COMPLETED
+            ),
             "samples": entries,
         }
         path = self.work_dir / "run_manifest.json"
@@ -271,7 +292,7 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _sample_to_dict(state: SampleState) -> dict:
+def sample_to_dict(state: SampleState) -> dict:
     d: dict[str, Any] = {
         "_version": STATE_VERSION,
         "sample_id": state.sample_id,
@@ -291,7 +312,9 @@ def _sample_to_dict(state: SampleState) -> dict:
 def _sample_from_dict(data: dict) -> SampleState:
     history = {}
     for name, sd in data.get("history", {}).items():
-        history[name] = StageOutput(**{k: v for k, v in sd.items() if k in StageOutput.__dataclass_fields__})
+        history[name] = StageOutput(
+            **{k: v for k, v in sd.items() if k in StageOutput.__dataclass_fields__}
+        )
 
     return SampleState(
         sample_id=data["sample_id"],

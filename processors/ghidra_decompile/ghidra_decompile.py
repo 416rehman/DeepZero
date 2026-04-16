@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import subprocess  # nosec B404
+import asyncio
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from deepzero.engine.stage import MapProcessor, ProcessorContext, ProcessorResult, ProcessorEntry
+from deepzero.engine.stage import (
+    MapProcessor,
+    ProcessorContext,
+    ProcessorResult,
+    ProcessorEntry,
+)
 
 log = logging.getLogger("deepzero.processor.ghidra")
 
@@ -30,7 +34,9 @@ class GhidraDecompile(MapProcessor):
 
     def validate(self) -> list[str]:
         if not self.config.ghidra_install_dir:
-            return ["ghidra_install_dir is required - set it in config or via ${GHIDRA_INSTALL_DIR}"]
+            return [
+                "ghidra_install_dir is required - set it in config or via ${GHIDRA_INSTALL_DIR}"
+            ]
         ghidra_dir = Path(self.config.ghidra_install_dir)
         if not ghidra_dir.exists():
             return [f"ghidra not found at {ghidra_dir}"]
@@ -130,8 +136,8 @@ class GhidraDecompile(MapProcessor):
             log.info("ghidra cache hit for %s", binary_path.name)
             try:
                 return json.loads(cached_result.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                log.warning("cached result is corrupt, re-running analysis")
+            except (json.JSONDecodeError, OSError) as e:
+                log.warning("cached result is corrupt, re-running analysis", exc_info=e)
 
         analyze_headless = self._find_analyze_headless(ghidra_install_dir)
 
@@ -144,11 +150,15 @@ class GhidraDecompile(MapProcessor):
             str(analyze_headless),
             str(project_dir),
             project_name,
-            "-import", str(binary_path),
-            "-postScript", str(post_script),
-            "-scriptPath", str(post_script.parent),
+            "-import",
+            str(binary_path),
+            "-postScript",
+            str(post_script),
+            "-scriptPath",
+            str(post_script.parent),
             "-deleteProject",
-            "-analysisTimeoutPerFile", str(timeout),
+            "-analysisTimeoutPerFile",
+            str(timeout),
         ]
 
         env = dict(os.environ)
@@ -163,55 +173,63 @@ class GhidraDecompile(MapProcessor):
         stdout_log = output_dir / "ghidra_stdout.log"
         stderr_log = output_dir / "ghidra_stderr.log"
 
-        log.info("starting ghidra analysis of %s (timeout=%ds)", binary_path.name, timeout)
-        start_time = time.time()
+        log.info(
+            "starting ghidra analysis of %s (timeout=%ds)", binary_path.name, timeout
+        )
 
-        proc = None
         try:
-            with open(stdout_log, "w") as fout, open(stderr_log, "w") as ferr:
-                proc = subprocess.Popen(  # nosec B603
-                    cmd, stdout=fout, stderr=ferr, stdin=subprocess.DEVNULL, env=env,
-                )
-
-                while proc.poll() is None:
-                    elapsed = time.time() - start_time
-                    if elapsed > timeout:
-                        proc.kill()
-                        proc.wait(timeout=10)
-                        return {"success": False, "error": f"ghidra timed out after {elapsed:.0f}s"}
-
-                    time.sleep(1)
-
-            elapsed = time.time() - start_time
-
-            if proc.returncode != 0:
-                stderr_text = ""
-                if stderr_log.exists():
-                    stderr_text = stderr_log.read_text(encoding="utf-8", errors="replace")[-500:]
-                return {
-                    "success": False,
-                    "error": f"ghidra exited with code {proc.returncode}: {stderr_text}",
-                }
-        except (OSError, subprocess.SubprocessError) as e:
+            return asyncio.run(
+                self._run_async(cmd, output_dir, timeout, env, stdout_log, stderr_log)
+            )
+        except (OSError, RuntimeError) as e:
             return {"success": False, "error": f"execution error: {e}"}
-        finally:
-            if proc is not None and proc.poll() is None:
-                try:
-                    proc.kill()
-                except OSError as exc:
-                    log.debug("cleanup kill skipped - pid already exited: %s", exc)
 
-        if not cached_result.exists():
-            contents = [f.name for f in output_dir.iterdir()] if output_dir.exists() else []
+    async def _run_async(
+        self,
+        cmd: list[str],
+        output_dir: Path,
+        timeout: int,
+        env: dict[str, str],
+        stdout_log: Path,
+        stderr_log: Path,
+    ) -> dict[str, Any]:
+        with open(stdout_log, "wb") as fout, open(stderr_log, "wb") as ferr:
+            proc = await asyncio.create_subprocess_exec(
+                cmd[0],
+                *cmd[1:],
+                stdout=fout,
+                stderr=ferr,
+                stdin=asyncio.subprocess.DEVNULL,
+                env=env,
+            )
+
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                if proc.returncode is None:
+                    proc.kill()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=10)
+                    except asyncio.TimeoutError:
+                        pass
+                return {"success": False, "error": f"ghidra timed out after {timeout}s"}
+
+        if proc.returncode != 0:
+            stderr_text = ""
+            if stderr_log.exists():
+                stderr_text = stderr_log.read_text(encoding="utf-8", errors="replace")[
+                    -500:
+                ]
             return {
                 "success": False,
-                "error": f"post-script did not produce ghidra_result.json. output dir contains: {contents}",
+                "error": f"ghidra exited with code {proc.returncode}: {stderr_text}",
             }
+        cached_result = output_dir / "ghidra_result.json"
+        if not cached_result.exists():
+            return {"success": False, "error": "ghidra succeeded but no result found"}
 
         try:
-            data = json.loads(cached_result.read_text(encoding="utf-8"))
-            log.info("ghidra analysis of %s succeeded in %.1fs", binary_path.name, elapsed)
-            return data
+            return json.loads(cached_result.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as e:
             return {"success": False, "error": f"failed to parse ghidra output: {e}"}
 

@@ -248,7 +248,23 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
     if run_state.completed_at:
         console.print(f"  completed: {run_state.completed_at}")
 
-    manifest = state_store.load_manifest()
+    # read pristine live disk state rather than the staled manifest sync barrier
+    samples = state_store.list_samples()
+    # shape SampleState back to dictionary structure for the unified stat printer
+    manifest = [
+        {
+            "verdict": (s.verdict.value if hasattr(s.verdict, "value") else str(s.verdict)),
+            "history": {
+                stage_name: {
+                    "status": out.status.value if hasattr(out.status, "value") else str(out.status),
+                    "verdict": out.verdict.value if hasattr(out.verdict, "value") else str(out.verdict),
+                }
+                for stage_name, out in s.history.items()
+            }
+        }
+        for s in samples
+    ]
+
     _print_stats(run_state, manifest)
 
     # show manifest summary
@@ -486,9 +502,9 @@ def _print_stats(run_state, manifest: list[dict[str, Any]] | None = None) -> Non
             # first stage is always ingest, stats are held in discovered
             discovered = run_state.stats.get("discovered", 0)
             table.add_row(
-                stage_name, 
-                str(discovered) if discovered else "[dim]·[/]", 
-                "[dim]·[/]", 
+                stage_name,
+                str(discovered) if discovered else "[dim]·[/]",
+                "[dim]·[/]",
                 "[dim]·[/]"
             )
         else:

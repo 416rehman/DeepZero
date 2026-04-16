@@ -9,6 +9,7 @@ from typing import Any
 import click
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markup import escape
 from rich.table import Table
 
 from deepzero.engine.types import RunStatus
@@ -22,6 +23,17 @@ _LOG_PREFIX_MAP: MappingProxyType[str, str] = MappingProxyType(
         "deepzero.runner": "engine",
         "deepzero.pipeline": "pipeline",
     }
+)
+
+_LOG_COLORS: tuple[str, ...] = (
+    "cyan",
+    "magenta",
+    "green",
+    "yellow",
+    "bright_cyan",
+    "bright_magenta",
+    "bright_green",
+    "bright_yellow",
 )
 
 
@@ -44,8 +56,16 @@ class _ShortNameFormatter(logging.Formatter):
             record.exc_info = None
             record.exc_text = None
 
-        record.msg = f"{short:>20} | {record.msg}"
-        return super().format(record)
+        msg = super().format(record)
+
+        msg_escaped = escape(msg)
+
+        import zlib
+
+        color = _LOG_COLORS[zlib.crc32(short.encode("utf-8")) % len(_LOG_COLORS)]
+
+        # format dynamically and override the final payload that RichHandler receives
+        return f"[{color}]\\[{short}][/{color}] {msg_escaped}"
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -56,7 +76,10 @@ def _setup_logging(verbose: bool) -> None:
         show_path=False,
         show_level=False,
         show_time=True,
+        log_time_format="%H:%M:%S",
+        markup=True,
     )
+    # the formatter now handles the full string construction and markup tagging
     handler.setFormatter(_ShortNameFormatter("%(message)s"))
     logging.basicConfig(level=level, handlers=[handler])
     if not verbose:
@@ -208,14 +231,20 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
     """show current pipeline run status"""
     from deepzero.engine.state import StateStore
 
+    _setup_logging(verbose)
     if work_dir:
         work_path = Path(work_dir)
     elif pipeline:
         import deepzero.stages  # noqa: F401
         from deepzero.engine.pipeline import load_pipeline
 
-        _setup_logging(False)
-        pipeline_def = load_pipeline(pipeline)
+        _load_env()
+        try:
+            pipeline_def = load_pipeline(pipeline)
+        except ValueError as e:
+            console.print(f"[bold red]X ERROR[/]: {e}")
+            raise SystemExit(1)
+
         work_path = pipeline_def.work_dir
     else:
         console.print("[red]specify --pipeline or --work-dir[/]")
@@ -242,10 +271,10 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
     if run_state.completed_at:
         console.print(f"  completed: {run_state.completed_at}")
 
-    _print_stats(run_state)
+    manifest = state_store.load_manifest()
+    _print_stats(run_state, manifest)
 
     # show manifest summary
-    manifest = state_store.load_manifest()
     if manifest:
         verdicts: dict[str, int] = {}
         for entry in manifest:
@@ -262,6 +291,7 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
 def validate(pipeline_ref: str):
     """validate a pipeline definition"""
     _setup_logging(False)
+    _load_env()
 
     import deepzero.stages  # noqa: F401
     from deepzero.engine.pipeline import validate_pipeline
@@ -405,14 +435,7 @@ def interactive(model: str, work_dir: str, verbose: bool):
             response = llm.complete(history)
             history.append({"role": "assistant", "content": response})
             console.print(f"\n[bold cyan]deepzero>[/] {response}\n")
-        except (
-            RuntimeError,
-            ValueError,
-            TypeError,
-            OSError,
-            ConnectionError,
-            TimeoutError,
-        ) as e:
+        except Exception as e:
             console.print(f"[red]llm error ({type(e).__name__}): {e}[/]")
 
 
@@ -429,6 +452,8 @@ def serve(host: str, port: int, work_dir: str):
     console.print(f"[bold cyan]deepzero serve[/] - http://{host}:{port}")
     console.print(f"  work_dir: {work_dir}")
 
+    _load_env()
+
     from deepzero.api.server import create_app
 
     try:
@@ -441,9 +466,14 @@ def serve(host: str, port: int, work_dir: str):
     uvicorn.run(app, host=host, port=port)
 
 
-def _print_stats(run_state) -> None:
-    per_stage = run_state.stats.get("per_stage", {})
-    if not per_stage:
+def _print_stats(run_state, manifest: list[dict[str, Any]] | None = None) -> None:
+    # `manifest` is accepted for caller compatibility, but current manifest
+    # entries do not persist per-stage history, so stage statistics must come
+    # from the run state's cached per-stage counters.
+    _ = manifest
+    per_stage: dict[str, dict[str, int]] = dict(run_state.stats.get("per_stage", {}))
+
+    if not run_state.stages:
         discovered = run_state.stats.get("discovered", 0)
         if discovered:
             console.print(f"  discovered: {discovered}")
@@ -455,13 +485,36 @@ def _print_stats(run_state) -> None:
     table.add_column("filtered", style="yellow", justify="right")
     table.add_column("failed", style="red", justify="right")
 
-    for stage_name, counts in per_stage.items():
-        table.add_row(
-            stage_name,
-            str(counts.get("completed", 0)),
-            str(counts.get("filtered", 0)),
-            str(counts.get("failed", 0)),
-        )
+    for i, stage_name in enumerate(run_state.stages):
+        if i == 0:
+            # first stage is always ingest, stats are held in discovered
+            discovered = run_state.stats.get("discovered", 0)
+            table.add_row(
+                stage_name,
+                str(discovered) if discovered else "[dim white]·[/]",
+                "[dim white]·[/]",
+                "[dim white]·[/]",
+            )
+        else:
+            counts = per_stage.get(stage_name, {})
+            if not counts:
+                # stage completely unstarted (force dim white to strip column colors)
+                table.add_row(
+                    f"[dim white]◦ {stage_name}[/]",
+                    "[dim white]·[/]",
+                    "[dim white]·[/]",
+                    "[dim white]·[/]",
+                )
+            else:
+                p = counts.get("completed", 0)
+                f = counts.get("filtered", 0)
+                err = counts.get("failed", 0)
+                table.add_row(
+                    stage_name,
+                    str(p) if p else "[dim white]·[/]",
+                    str(f) if f else "[dim white]·[/]",
+                    str(err) if err else "[dim white]·[/]",
+                )
 
     console.print(table)
 

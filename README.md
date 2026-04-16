@@ -32,7 +32,6 @@
 
 - [⚡️ Quickstart](#️-quickstart)
 - [⚙️ Architecture](#️-architecture)
-- [📦 Installation](#-installation)
 - [🚀 CLI Reference](#-cli)
 - [📝 Pipeline Syntax](#-pipeline-syntax)
 - [🛠 Shipped Processors](#-shipped-processors)
@@ -46,20 +45,33 @@
 
 DeepZero requires a target corpus of files to analyze and a pipeline configuration detailing how to process them. We provide a complete example pipeline designed to hunt for vulnerabilities in Windows kernel drivers using the LOLDrivers dataset as a blocklist.
 
-1. **Download a sample corpus**
+1. **Clone & Install**
+   DeepZero requires **Python 3.11+**.
+   ```bash
+   git clone https://github.com/416rehman/DeepZero.git
+   cd DeepZero
+   pip install -e .
+   ```
+
+2. **Configure Environment**
+   If you intend to use the AI analysis stages, configure your API keys by creating a `.env` file from the provided layout:
+   ```bash
+   cp .env.example .env
+   ```
+
+3. **Download a sample corpus**
    For this example, we will use the open-source Snappy Driver Installer (SDI) driver pack which contains thousands of real-world Windows drivers:
    👉 **[https://sdi-tool.org/download/](https://sdi-tool.org/download/)**
    
    Download the standard/torrent package and extract the archive to a local path (e.g., `C:\drivers`).
 
-2. **Run the LOLDrivers pipeline**
-   Pass your driver path to the CLI, alongside the provided pipeline definition:
+4. **Run the LOLDrivers pipeline**
+   Pass your driver path to the CLI, alongside the provided pipeline configuration file:
    ```bash
    deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
    ```
 
-3. **Monitor progress and state**
-   DeepZero will safely parallelize execution, cache intermediate outputs, and show a live terminal dashboard. If you need to stop unexpectedly, simply press `Ctrl+C`. Re-run the exact same command later, and DeepZero will instantly resume from disk state.
+   *DeepZero will safely parallelize execution, cache intermediate outputs, and show a live terminal dashboard. If you need to stop unexpectedly, simply press `Ctrl+C`. Re-run the exact same command later, and DeepZero will instantly resume from disk state.*
 
 ---
 
@@ -128,44 +140,6 @@ Sees all active samples at once. Returns a list of sample IDs to keep, in the de
 
 ---
 
-## 📦 Installation
-
-Requires **Python 3.11+**.
-
-```bash
-git clone https://github.com/416rehman/DeepZero.git
-cd DeepZero
-
-# install with all optional extras
-pip install -e ".[full]"
-
-# or install only what you need
-pip install -e ".[llm]"    # LLM support via litellm
-pip install -e ".[pe]"     # PE header parsing via lief
-pip install -e ".[serve]"  # REST API server (starlette + uvicorn)
-
-# copy and populate environment variables
-cp .env.example .env
-```
-
-### Core Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| `click` | CLI framework |
-| `rich` | Terminal UI, progress bars, live dashboard |
-| `pyyaml` | Pipeline YAML parsing |
-| `jinja2` | LLM prompt templating |
-
-### Optional Dependencies
-
-| Extra | Package | Purpose |
-|-------|---------|---------|
-| `llm` | `litellm` | LLM provider abstraction (OpenAI, Anthropic, Vertex AI, etc.) |
-| `pe` | `lief` | PE header parsing for the `pe_ingest` processor |
-| `serve` | `starlette`, `uvicorn` | REST API server |
-
----
 
 ## 🚀 CLI
 
@@ -211,9 +185,12 @@ deepzero serve --host 127.0.0.1 --port 8420 -w work/
 
 Resume is automatic. If a `work/<pipeline>/` directory exists with prior state, `deepzero run` resumes from where it left off. Use `--clean` to discard and restart.
 
-### `deepzero serve`
+### `deepzero serve` (⚠️ WIP / Experimental)
 
-Starts a read-only REST API (Starlette + Uvicorn) for querying run state and sample data.
+Starts a read-only REST API (Starlette + Uvicorn) for querying run state and sample data. 
+
+> [!WARNING]
+> The REST API server is currently a Work-In-Progress (WIP) and is partially broken/unstable.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|

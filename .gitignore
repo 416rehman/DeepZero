@@ -1,24 +1,47 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-*.egg-info/
+*$py.class
+
+# deepzero workspace and cache
+work/
+.deepzero/
+.cache/
+ghidra_projects/
+ghidra_result.json
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build/Dist
 dist/
 build/
-.eggs/
+*.egg-info/
 
-.env
-.venv/
-venv/
+# Desloppify
+.desloppify/
 
-work/
-reports/
-samples/
-disclosures/
-*.sys
+# Claude
+.claude/
 
-ghidra_projects/
-*.gpr
-*.rep/
-
-.idea/
-.vscode/
-*.swp
+# Tests & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.json
+scratch_cov.py

@@ -1,28 +1,49 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "byovd-agent"
-version = "0.1.0"
-description = "autonomous vulnerability research agent for Windows kernel drivers"
+name = "deepzero"
+version = "0.2.0"
+description = "agentic pipeline for automated vulnerability research on kernel drivers"
 requires-python = ">=3.11"
+license = {text = "MIT"}
 dependencies = [
-    "deepagents>=0.4.0",
-    "langchain-google-vertexai>=2.0.0",
-    "pefile>=2024.8.26",
-    "yara-python>=4.5.0",
-    "python-dotenv>=1.0.0",
-    "pydantic>=2.0.0",
-    "rich>=13.0.0",
-    "semgrep>=1.0.0",
+    "click>=8.0",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.0",
 ]
 
 [project.optional-dependencies]
-ghidra = ["pyghidra>=3.0.0"]
+llm = ["litellm>=1.0"]
+serve = ["starlette>=0.27", "uvicorn>=0.22"]
+pe = ["pefile>=2023.2"]
+full = ["deepzero[llm,serve,pe]"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "deepzero[full]"]
 
 [project.scripts]
-byovd = "byovd_agent.main:main"
-
-[build-system]
-requires = ["setuptools>=75.0"]
-build-backend = "setuptools.build_meta"
+deepzero = "deepzero.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "venv"]
+skips = []

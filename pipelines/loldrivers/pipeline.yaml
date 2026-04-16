@@ -1,0 +1,94 @@
+# processor resolution:
+#   bare name                = built-in processor (metadata_filter, generic_llm, top_k, sort, etc.)
+#   dir/file.py              = external processor, relative to processors/ directory
+#   dir/file.py:ClassName    = specific class in that file
+#
+# processor types:
+#   ingest = discovers samples from a target source
+#   map    = 1:1 sample processing (filters, decompilers, LLM, commands)
+#   reduce = N:1 synchronization barrier (top-k selection, sorting, global ranking)
+#   batch  = N:batch external process (semgrep bulk scan)
+
+name: loldrivers
+description: windows kernel driver vulnerability research pipeline
+version: "2.0"
+
+model: vertex_ai/gemini-2.5-pro
+
+settings:
+  work_dir: work
+  max_workers: 4
+
+stages:
+  # discover PE files, parse headers, extract driver metadata
+  - name: discover
+    processor: pe_ingest/pe_ingest.py
+    config:
+      extensions: [".sys"]
+      recursive: true
+      subsystem_filter: [1]
+      subdirs:
+        - DP_Chipset
+        - DP_LAN_Intel
+        - DP_LAN_Realtek
+        - DP_LAN_Others
+        - DP_WLAN
+        - DP_MassStorage
+        - DP_CardReader
+        - DP_wBluetooth
+        - DP_Touchpad
+        - DP_Biometric
+        - DP_xUSB
+        - DP_Vendor
+
+  # filter to kernel drivers with IOCTL attack surface + dedup
+  - name: kernel_filter
+    processor: metadata_filter
+    config:
+      require:
+        is_kernel_driver: true
+        has_ioctl_surface: true
+      dedup_field: sha256
+
+  # exclude drivers already in the loldrivers.io database
+  - name: loldrivers_filter
+    processor: loldrivers_filter/loldrivers_filter.py
+
+  # decompile with ghidra - install_dir and java_home come from env via ${} expansion
+  - name: decompile
+    processor: ghidra_decompile/ghidra_decompile.py
+    parallel: 0
+    timeout: 600
+    config:
+      strategy: extract_dispatch.py
+      max_functions: 60
+      max_depth: 4
+      ghidra_install_dir: ${GHIDRA_INSTALL_DIR}
+      java_home: ${JAVA_HOME:-}
+
+  # semgrep batch scan for driver vulns
+  - name: semgrep_scanner
+    processor: semgrep_scanner/semgrep_scanner.py
+    config:
+      min_findings: 1
+      rules_dir: pipelines/loldrivers/rules
+
+  # pick top 10 candidates by semgrep finding count
+  - name: pick_top_10
+    processor: top_k
+    config:
+      metric_path: "semgrep_scanner.finding_count"
+      keep_top: 10
+      sort_order: desc
+
+  # llm deep analysis - only the top 10 survivors
+  - name: assess
+    processor: generic_llm
+    parallel: 2
+    on_failure: skip
+    config:
+      prompt: pipelines/loldrivers/assessment.j2
+      output_file: assessment.md
+      classify_by: "\\[VULNERABLE\\]|\\[SAFE\\]"
+      max_context_tokens: 900000
+      max_retries: 3

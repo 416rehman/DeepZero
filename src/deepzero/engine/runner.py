@@ -169,7 +169,7 @@ class PipelineRunner:
                 break
 
             from deepzero.engine.state import StageStatus, Verdict
-            
+
             active = []
             for s in sample_states.values():
                 if spec.name in s.history or s.is_active():
@@ -184,7 +184,7 @@ class PipelineRunner:
                 continue
 
             stage_stats = {"completed": 0, "filtered": 0, "failed": 0}
-            
+
             for s in active:
                 output = s.history.get(spec.name)
                 if output and output.status not in (StageStatus.PENDING, StageStatus.RUNNING):
@@ -200,11 +200,11 @@ class PipelineRunner:
             is_fully_cached = False
             if len(active) > 0:
                 pending_count = sum(1 for s in active if not s.is_stage_done(spec.name))
-                is_fully_cached = (pending_count == 0)
+                is_fully_cached = pending_count == 0
 
             if self.dashboard:
                 self.dashboard.stage_start(
-                    spec.name, 
+                    spec.name,
                     len(active),
                     passed=stage_stats["completed"],
                     filtered=stage_stats["filtered"],
@@ -284,7 +284,7 @@ class PipelineRunner:
 
             if self.dashboard:
                 self.dashboard.stage_start(
-                    ingest_name, 
+                    ingest_name,
                     len(sample_states),
                     passed=len(sample_states),
                     is_fully_cached=True,
@@ -319,18 +319,26 @@ class PipelineRunner:
         if not samples or self._shutdown_event.is_set():
             if self.dashboard:
                 self.dashboard.set_transient_status(None)
-                self.dashboard.stage_done(ingest_name, len(samples) if not self._shutdown_event.is_set() else 0, 0, 0, elapsed)
-            
+                self.dashboard.stage_done(
+                    ingest_name,
+                    len(samples) if not self._shutdown_event.is_set() else 0,
+                    0,
+                    0,
+                    elapsed,
+                )
+
             if not samples:
                 run_state.mark_completed()
             else:
                 run_state.mark_interrupted()
-                
+
             self.state_store.save_run(run_state)
             return None if not samples else sample_states
 
         if self.dashboard:
-            self.dashboard.set_transient_status(f"syncing {len(samples)} discovered samples to disk...")
+            self.dashboard.set_transient_status(
+                f"syncing {len(samples)} discovered samples to disk..."
+            )
 
         sample_states = {}
         for sample in samples:
@@ -485,7 +493,13 @@ class PipelineRunner:
             for s in dirty:
                 self.state_store.save_sample(s)
 
-    def _apply_result(self, state: SampleState, spec: StageSpec, result: ProcessorResult | None, persist: bool = True) -> None:
+    def _apply_result(
+        self,
+        state: SampleState,
+        spec: StageSpec,
+        result: ProcessorResult | None,
+        persist: bool = True,
+    ) -> None:
         if result is None:
             return
 
@@ -506,7 +520,7 @@ class PipelineRunner:
 
         if persist:
             self.state_store.save_sample(state)
-        
+
         if result.status == StageStatus.FAILED and spec.on_failure == FailurePolicy.ABORT:
             self._shutdown_event.set()
 
@@ -561,7 +575,7 @@ class PipelineRunner:
                         backoff,
                         result.error,
                     )
-                    
+
                     if self._shutdown_event.wait(backoff):
                         return None
                     continue
@@ -573,7 +587,7 @@ class PipelineRunner:
             except PROCESSOR_ERRORS as exc:
                 if self._shutdown_event.is_set():
                     return None
-                
+
                 error_msg = f"{type(exc).__name__}: {exc}"
 
                 # capture traceback out of band
@@ -611,7 +625,7 @@ class PipelineRunner:
                     return None
 
                 return ProcessorResult.fail(error_msg)
-        
+
         return ProcessorResult.fail("processor max attempts exceeded")
 
     # -- reduce execution --
@@ -767,20 +781,24 @@ class PipelineRunner:
             sample_dir = self.state_store.sample_dir(sid)
             state_file = sample_dir / "state.json"
             context_file = sample_dir / "context.md"
-            
+
             if context_file.exists() and state_file.exists():
                 try:
                     if context_file.stat().st_mtime >= state_file.stat().st_mtime:
                         return
                 except OSError:
                     pass
-            
+
             try:
                 generate_context(sample_dir, state)
             except PROCESSOR_ERRORS as exc:
-                log.warning("context generation failed for %s: %s - %s", sid, type(exc).__name__, exc)
+                log.warning(
+                    "context generation failed for %s: %s - %s", sid, type(exc).__name__, exc
+                )
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 4) * 4)) as executor:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(32, (os.cpu_count() or 4) * 4)
+        ) as executor:
             future_map = {executor.submit(_gen, sid, state): sid for sid, state in active_items}
             for _ in concurrent.futures.as_completed(future_map):
                 if self._shutdown_event.is_set():

@@ -113,7 +113,9 @@ def main(ctx: click.Context):
 @click.option("--work-dir", "-w", default=None, help="work directory override")
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
 @click.option("--clean", is_flag=True, help="permanently delete previous run data and start fresh")
-def run(target: str, pipeline: str, model: str | None, work_dir: str | None, verbose: bool, clean: bool):
+def run(
+    target: str, pipeline: str, model: str | None, work_dir: str | None, verbose: bool, clean: bool
+):
     """run a pipeline against a target file or directory (resumes automatically)"""
     _setup_logging(verbose)
 
@@ -134,12 +136,13 @@ def run(target: str, pipeline: str, model: str | None, work_dir: str | None, ver
 
     import os
     import shutil
-    import time
     import threading
-    
+
     if clean and pipeline_def.work_dir.exists():
         console.print("[yellow]⚠ purging previous run data...[/]")
-        trash_dir = pipeline_def.work_dir.with_name(f"trash_{pipeline_def.work_dir.name}_{int(time.time())}")
+        trash_dir = pipeline_def.work_dir.with_name(
+            f"trash_{pipeline_def.work_dir.name}_{int(time.time())}"
+        )
         try:
             os.rename(pipeline_def.work_dir, trash_dir)
         except OSError as e:
@@ -158,7 +161,6 @@ def run(target: str, pipeline: str, model: str | None, work_dir: str | None, ver
     threading.Thread(target=_purge_trash, daemon=True).start()
 
     from deepzero.engine.ui import PipelineDashboard
-    from deepzero.engine.types import RunStatus
 
     state_store = StateStore(pipeline_def.work_dir)
     existing_run = state_store.load_run()
@@ -166,8 +168,12 @@ def run(target: str, pipeline: str, model: str | None, work_dir: str | None, ver
     is_resume = existing_run is not None
 
     dashboard = PipelineDashboard(pipeline_def.stage_names, console=console)
-    header_name = f"{pipeline_def.name} (resuming run {existing_run.run_id})" if is_resume else pipeline_def.name
-    
+    header_name = (
+        f"{pipeline_def.name} (resuming run {existing_run.run_id})"
+        if is_resume
+        else pipeline_def.name
+    )
+
     dashboard.print_header(
         name=header_name,
         target=str(target_path),
@@ -192,6 +198,8 @@ def run(target: str, pipeline: str, model: str | None, work_dir: str | None, ver
         )
 
     run_state = runner.run(target_path, run_state)
+
+
 @main.command()
 @click.option("--pipeline", "-p", default=None, help="pipeline name")
 @click.option("--work-dir", "-w", default=None, help="work directory")

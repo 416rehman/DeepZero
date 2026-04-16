@@ -224,6 +224,7 @@ def _get_output_dir():
         os.makedirs(output_dir)
     return output_dir
 
+
 def main():
     output_dir = _get_output_dir()
 
@@ -380,7 +381,7 @@ if __name__ == "__main__":
             output_dir = _get_output_dir()
         except Exception:
             output_dir = os.environ.get("DEEPZERO_SAMPLES_DIR", ".")
-            
+
         res = {
             "success": False,
             "error": "script crashed:\n" + traceback.format_exc(),

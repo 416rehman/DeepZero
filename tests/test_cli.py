@@ -99,12 +99,14 @@ class TestRunCommand:
 
     def test_run_garbage_collection_cleans_trash(self, tmp_path, monkeypatch):
         import threading
-        
+
         def mock_thread(target, daemon=False, args=()):
             class FakeThread:
-                def start(self): target(*args)
+                def start(self):
+                    target(*args)
+
             return FakeThread()
-            
+
         monkeypatch.setattr(threading, "Thread", mock_thread)
 
         yaml_content = "name: test\nstages:\n  - name: discover\n    processor: file_discovery\n"
@@ -121,8 +123,10 @@ class TestRunCommand:
         target.write_bytes(b"MZ")
 
         runner = CliRunner()
-        result = runner.invoke(main, ["run", str(target), "-p", str(pipeline_file), "-w", str(work_root)])
-        
+        result = runner.invoke(
+            main, ["run", str(target), "-p", str(pipeline_file), "-w", str(work_root)]
+        )
+
         if result.exit_code != 0:
             print(result.output)
         assert result.exit_code == 0
@@ -132,13 +136,14 @@ class TestRunCommand:
 
     def test_run_clean_flag_atomic_move(self, tmp_path, monkeypatch):
         import threading
-        import os
-        
+
         def mock_thread(target, daemon=False, args=()):
             class FakeThread:
-                def start(self): target(*args)
+                def start(self):
+                    target(*args)
+
             return FakeThread()
-            
+
         monkeypatch.setattr(threading, "Thread", mock_thread)
 
         yaml_content = "name: test\nstages:\n  - name: discover\n    processor: file_discovery\n"
@@ -148,7 +153,7 @@ class TestRunCommand:
         work_root = tmp_path / "work"
         pipeline_work_dir = work_root / "test"
         pipeline_work_dir.mkdir(parents=True)
-        
+
         # Inject dummy file to prove deletion
         (pipeline_work_dir / "dummy.txt").write_text("keep")
 
@@ -157,7 +162,9 @@ class TestRunCommand:
 
         runner = CliRunner()
         # Pass --clean flag to initiate force reset
-        result = runner.invoke(main, ["run", str(target), "-p", str(pipeline_file), "-w", str(work_root), "--clean"])
+        result = runner.invoke(
+            main, ["run", str(target), "-p", str(pipeline_file), "-w", str(work_root), "--clean"]
+        )
 
         if result.exit_code != 0:
             print(result.output)

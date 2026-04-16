@@ -231,18 +231,24 @@ class TestPipelineRunner:
 
         class CrashIngest:
             spec = StageSpec(name="discover", processor="crash")
-            def setup(self, config): pass
-            def teardown(self): pass
-            def process(self, *args): raise RuntimeError()
+
+            def setup(self, config):
+                pass
+
+            def teardown(self):
+                pass
+
+            def process(self, *args):
+                raise RuntimeError()
 
         map_tool = MockMapProcessor(StageSpec(name="stage1", processor="mock"))
         runner = PipelineRunner(CrashIngest(), [(map_tool.spec, map_tool)], store, tmp_path, {})
-        
+
         result = runner.run(Path("."), run_state)
 
         assert result.status == "completed"
         assert result.stats["discovered"] == 4
-        
+
         stats = result.stats["per_stage"]["stage1"]
         assert stats["completed"] == 2
         assert stats["filtered"] == 1
@@ -253,34 +259,42 @@ class TestPipelineRunner:
     def test_shutdown_event_aborts_state_mutation(self, tmp_path):
         import threading
         import time
+
         from deepzero.engine.stage import ProcessorResult, StageStatus
 
         store = StateStore(tmp_path / "work")
         run_state = RunState(run_id="test", pipeline="test")
         store.save_run(run_state)
-        
+
         ingest = MockIngest(self._make_samples(10))
 
         class LateFailProcessor:
             spec = StageSpec(name="late_fail", processor="late", parallel=4)
-            def setup(self, config): pass
-            def teardown(self): pass
+
+            def setup(self, config):
+                pass
+
+            def teardown(self):
+                pass
+
             def process(self, ctx, entry):
                 time.sleep(0.1)
                 return ProcessorResult.fail("synthetic delayed failure")
-            def should_skip(self, ctx, entry): return False
-                
+
+            def should_skip(self, ctx, entry):
+                return False
+
         map_tool = LateFailProcessor()
 
         runner = PipelineRunner(ingest, [(map_tool.spec, map_tool)], store, tmp_path, {})
-        
+
         def _simulate_interrupt():
             time.sleep(0.05)
             runner._shutdown_event.set()
-            
+
         t = threading.Thread(target=_simulate_interrupt)
         t.start()
-        
+
         runner.run(Path("."), run_state)
         t.join()
 

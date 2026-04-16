@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 from pathlib import Path
 from typing import Any
 
@@ -83,7 +82,9 @@ class PEIngest(IngestProcessor):
         limit = self.config.get("limit", 0)
         start = time.monotonic()
 
-        ctx.progress.update(total=min(limit, total) if limit > 0 else total, description="starting analysis...")
+        ctx.progress.update(
+            total=min(limit, total) if limit > 0 else total, description="starting analysis..."
+        )
 
         subsys_filter = self.config.get("subsystem_filter", [])
         max_workers = ctx.get_setting("max_workers", 8)
@@ -96,7 +97,9 @@ class PEIngest(IngestProcessor):
                     meta.update(_parse_pe(data, subsys_filter))
 
                 sample_id = meta.get("sha256", "")[:16] or f.stem
-                samples.append(Sample(sample_id=sample_id, source_path=f, filename=f.name, data=meta))
+                samples.append(
+                    Sample(sample_id=sample_id, source_path=f, filename=f.name, data=meta)
+                )
 
                 ctx.progress.update(amount=1, description=f.name)
 
@@ -161,7 +164,7 @@ def _parse_pe(data: bytes, subsystem_filter: list[int]) -> dict[str, Any]:
 
     subsys = pe.optional_header.subsystem
     subsys_name = subsys.name
-    is_kernel_driver = (subsys_name == "NATIVE")
+    is_kernel_driver = subsys_name == "NATIVE"
     machine_name = pe.header.machine.name
 
     meta: dict[str, Any] = {

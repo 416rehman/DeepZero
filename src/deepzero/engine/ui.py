@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rich import box
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.progress import (
@@ -14,8 +15,6 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 from rich.table import Table
-from rich import box
-from rich.text import Text
 
 # glyph constants for stage flow visualization
 _GLYPH_PENDING = "◦"
@@ -113,8 +112,8 @@ class PipelineDashboard:
             self._live = None
 
     def stage_start(
-        self, 
-        name: str, 
+        self,
+        name: str,
         input_count: int,
         passed: int = 0,
         filtered: int = 0,
@@ -194,7 +193,7 @@ class PipelineDashboard:
         if self._progress_task_id is not None:
             self._progress.remove_task(self._progress_task_id)
             self._progress_task_id = None
-            
+
         if text:
             self._progress_task_id = self._progress.add_task(f"[dim]{text}[/]", total=None)
             self._active_stage = text
@@ -217,7 +216,7 @@ class PipelineDashboard:
         self.stop()
 
         self._console.print()
-        
+
         # print final summary table that was previously only transient
         table = self._build_table()
         if table:
@@ -250,11 +249,7 @@ class PipelineDashboard:
     def _build_table(self) -> Table | None:
 
         table = Table(
-            show_header=True, 
-            expand=False, 
-            box=box.SIMPLE, 
-            border_style="dim", 
-            padding=(0, 2)
+            show_header=True, expand=False, box=box.SIMPLE, border_style="dim", padding=(0, 2)
         )
         table.add_column("stage", style="cyan", min_width=14)
         table.add_column("in", justify="right", min_width=7)
@@ -265,7 +260,7 @@ class PipelineDashboard:
 
         for name in self._stage_order:
             info = self._stages[name]
-            
+
             if info.state == StageState.PENDING:
                 table.add_row(
                     f"[dim]{_GLYPH_PENDING} {info.name}[/]",
@@ -308,7 +303,9 @@ class PipelineDashboard:
                 )
             elif info.state == StageState.DONE:
                 in_str = "[dim]·[/]" if info.is_ingest else f"{info.input_count:,}"
-                time_str = "[dim]cached[/]" if info.is_fully_cached else _format_elapsed(info.elapsed_s)
+                time_str = (
+                    "[dim]cached[/]" if info.is_fully_cached else _format_elapsed(info.elapsed_s)
+                )
                 glyph = "↻" if info.is_fully_cached else _GLYPH_DONE
                 style = "dim blue" if info.is_fully_cached else "green"
                 table.add_row(

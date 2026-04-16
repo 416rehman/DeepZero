@@ -217,7 +217,9 @@ class GhidraDecompile(MapProcessor):
             stderr_text = ""
             if stderr_log.exists():
                 stderr_text = stderr_log.read_text(encoding="utf-8", errors="replace")[-500:]
-            log.warning("ghidra failed for %s (code %d, %.1fs)", binary_path.name, proc.returncode, elapsed)
+            log.warning(
+                "ghidra failed for %s (code %d, %.1fs)", binary_path.name, proc.returncode, elapsed
+            )
             return {
                 "success": False,
                 "error": f"ghidra exited with code {proc.returncode}: {stderr_text}",

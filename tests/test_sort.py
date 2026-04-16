@@ -111,16 +111,16 @@ class TestSort:
     def test_no_by_field_preserves_order(self, ctx):
         spec = StageSpec(name="test_sort", processor="sort", config={})
         sorter = Sort(spec)
-        entries = [_make_entry("a"), _make_entry("b")]
-        result = sorter.process(ctx, entries)
-        assert result == ["a", "b"]
+        errors = sorter.validate(ctx)
+        assert len(errors) == 1
+        assert "requires 'by'" in errors[0]
 
     def test_invalid_by_format_preserves_order(self, ctx):
         spec = StageSpec(name="test_sort", processor="sort", config={"by": "no_dot"})
         sorter = Sort(spec)
-        entries = [_make_entry("x"), _make_entry("y")]
-        result = sorter.process(ctx, entries)
-        assert result == ["x", "y"]
+        errors = sorter.validate(ctx)
+        assert len(errors) == 1
+        assert "must be 'processor_name.key'" in errors[0]
 
     def test_missing_upstream_data_returns_zero(self, sort_spec, ctx):
         sorter = Sort(sort_spec)

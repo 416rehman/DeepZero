@@ -21,25 +21,30 @@ class SemgrepScanner(BulkMapProcessor):
         "runs semgrep batch scan against decompiled source across all active samples"
     )
 
-    def validate(self) -> list[str]:
+    def validate(self, ctx: ProcessorContext) -> list[str]:
+        errors = []
         if not shutil.which("semgrep"):
-            return ["semgrep CLI not found in PATH - install with: pip install semgrep"]
-        return []
+            errors.append(
+                "semgrep CLI not found in PATH - install with: pip install semgrep"
+            )
+
+        rules_dir = self.config.get("rules_dir")
+        if not rules_dir:
+            errors.append("semgrep_scanner requires 'rules_dir' in config")
+        else:
+            rules_path = (Path.cwd() / rules_dir).resolve()
+            if not rules_path.exists():
+                rules_path = (ctx.pipeline_dir / rules_dir).resolve()
+            if not rules_path.exists():
+                errors.append(f"rules_dir does not exist: {rules_dir}")
+
+        return errors
 
     def process(
         self, ctx: ProcessorContext, entries: list[Sample]
     ) -> list[ProcessorResult]:
-        rules_dir = self.config.get("rules_dir")
-        if not rules_dir:
-            return [
-                ProcessorResult.fail("semgrep_scanner requires 'rules_dir' in config")
-            ] * len(entries)
-
-        rules_path = (Path.cwd() / rules_dir).resolve()
-        if not rules_path.exists():
-            return [
-                ProcessorResult.fail(f"semgrep rules dir not found: {rules_path}")
-            ] * len(entries)
+        rules_dir = self.config.get("rules_dir", "")
+        rules_path = (ctx.pipeline_dir / rules_dir).resolve()
 
         target_subdir = self.config.get("target_dir", "decompiled")
         timeout = self.config.get("timeout", 300)

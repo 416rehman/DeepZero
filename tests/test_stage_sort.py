@@ -48,8 +48,9 @@ def test_sort_processor():
     res = sorter.process(ctx, [e1, e2, e3])
     assert res == ["1", "3", "2"]
 
-    # test missing config
+    # test missing config validation hook
     spec = StageSpec(name="sort", processor="sort", config={})
     sorter = Sort(spec)
-    res = sorter.process(ctx, [e1, e2, e3])
-    assert res == ["1", "2", "3"]
+    errors = sorter.validate(ctx)
+    assert len(errors) == 1
+    assert "requires 'by'" in errors[0]

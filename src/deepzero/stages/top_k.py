@@ -14,21 +14,21 @@ class TopKSelector(ReduceProcessor):
         keep_top: int = 10
         sort_order: str = "desc"
 
+    def validate(self, ctx: ProcessorContext) -> list[str]:
+        if not self.config.metric_path:
+            return [
+                "top_k processor requires 'metric_path' configured in format 'stage_name.data_key'"
+            ]
+        if len(self.config.metric_path.split(".", 1)) != 2:
+            return [
+                f"metric_path must be 'processor_name.key', got '{self.config.metric_path}'"
+            ]
+        return []
+
     def process(
         self, ctx: ProcessorContext, entries: list[ProcessorEntry]
     ) -> list[str]:
-        if not self.config.metric_path:
-            self.log.warning("no metric_path configured, passing all samples through")
-            return [s.sample_id for s in entries]
-
         parts = self.config.metric_path.split(".", 1)
-        if len(parts) != 2:
-            self.log.warning(
-                "metric_path must be 'processor_name.key', got '%s'",
-                self.config.metric_path,
-            )
-            return [s.sample_id for s in entries]
-
         stage_name, data_key = parts
 
         def _get_metric(s: ProcessorEntry) -> float:

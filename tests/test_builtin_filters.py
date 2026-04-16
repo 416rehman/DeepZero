@@ -242,7 +242,7 @@ class TestTopKSelector:
         assert "s3" in active_ids
 
     def test_passthrough_without_metric(self):
-        from deepzero.engine.stage import StageSpec, ProcessorContext, ProcessorEntry
+        from deepzero.engine.stage import StageSpec, ProcessorContext
         from deepzero.stages.top_k import TopKSelector
         from pathlib import Path
 
@@ -254,14 +254,6 @@ class TestTopKSelector:
             pipeline_dir=Path(tempfile.gettempdir()), global_config={}, llm=None
         )
 
-        entry = ProcessorEntry(
-            sample_id="s0",
-            source_path=Path(tempfile.gettempdir()) / "s0.sys",
-            filename="s0.sys",
-            sample_dir=Path(tempfile.gettempdir()) / "s0",
-            _store=None,
-        )
-
-        result = processor.process(ctx, [entry])
-        assert len(result) == 1
-        assert result[0] == "s0"
+        errors = processor.validate(ctx)
+        assert len(errors) == 1
+        assert "requires 'metric_path'" in errors[0]

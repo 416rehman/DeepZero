@@ -4,6 +4,7 @@ import importlib
 import importlib.util
 from pathlib import Path
 from typing import Any
+import sys
 
 
 _PROCESSOR_REGISTRY: dict[str, type[Any]] = {}
@@ -120,6 +121,7 @@ def _load_processor_from_file(file_path: Path) -> type[Any] | None:
         return None
 
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
 
     for attr_name in dir(module):

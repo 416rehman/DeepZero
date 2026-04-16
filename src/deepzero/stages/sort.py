@@ -13,20 +13,19 @@ class Sort(ReduceProcessor):
         by: str = ""
         order: str = "desc"
 
+    def validate(self, ctx: ProcessorContext) -> list[str]:
+        if not self.config.by:
+            return [
+                "sort processor requires 'by' configured in format 'stage_name.data_key'"
+            ]
+        if len(self.config.by.split(".", 1)) != 2:
+            return [f"'by' must be 'processor_name.key', got '{self.config.by}'"]
+        return []
+
     def process(
         self, ctx: ProcessorContext, samples: list[ProcessorEntry]
     ) -> list[str]:
-        if not self.config.by:
-            self.log.warning("no 'by' field configured, preserving current order")
-            return [s.sample_id for s in samples]
-
         parts = self.config.by.split(".", 1)
-        if len(parts) != 2:
-            self.log.warning(
-                "'by' must be 'processor_name.key', got '%s'", self.config.by
-            )
-            return [s.sample_id for s in samples]
-
         stage_name, data_key = parts
 
         def _get_val(s: ProcessorEntry) -> float:

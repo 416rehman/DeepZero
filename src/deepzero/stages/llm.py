@@ -23,14 +23,44 @@ class GenericLLM(MapProcessor):
         "generic LLM assessment - sends context to an LLM via a jinja2 prompt template"
     )
 
+    def validate(self, ctx: ProcessorContext) -> list[str]:
+        errors = []
+
+        prompt_ref = self.config.get("prompt")
+        if not prompt_ref:
+            errors.append("GenericLLM requires 'prompt' template mapping in config")
+        else:
+            prompt_path = (Path.cwd() / prompt_ref).resolve()
+            if not prompt_path.exists():
+                prompt_path = (ctx.pipeline_dir / prompt_ref).resolve()
+            if not prompt_path.exists():
+                errors.append(f"Prompt template does not exist: {prompt_ref}")
+
+        # structurally validate LLM bindings early
+        model = ctx.global_config.get("model")
+        if model:
+            try:
+                import litellm
+
+                env_state = litellm.validate_environment(model=model)
+                if not env_state.get("keys_in_environment", True):
+                    missing_keys = env_state.get("missing_keys", [])
+                    if missing_keys:
+                        errors.append(
+                            f"LLM backend '{model}' missing credentials in environment. Need: {missing_keys}"
+                        )
+            except ImportError:
+                errors.append(
+                    "LLM configured, but 'litellm' framework is not installed"
+                )
+
+        return errors
+
     def process(self, ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult:
         if ctx.llm is None:
-            return ProcessorResult.fail("no llm provider configured")
+            return ProcessorResult.fail("no llm provider configured for generic_llm")
 
         prompt_ref = self.config.get("prompt", "")
-        if not prompt_ref:
-            return ProcessorResult.fail("no prompt template configured")
-
         prompt_text = self._render_prompt(prompt_ref, ctx, entry)
 
         output_file = self.config.get("output_file", "assessment.md")

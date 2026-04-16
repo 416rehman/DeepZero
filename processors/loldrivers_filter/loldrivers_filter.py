@@ -20,13 +20,15 @@ LOLDRIVERS_URL = "https://www.loldrivers.io/api/drivers.json"
 LOLDRIVERS_CACHE_FILE = "loldrivers.io.json"
 
 
+@dataclass
+class LoldriversFilterConfig:
+    db_path: str = ""
+    cache_ttl_days: int = 7
+
+
 class LoldriversFilter(MapProcessor):
     description = "excludes samples whose sha256 matches a known entry in the loldrivers.io database"
-
-    @dataclass
-    class Config:
-        db_path: str = ""
-        cache_ttl_days: int = 7
+    Config = LoldriversFilterConfig
 
     def __init__(self, spec: StageSpec):
         super().__init__(spec)
@@ -38,8 +40,9 @@ class LoldriversFilter(MapProcessor):
             self._load_db(db_path)
 
     def _resolve_db(self) -> Path | None:
-        if self.config.db_path:
-            db_path = Path(self.config.db_path)
+        raw_path = self.config.db_path
+        if raw_path:
+            db_path = Path(raw_path)
             if db_path.is_absolute() and db_path.exists():
                 return db_path
             self.log.info(

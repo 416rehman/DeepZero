@@ -131,9 +131,13 @@ def run(
     console.print(f"\n[bold cyan]deepzero[/] - running pipeline [bold]{pipeline}[/]")
     console.print(f"  target: {target_path}")
 
-    pipeline_def = load_pipeline(
-        pipeline, model_override=model, work_dir_override=work_dir
-    )
+    try:
+        pipeline_def = load_pipeline(
+            pipeline, model_override=model, work_dir_override=work_dir
+        )
+    except ValueError as e:
+        console.print(f"[bold red]X ERROR[/]: {e}")
+        raise SystemExit(1)
     console.print(
         f"  pipeline: {pipeline_def.name} ({len(pipeline_def.stage_specs)} stages)"
     )
@@ -195,7 +199,11 @@ def resume(pipeline: str, model: str | None, verbose: bool):
     from deepzero.engine.pipeline import load_pipeline
     from deepzero.engine.state import StateStore
 
-    pipeline_def = load_pipeline(pipeline)
+    try:
+        pipeline_def = load_pipeline(pipeline)
+    except ValueError as e:
+        console.print(f"[bold red]X ERROR[/]: {e}")
+        raise SystemExit(1)
 
     # allow model override on resume
     if model:

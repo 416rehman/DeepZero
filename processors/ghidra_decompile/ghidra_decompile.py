@@ -32,7 +32,7 @@ class GhidraDecompile(MapProcessor):
         ghidra_install_dir: str = ""
         java_home: str = ""
 
-    def validate(self) -> list[str]:
+    def validate(self, ctx: ProcessorContext) -> list[str]:
         if not self.config.ghidra_install_dir:
             return [
                 "ghidra_install_dir is required - set it in config or via ${GHIDRA_INSTALL_DIR}"
@@ -79,7 +79,9 @@ class GhidraDecompile(MapProcessor):
         if self.config.max_depth is not None:
             extra_env["DEEPZERO_MAX_DEPTH"] = str(self.config.max_depth)
 
-        active_timeout = self.spec.timeout if self.spec.timeout > 0 else self.config.timeout
+        active_timeout = (
+            self.spec.timeout if self.spec.timeout > 0 else self.config.timeout
+        )
         result = self._run_ghidra_headless(
             binary_path=entry.source_path,
             output_dir=output_dir,

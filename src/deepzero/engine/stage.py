@@ -226,7 +226,7 @@ class Processor(ABC):
         filtered = {k: v for k, v in raw.items() if k in valid}
         return self.Config(**filtered)
 
-    def validate(self) -> list[str]:
+    def validate(self, ctx: ProcessorContext) -> list[str]:
         # override to check dependencies at pipeline load time, before any sample is touched.
         # return a list of problems. empty list = all good.
         #

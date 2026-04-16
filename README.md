@@ -111,6 +111,22 @@ DeepZero acts as an orchestrator. Depending on the processors you utilize in you
 * **Headless Ghidra**: `GHIDRA_INSTALL_DIR` must point to a valid unzipped Ghidra release.
 * **Semgrep**: Required on your system `PATH` if using `semgrep_scanner.py`.
 
+## 🛠 Anatomy of a Processor
+
+DeepZero revolves around "Processors": self-contained python modules that sequentially transform samples in the payload block. Building a custom processor is effortless because context is deeply insulated and execution cleanly transitions through discrete lifecycle blocks.
+
+### State Containers (What holds what)
+* `self.config` : The typed representation of your explicitly assigned YAML variables dictating your specific stage block behavior.
+* `ctx` : Provides access to global pipeline bindings (like the LLM Provider) and contextual directory pointers.
+* `entry` : Details concerning the exact sample payload currently situated on the execution block.
+
+### Execution Hooks (When do they trigger)
+
+* `validate(self, ctx)` : *Offline Linter Phase*. Executes instantly before operations instantiate to strictly evaluate configuration bounds or missing system credentials early (e.g. absent LLM keys or missing binary paths). 
+* `setup(self, ctx)` : *Run-time Binding Phase*. Triggered immediately prior to processing loop. Used strictly for initializing heavy payloads, such as opening WebSocket allocations or spinning up sandbox environments. 
+* `process(self, ctx, entry)` : *Execution Loop*. High-throughput transformation, analysis, or filtering payload logic (automatically batched or multiprocessed where applicable by node type).
+* `teardown(self)` : *Resource Reclamation*. Terminating DB locks or purging local staging files at pipeline completion.
+
 ## 🤝 Contributing
 
 We welcome community pull requests! If you're adapting DeepZero for new architectures, writing custom processors (like IDA Pro integrations), or optimizing the File-Ledger overhead, please feel free to fork and open a PR. 

@@ -78,9 +78,8 @@ class TestGenericLLMProcess:
         processor = self._make_tool(config={})
         mock_llm = MagicMock()
         ctx, entry = _make_ctx(tmp_path, llm=mock_llm)
-        result = processor.process(ctx, entry)
-        assert result.status == "failed"
-        assert "prompt" in result.error
+        errors = processor.validate(ctx)
+        assert any("prompt" in e for e in errors)
 
     def test_successful_assessment(self, tmp_path):
         processor = self._make_tool(

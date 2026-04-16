@@ -195,10 +195,21 @@ def _validate_pipeline_graph(pipeline: PipelineDefinition) -> None:
 
     for _, proc in pipeline.stages:
         all_processors.append(proc)
+    from deepzero.engine.stage import ProcessorContext
+
+    ctx = ProcessorContext(
+        pipeline_dir=pipeline.pipeline_dir,
+        global_config={
+            "model": pipeline.model,
+            "settings": pipeline.settings,
+            "knowledge": pipeline.knowledge,
+        },
+        llm=None,
+    )
 
     # run processor-level validation
     for proc in all_processors:
-        problems = proc.validate()
+        problems = proc.validate(ctx)
         for p in problems:
             errors.append(f"processor '{proc.spec.name}': {p}")
 

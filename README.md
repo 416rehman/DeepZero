@@ -185,9 +185,12 @@ deepzero serve --host 127.0.0.1 --port 8420 -w work/
 
 Resume is automatic. If a `work/<pipeline>/` directory exists with prior state, `deepzero run` resumes from where it left off. Use `--clean` to discard and restart.
 
-### `deepzero serve`
+### `deepzero serve` (⚠️ WIP / Experimental)
 
-Starts a read-only REST API (Starlette + Uvicorn) for querying run state and sample data.
+Starts a read-only REST API (Starlette + Uvicorn) for querying run state and sample data. 
+
+> [!WARNING]
+> The REST API server is currently a Work-In-Progress (WIP) and is partially broken/unstable.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|

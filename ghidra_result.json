@@ -1,4 +1,0 @@
-{
-  "success": false,
-  "error": "script crashed:\nTraceback (most recent call last):\n  File \"D:\\projects\\deepZero\\processors\\ghidra_decompile\\scripts\\extract_dispatch.py\", line 371, in <module>\n    main()\n  File \"D:\\projects\\deepZero\\processors\\ghidra_decompile\\scripts\\extract_dispatch.py\", line 226, in main\n    decomp = get_decompiler()\n             ^^^^^^^^^^^^^^^^\n  File \"D:\\projects\\deepZero\\processors\\ghidra_decompile\\scripts\\extract_dispatch.py\", line 16, in get_decompiler\n    decomp = DecompInterface()\n             ^^^^^^^^^^^^^^^^^\nTypeError: 'NoneType' object is not callable\n"
-}

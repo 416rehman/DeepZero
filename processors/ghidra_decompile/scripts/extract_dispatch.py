@@ -7,6 +7,7 @@
 import json
 import os
 import re
+import io  # Added for stable UTF-8 file writing
 
 from ghidra.app.decompiler import DecompileOptions, DecompInterface
 
@@ -95,7 +96,7 @@ def _resolve_handler_name(fm, name):
         if candidate.getName() == name:
             return candidate
 
-    # just a symbol/label ΓÇö try to create a function at that address
+    # just a symbol/label — try to create a function at that address
     syms = currentProgram.getSymbolTable().getSymbols(name)
     if syms.hasNext():
         sym = syms.next()
@@ -257,8 +258,9 @@ def main():
     result["driver_entry_c"] = entry_c
 
     # write DriverEntry decompilation
-    with open(os.path.join(output_dir, "driver_entry.c"), "w") as f:
-        f.write(entry_c)
+    # FIX: Use io.open with utf-8 encoding and unicode() cast for Jython stability
+    with io.open(os.path.join(output_dir, "driver_entry.c"), "w", encoding="utf-8") as f:
+        f.write(unicode(entry_c))
 
     # extract device name and symbolic link from strings
     for s in currentProgram.getListing().getDefinedData(True):
@@ -298,7 +300,7 @@ def main():
     max_subfuncs = 60
 
     def _is_external(name):
-        """skip known external api calls ΓÇö follow everything else"""
+        """skip known external api calls — follow everything else"""
         for prefix in EXTERNAL_PREFIXES:
             if name.startswith(prefix):
                 return True
@@ -327,15 +329,16 @@ def main():
 
     # append subfunctions to the dispatch text so they are included in all output files
     if subfuncs_c:
-        dispatch_c += "\n\n// " + "=" * 40 + " //\n"
-        dispatch_c += "//   INTERNAL SUBFUNCTIONS CALLED BY DISPATCH   //\n"
-        dispatch_c += "// " + "=" * 40 + " //\n\n"
-        dispatch_c += "\n\n".join(subfuncs_c)
+        dispatch_c += u"\n\n// " + u"=" * 40 + u" //\n"
+        dispatch_c += u"//   INTERNAL SUBFUNCTIONS CALLED BY DISPATCH   //\n"
+        dispatch_c += u"// " + u"=" * 40 + u" //\n\n"
+        dispatch_c += u"\n\n".join(subfuncs_c)
 
     # write full decompiled payload
     result["dispatch_c"] = dispatch_c
-    with open(os.path.join(output_dir, "dispatch_ioctl.c"), "w") as f:
-        f.write(dispatch_c)
+    # FIX: Use io.open with utf-8 encoding and unicode() cast for Jython stability
+    with io.open(os.path.join(output_dir, "dispatch_ioctl.c"), "w", encoding="utf-8") as f:
+        f.write(unicode(dispatch_c))
 
     # create ioctls subdirectory
     ioctls_dir = os.path.join(output_dir, "ioctls")
@@ -355,20 +358,23 @@ def main():
         result["ioctl_handlers"].append(handler_info)
 
         # write per-ioctl file
-        with open(os.path.join(ioctls_dir, "0x%08X.c" % code), "w") as f:
-            f.write("// IOCTL Code: 0x%08X\n" % code)
-            f.write("// Method: %d\n" % (code & 0x3))
-            f.write("// Device Type: 0x%04X\n" % ((code >> 16) & 0xFFFF))
-            f.write("// Function: 0x%03X\n\n" % ((code >> 2) & 0xFFF))
-            f.write(dispatch_c)
+        # FIX: Use io.open with utf-8 encoding and unicode() cast for Jython stability
+        with io.open(os.path.join(ioctls_dir, "0x%08X.c" % code), "w", encoding="utf-8") as f:
+            f.write(u"// IOCTL Code: 0x%08X\n" % code)
+            f.write(u"// Method: %d\n" % (code & 0x3))
+            f.write(u"// Device Type: 0x%04X\n" % ((code >> 16) & 0xFFFF))
+            f.write(u"// Function: 0x%03X\n\n" % ((code >> 2) & 0xFFF))
+            f.write(unicode(dispatch_c))
 
     result["success"] = True
     write_result(output_dir, result)
 
 
 def write_result(output_dir, result):
-    with open(os.path.join(output_dir, "ghidra_result.json"), "w") as f:
-        json.dump(result, f, indent=2, default=str)
+    # FIX: Use io.open with utf-8 and ensure_ascii=False for JSON dump
+    with io.open(os.path.join(output_dir, "ghidra_result.json"), "w", encoding="utf-8") as f:
+        data = json.dumps(result, indent=2, default=str, ensure_ascii=False)
+        f.write(unicode(data))
 
 
 if __name__ == "__main__":
@@ -386,5 +392,4 @@ if __name__ == "__main__":
             "success": False,
             "error": "script crashed:\n" + traceback.format_exc(),
         }
-        with open(os.path.join(output_dir, "ghidra_result.json"), "w") as f:
-            json.dump(res, f, indent=2)
+        write_result(output_dir, res)

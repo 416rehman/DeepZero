@@ -2,8 +2,8 @@
   <br>
   <img src=".github/banner.svg" alt="DeepZero" width="700">
   <br><br>
-  <p><b>Pipeline engine for automated vulnerability research</b></p>
-  <p>Define stages in YAML. DeepZero handles orchestration, parallelism, and state.</p>
+  <p><b>Automated vulnerability research pipeline engine</b></p>
+  <p>Define pipelines as YAML. DeepZero handles orchestration, parallelism, fault tolerance, and state.</p>
   <p>
     <a href="https://github.com/416rehman/DeepZero/actions"><img src="https://img.shields.io/github/actions/workflow/status/416rehman/DeepZero/ci.yml?branch=main&style=flat-square" alt="CI"></a>
     <a href="https://github.com/416rehman/DeepZero/blob/main/LICENSE"><img src="https://img.shields.io/github/license/416rehman/DeepZero?style=flat-square" alt="License"></a>

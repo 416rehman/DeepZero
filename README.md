@@ -7,6 +7,7 @@
   <p>
     <a href="https://github.com/416rehman/DeepZero/actions"><img src="https://img.shields.io/github/actions/workflow/status/416rehman/DeepZero/ci.yml?branch=main&style=flat-square" alt="CI"></a>
     <a href="https://github.com/416rehman/DeepZero/blob/main/LICENSE"><img src="https://img.shields.io/github/license/416rehman/DeepZero?style=flat-square" alt="License"></a>
+    <a href="https://blog.ahmadz.ai/DeepZero/"><img src="https://img.shields.io/badge/docs-DeepZero-orange?style=flat-square" alt="Docs"></a>
     <img src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square" alt="Python">
     <img src="https://img.shields.io/badge/platform-windows%20%7C%20linux-lightgrey?style=flat-square" alt="Platform">
   </p>
@@ -39,7 +40,7 @@
 
 DeepZero features extensive, exhaustive documentation covering architecture, pipeline schemas, CLI references, and custom processor development. 
 
-👉 **[Read the Official Documentation here](https://416rehman.github.io/DeepZero/)**
+👉 **[Read the Official Documentation here](https://blog.ahmadz.ai/DeepZero/)**
 
 ---
 
@@ -64,7 +65,7 @@ DeepZero requires a target corpus of files to analyze and a pipeline configurati
    deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
    ```
 
-For detailed setup instructions and example corpora, see the [Quickstart Documentation](https://416rehman.github.io/DeepZero/overview/quickstart.html).
+For detailed setup instructions and example corpora, see the [Quickstart Documentation](https://blog.ahmadz.ai/DeepZero/en/overview/quickstart.html).
 
 ---
 

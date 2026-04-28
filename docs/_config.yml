@@ -1,0 +1,7 @@
+title: DeepZero
+tagline: Automated Vulnerability Research
+description: "Hunt zero-days at scale. DeepZero is a concurrent orchestration engine for automated vulnerability research, executing multi-stage pipelines across massive datasets."
+keywords: "vulnerability research, zero-day, BYOVD, LOLDrivers, Windows, IOCTLs, Snappy Driver Installer corpus, static analysis, reverse engineering, orchestration"
+author: "Rehman"
+baseurl: ""
+url: "https://416rehman.github.io/DeepZero"

@@ -259,10 +259,15 @@ Check the [issue tracker](https://github.com/416rehman/DeepZero/issues) for
 reported bugs. Engine improvements (better error messages, performance
 optimizations, new CLI features) are also highly valued.
 
-### Documentation
+### Documentation & Translations
 
-README clarifications, docstring improvements, and usage examples are always
-appreciated.
+The DeepZero documentation site is globally internationalized, supporting English (`en`), French (`fr`), Simplified Chinese (`zh-CN`), Russian (`ru`), Spanish (`es`), and Japanese (`ja`).
+
+When making changes or adding new files to the documentation:
+1. Always make your initial changes to the English source files in `docs/en/`.
+2. **Structural Parity is Required:** Every file in `docs/en/` must have an exact equivalent in the other 5 language directories to prevent 404 errors during locale switching.
+3. If you can provide native translations, please update the corresponding files in the other locale directories.
+4. If you cannot translate the content yourself, you **must still copy your English changes/files** over to the other language directories (`cp docs/en/my-file.md docs/ru/my-file.md`, etc.). Maintainers or community members will translate the English text later.
 
 ---
 

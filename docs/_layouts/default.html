@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% if page.title == "Home" or page.url == "/" %}{{ site.title | default: "DeepZero" }} - {{ site.tagline |
+        default: "Automated Vulnerability Research" }}{% else %}{{ page.title }} | {{ site.title | default: "DeepZero"
+        }}{% endif %}</title>
+
+    <!-- SEO Primary Meta Tags -->
+    <meta name="description"
+        content="{{ page.description | default: site.description | default: 'Pipeline engine for hunting for zero-days at scale through LLM orchestration, static analysis, and tools like Ghidra' }}">
+    <meta name="keywords"
+        content="{{ page.keywords | default: site.keywords | default: 'vulnerability research, zero-day, BYOVD, orchestration, AI security, automated exploit discovery, Ghidra, Semgrep, LLM security' }}">
+    <meta name="author" content="{{ site.author | default: 'DeepZero Team' }}">
+    <link rel="canonical" href="{{ site.url }}{{ page.url | replace:'index.html','' }}">
+
+    <!-- Favicon -->
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><g transform=%22translate(50,50) scale(0.8) rotate(45)%22><path d=%22M 0 0 L 40 -20 L 80 0 L 40 20 Z%22 fill=%22%232C3E50%22/><path d=%22M 0 0 L 0 20 L 40 40 L 80 20 L 80 0 L 40 20 Z%22 fill=%22%23E74C3C%22/></g></svg>">
+
+    <!-- Open Graph / Facebook / LinkedIn -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="{{ site.url }}{{ page.url }}">
+    <meta property="og:title"
+        content="{% if page.title == 'Home' or page.url == '/' %}DeepZero: Automated Vulnerability Research at Scale{% else %}{{ page.title }} | DeepZero{% endif %}">
+    <meta property="og:description"
+        content="{{ page.description | default: site.description | default: 'Pipeline engine for hunting for zero-days at scale through LLM orchestration, static analysis, and tools like Ghidra' }}">
+    <meta property="og:site_name" content="DeepZero">
+    <meta property="og:image" content="https://repository-images.githubusercontent.com/416rehman/DeepZero">
+
+    <!-- Twitter / X -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="{{ site.url }}{{ page.url }}">
+    <meta property="twitter:title"
+        content="{% if page.title == 'Home' or page.url == '/' %}DeepZero: Automated Vulnerability Research at Scale{% else %}{{ page.title }} | DeepZero{% endif %}">
+    <meta property="twitter:description"
+        content="{{ page.description | default: site.description | default: 'Pipeline engine for hunting for zero-days at scale through LLM orchestration, static analysis, and tools like Ghidra' }}">
+    <meta property="twitter:image" content="https://repository-images.githubusercontent.com/416rehman/DeepZero">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
+</head>
+
+<body>
+    <div class="container">
+
+        <button class="mobile-toggle" id="menu-toggle">Menu</button>
+
+        <aside class="sidebar" id="sidebar">
+            {% assign current_lang = "/en/" %}
+            {% if page.url contains "/zh-CN/" %}
+            {% assign current_lang = "/zh-CN/" %}
+            {% elsif page.url contains "/fr/" %}
+            {% assign current_lang = "/fr/" %}
+            {% elsif page.url contains "/ru/" %}
+            {% assign current_lang = "/ru/" %}
+            {% elsif page.url contains "/es/" %}
+            {% assign current_lang = "/es/" %}
+            {% elsif page.url contains "/ja/" %}
+            {% assign current_lang = "/ja/" %}
+            {% endif %}
+
+            <a href="{{ current_lang | relative_url }}" class="brand">DeepZero.</a>
+
+            {% assign grouped_pages = site.html_pages | group_by: "dir" %}
+            {% for group in grouped_pages %}
+            {% assign is_current_lang = false %}
+            {% if group.name contains current_lang %}
+            {% assign is_current_lang = true %}
+            {% endif %}
+
+            {% if is_current_lang and group.name != current_lang and group.name != "/assets/" and group.name !=
+            "/_layouts/" %}
+            {% assign folder_name = group.name | remove: current_lang | remove: "/" | replace: "-", " " %}
+            {% assign display_name = folder_name %}
+            {% if current_lang == "/zh-CN/" %}
+            {% if folder_name == "overview" %}{% assign display_name = "概览" %}{% endif %}
+            {% if folder_name == "system" %}{% assign display_name = "系统" %}{% endif %}
+            {% if folder_name == "reference" %}{% assign display_name = "参考资料" %}{% endif %}
+            {% if folder_name == "extensibility" %}{% assign display_name = "可扩展性" %}{% endif %}
+            {% elsif current_lang == "/fr/" %}
+            {% if folder_name == "overview" %}{% assign display_name = "Aperçu" %}{% endif %}
+            {% if folder_name == "system" %}{% assign display_name = "Système" %}{% endif %}
+            {% if folder_name == "reference" %}{% assign display_name = "Référence" %}{% endif %}
+            {% if folder_name == "extensibility" %}{% assign display_name = "Extensibilité" %}{% endif %}
+            {% elsif current_lang == "/ru/" %}
+            {% if folder_name == "overview" %}{% assign display_name = "Обзор" %}{% endif %}
+            {% if folder_name == "system" %}{% assign display_name = "Система" %}{% endif %}
+            {% if folder_name == "reference" %}{% assign display_name = "Справочник" %}{% endif %}
+            {% if folder_name == "extensibility" %}{% assign display_name = "Расширяемость" %}{% endif %}
+            {% elsif current_lang == "/es/" %}
+            {% if folder_name == "overview" %}{% assign display_name = "Resumen" %}{% endif %}
+            {% if folder_name == "system" %}{% assign display_name = "Sistema" %}{% endif %}
+            {% if folder_name == "reference" %}{% assign display_name = "Referencia" %}{% endif %}
+            {% if folder_name == "extensibility" %}{% assign display_name = "Extensibilidad" %}{% endif %}
+            {% elsif current_lang == "/ja/" %}
+            {% if folder_name == "overview" %}{% assign display_name = "概要" %}{% endif %}
+            {% if folder_name == "system" %}{% assign display_name = "システム" %}{% endif %}
+            {% if folder_name == "reference" %}{% assign display_name = "リファレンス" %}{% endif %}
+            {% if folder_name == "extensibility" %}{% assign display_name = "拡張性" %}{% endif %}
+            {% endif %}
+            <div class="nav-section">
+                <h4 style="text-transform: capitalize;">{{ display_name }}</h4>
+                <ul class="nav-links">
+                    {% assign sorted_pages = group.items | sort: "order" %}
+                    {% for p in sorted_pages %}
+                    <li><a href="{{ p.url | relative_url }}" {% if page.url==p.url %}class="active" {% endif %}>{{
+                            p.title }}</a></li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            {% endfor %}
+
+            <div class="nav-section">
+                {% assign resources_title = "Resources" %}
+                {% if current_lang == "/zh-CN/" %}{% assign resources_title = "资源" %}{% endif %}
+                {% if current_lang == "/fr/" %}{% assign resources_title = "Ressources" %}{% endif %}
+                {% if current_lang == "/ru/" %}{% assign resources_title = "Ресурсы" %}{% endif %}
+                {% if current_lang == "/es/" %}{% assign resources_title = "Recursos" %}{% endif %}
+                {% if current_lang == "/ja/" %}{% assign resources_title = "リソース" %}{% endif %}
+                <h4 style="text-transform: capitalize;">{{ resources_title }}</h4>
+                <ul class="nav-links">
+                    <li><a href="https://github.com/416rehman/DeepZero" target="_blank"
+                            style="display: flex; align-items: center; gap: 0.5rem;"><svg viewBox="0 0 24 24" width="16"
+                                height="16" fill="currentColor">
+                                <path
+                                    d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+                            </svg> GitHub Repository</a></li>
+                    <li><a href="https://www.loldrivers.io/" target="_blank">LOLDrivers Project ↗</a></li>
+                    <li><a href="https://github.com/BerriAI/litellm" target="_blank">LiteLLM Framework ↗</a></li>
+                </ul>
+            </div>
+
+            <div style="margin-top: auto; padding-top: 2rem;">
+                <div class="custom-dropdown" id="lang-dropdown" style="margin-bottom: 1.5rem; position: relative;">
+                    <button class="dropdown-btn" aria-haspopup="true" aria-expanded="false"
+                        style="display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 0.5rem 0; background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 0.9rem; font-family: inherit;">
+                        <span id="current-lang-label" style="display: flex; align-items: center; gap: 0.5rem;"><svg
+                                viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="2" y1="12" x2="22" y2="12"></line>
+                                <path
+                                    d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z">
+                                </path>
+                            </svg> English</span>
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </button>
+                    <div class="dropdown-menu"
+                        style="display: none; position: absolute; bottom: 100%; left: 0; width: 100%; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; margin-bottom: 0.5rem; z-index: 50; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                        <a href="#" data-lang="en"
+                            class="dropdown-item lang-btn {% if current_lang == '/en/' %}active{% endif %}">🇺🇸
+                            English</a>
+                        <a href="#" data-lang="zh-CN"
+                            class="dropdown-item lang-btn {% if current_lang == '/zh-CN/' %}active{% endif %}">🇨🇳
+                            简体中文</a>
+                        <a href="#" data-lang="es"
+                            class="dropdown-item lang-btn {% if current_lang == '/es/' %}active{% endif %}">🇪🇸
+                            Español</a>
+                        <a href="#" data-lang="fr"
+                            class="dropdown-item lang-btn {% if current_lang == '/fr/' %}active{% endif %}">🇫🇷
+                            Français</a>
+                        <a href="#" data-lang="ja"
+                            class="dropdown-item lang-btn {% if current_lang == '/ja/' %}active{% endif %}">🇯🇵 日本語</a>
+                        <a href="#" data-lang="ru"
+                            class="dropdown-item lang-btn {% if current_lang == '/ru/' %}active{% endif %}">🇷🇺
+                            Русский</a>
+                    </div>
+                </div>
+                <button id="theme-toggle" aria-label="Toggle Dark Mode"
+                    style="display: flex; align-items: center; gap: 0.5rem; background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 0.9rem; font-family: inherit; padding: 0.5rem 0;">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg> Dark Mode
+                </button>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            {% if page.url == "/" %}
+            {{ content }}
+            {% else %}
+            <div class="doc-section">
+                {{ content }}
+            </div>
+            {% endif %}
+        </main>
+    </div>
+
+    <script src="{{ '/assets/js/script.js' | relative_url }}"></script>
+</body>
+
+</html>

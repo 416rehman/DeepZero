@@ -45,3 +45,9 @@ build/
 htmlcov/
 coverage.json
 scratch_cov.py
+
+# Docs Build
+docs/_site/
+.jekyll-cache
+docs/.jekyll-cache/
+_site/

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>DeepZero Documentation</title>
+    <link rel="canonical" href="https://416rehman.github.io/DeepZero/en/">
+    <link rel="alternate" hreflang="x-default" href="https://416rehman.github.io/DeepZero/en/">
+    <link rel="alternate" hreflang="en" href="https://416rehman.github.io/DeepZero/en/">
+    <link rel="alternate" hreflang="zh" href="https://416rehman.github.io/DeepZero/zh-CN/">
+    <link rel="alternate" hreflang="fr" href="https://416rehman.github.io/DeepZero/fr/">
+    <link rel="alternate" hreflang="ru" href="https://416rehman.github.io/DeepZero/ru/">
+    <link rel="alternate" hreflang="es" href="https://416rehman.github.io/DeepZero/es/">
+    <link rel="alternate" hreflang="ja" href="https://416rehman.github.io/DeepZero/ja/">
+    <meta http-equiv="refresh" content="0; url=en/">
+    <script>
+        const userLang = navigator.language || navigator.userLanguage;
+        let target = 'en';
+        if (userLang.startsWith('fr')) {
+            target = 'fr';
+        } else if (userLang.startsWith('zh')) {
+            target = 'zh-CN';
+        } else if (userLang.startsWith('ru')) {
+            target = 'ru';
+        } else if (userLang.startsWith('es')) {
+            target = 'es';
+        } else if (userLang.startsWith('ja')) {
+            target = 'ja';
+        }
+        
+        let basePath = window.location.pathname;
+        if (basePath.endsWith('index.html')) {
+            basePath = basePath.substring(0, basePath.length - 10);
+        }
+        if (!basePath.endsWith('/')) {
+            basePath += '/';
+        }
+        
+        // Prevent redirect loop if already on the target path
+        if (!basePath.includes(`/${target}/`)) {
+            window.location.replace(basePath + target + '/');
+        }
+    </script>
+</head>
+<body style="background: #0a0a0a; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+    <p>Redirecting... <a href="en/" style="color: #4CAF50;">Click here to continue to English</a></p>
+</body>
+</html>

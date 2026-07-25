@@ -46,6 +46,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from deepzero.engine import liveness
 from deepzero.engine.state import StateStore
 
 log = logging.getLogger("deepzero.report")
@@ -424,6 +425,13 @@ def collect(
 
     store = StateStore(work_dir)
     run = store.load_run()
+    recorded = str(getattr(getattr(run, "status", ""), "value", getattr(run, "status", "")))
+    live = liveness.resolve(
+        recorded,
+        pid=int(getattr(run, "pid", 0) or 0),
+        host=str(getattr(run, "host", "") or ""),
+        token=str(getattr(run, "pid_token", "") or ""),
+    )
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "work_dir": str(work_dir),
@@ -434,7 +442,15 @@ def collect(
             "pipeline": getattr(run, "pipeline", ""),
             "target": getattr(run, "target", ""),
             "model": getattr(run, "model", ""),
-            "status": str(getattr(getattr(run, "status", ""), "value", getattr(run, "status", ""))),
+            # what the pipeline last wrote down, and what checking its process
+            # says about whether that is still true.
+            "status": recorded,
+            "state": live.state,
+            "state_detail": live.detail,
+            "pid": int(getattr(run, "pid", 0) or 0),
+            "host": str(getattr(run, "host", "") or ""),
+            "started_at": str(getattr(run, "started_at", "") or ""),
+            "heartbeat_at": str(getattr(run, "heartbeat_at", "") or ""),
             "stages": list(getattr(run, "stages", []) or []),
         }
         if run
@@ -518,6 +534,16 @@ h1 .qty{color:var(--faint);font-weight:400;letter-spacing:-.02em}
 .plate > div{padding:15px 20px 16px 0;border-right:1px solid var(--rule)}
 .plate > div:last-child{border-right:0}
 .plate dd{margin:8px 0 0;font:400 12.5px/1.45 var(--mono);color:var(--ink);word-break:break-word}
+
+/* the run state carries a dot because it is the one value on the plate that
+   can change while somebody is looking at the page. */
+.run{display:flex;align-items:center;gap:8px}
+.run i{width:7px;height:7px;border-radius:50%;background:var(--inert);flex:none}
+.run.running i{background:var(--ok)}
+.run.stopped i{background:var(--positive)}
+.run.finished i{background:var(--rule-hard)}
+.run .age{color:var(--faint);font-size:11.5px}
+.plate .why{margin:6px 0 0;font:400 11.5px/1.5 var(--sans);color:var(--faint)}
 
 .dist{margin:38px 0 0;padding-top:22px;border-top:1px solid var(--rule)}
 .ticks{display:flex;flex-wrap:wrap;gap:0 48px}
@@ -722,7 +748,8 @@ def _page(title: str, body: str, *, refresh: str = "") -> str:
         '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"{refresh}<title>{_esc(title)}</title><style>{_CSS}</style></head>"
-        f'<body><div class="shell">{body}</div><script>{_JS}</script></body></html>'
+        f'<body><div class="shell">{body}</div>'
+        f"<script>{_JS}{_LIVENESS_JS}</script></body></html>"
     )
 
 
@@ -880,6 +907,87 @@ def render_item_page(item: ItemReport, out_dir: Path, cfg: ReportConfig, pipelin
     return _page(f"{item.name} - DeepZero", body)
 
 
+_STATE_WORDING = {
+    "running": "running",
+    "stopped": "stopped before finishing",
+    "finished": "finished",
+    "unknown": "unknown",
+}
+
+_STATE_WHY = {
+    "stopped": "The process that was writing this run is gone and it never "
+    "recorded an outcome, so the counts below are wherever it got to.",
+    "unknown": "This run last recorded that it was in progress, but whether "
+    "that is still true could not be established.",
+}
+
+
+def _run_state_cell(run: dict[str, Any], generated_at: str = "") -> str:
+    """The status entry on the plate.
+
+    This is the only value on the page that can stop being true while somebody
+    is reading it, so it carries the time the page was written. A live run
+    rewrites the page every few seconds; once that stops, the gap between the
+    stamp and the reader's clock is what gives the run away.
+    """
+    state = str(run.get("state", "") or "unknown").lower()
+    detail = str(run.get("state_detail", "") or "")
+    if state == "finished" and detail:
+        wording = detail  # finished, failed, interrupted - say which
+    else:
+        wording = _STATE_WORDING.get(state, state)
+
+    attrs = f" data-beat='{_esc(generated_at)}'" if generated_at else ""
+    why = _STATE_WHY.get(state, "")
+    if state == "unknown" and detail:
+        why = f"{why} {detail.capitalize()}."
+
+    return (
+        "<div><div class='lbl'>status</div>"
+        f"<dd><span class='run {_esc(state)}'{attrs}>"
+        f"<i></i><span>{_esc(wording)}</span>"
+        "<span class='age'></span></span></dd>"
+        + (f"<p class='why'>{_esc(why)}</p>" if why else "")
+        + "</div>"
+    )
+
+
+# the page is a file. once written it learns nothing further, so if the run dies
+# the browser keeps reloading a snapshot that still claims to be running. the
+# reader's own clock is the only thing left that can tell them otherwise.
+_LIVENESS_JS = """
+(function(){
+  var el=document.querySelector('.run[data-beat]');
+  if(!el) return;
+  var beat=Date.parse(el.getAttribute('data-beat'));
+  if(isNaN(beat)) return;
+  var live=el.classList.contains('running'), age=el.querySelector('.age');
+  var label=el.querySelector('span');
+  function ago(s){
+    if(s<60) return Math.max(0,Math.round(s))+'s ago';
+    if(s<3600) return Math.round(s/60)+' min ago';
+    if(s<86400) return Math.round(s/3600)+' hr ago';
+    return Math.round(s/86400)+' d ago';
+  }
+  function tick(){
+    var s=(Date.now()-beat)/1000;
+    if(!live){ age.textContent='written '+ago(s); return; }
+    // a run rewrites this page every few seconds. a gap far wider than that
+    // means the page is a leftover, whatever it says about itself.
+    if(s>180){
+      el.classList.remove('running'); el.classList.add('stopped');
+      label.textContent='no longer updating';
+      age.textContent='last written '+ago(s);
+      live=false;
+      return;
+    }
+    age.textContent='updated '+ago(s);
+  }
+  tick(); setInterval(tick,1000);
+})();
+"""
+
+
 def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 500) -> str:
     cfg: ReportConfig = payload["config"]
     run = payload.get("run") or {}
@@ -887,7 +995,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     buckets = payload["buckets"]
     items: list[ItemReport] = payload["items"]
     columns: list[str] = payload["columns"]
-    running = str(run.get("status", "")).lower() == "running"
+    running = str(run.get("state", "")).lower() == "running"
     entity = cfg.entity
 
     total = t["samples"]
@@ -1019,16 +1127,14 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     )
 
     title = cfg.title or f"{run.get('pipeline', 'DeepZero')} results"
-    status = _esc(run.get("status", "")) or "unknown"
     plate = "".join(
         f"<div><div class='lbl'>{lbl}</div><dd>{_esc(val)}</dd></div>"
         for lbl, val in (
             ("corpus", run.get("target", "-")),
             ("assessed by", run.get("model", "-")),
             ("run", run.get("run_id", "-")),
-            ("status", f"{status}{' - updating' if running else ''}"),
         )
-    )
+    ) + _run_state_cell(run, str(payload.get("generated_at", "")))
     refresh = '<meta http-equiv="refresh" content="20">' if running else ""
 
     body = f"""<header class="mast">

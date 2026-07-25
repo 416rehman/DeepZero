@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from deepzero.engine import liveness
 from deepzero.engine.types import RunStatus, SampleStatus, StageStatus, Verdict
 
 log = logging.getLogger("deepzero.state")
@@ -161,9 +162,25 @@ class RunState:
     stages: list[str] = field(default_factory=list)
     stats: dict[str, Any] = field(default_factory=dict)
 
+    # who is writing this run. a status of "running" is only a claim until the
+    # process behind it can be checked, and a killed run never gets to withdraw
+    # the claim itself.
+    host: str = ""
+    pid: int = 0
+    pid_token: str = ""
+    heartbeat_at: str = ""
+
     def mark_running(self) -> None:
         self.status = RunStatus.RUNNING
         self.started_at = _now()
+        self.host = liveness.hostname()
+        self.pid = os.getpid()
+        self.pid_token = liveness.start_token(self.pid)
+        self.heartbeat_at = self.started_at
+
+    def touch(self) -> None:
+        """Record that the run is still making progress."""
+        self.heartbeat_at = _now()
 
     def mark_completed(self) -> None:
         self.status = RunStatus.COMPLETED

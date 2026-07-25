@@ -94,6 +94,15 @@ class PipelineRunner:
         self._original_sigint = None
 
     def _notify_progress(self) -> None:
+        # a report built later needs to know the run was still moving at this
+        # point, not merely that it once started.
+        run_state = getattr(self, "_active_run_state", None)
+        if run_state is not None:
+            try:
+                run_state.touch()
+                self.state_store.save_run(run_state)
+            except OSError as exc:
+                log.debug("could not record progress time: %s", exc)
         if self.progress_hook is None:
             return
         try:

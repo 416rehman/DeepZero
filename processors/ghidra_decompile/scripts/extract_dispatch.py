@@ -359,16 +359,20 @@ def main():
         }
         result["ioctl_handlers"].append(handler_info)
 
-        # write per-ioctl file
-        # FIX: Use io.open with utf-8 encoding and unicode() cast for Jython stability
+        # one file per code recording what the code decodes to. the routine that
+        # handles it is the same for every code and is written once to
+        # dispatch_ioctl.c: copying it into each file made these directories
+        # hundreds of megabytes and made a scanner read the same function once
+        # per code, counting every finding again for each one.
+        # unicode() cast required: a jython io text stream rejects str, and
+        # "..." % int yields str (raising "can't write str to text stream")
         with io.open(os.path.join(ioctls_dir, "0x%08X.c" % code), "w", encoding="utf-8") as f:
-            # unicode() cast required: a jython io text stream rejects str,
-            # and "..." % int yields str (raising "can't write str to text stream")
             f.write(unicode("// IOCTL Code: 0x%08X\n" % code))
             f.write(unicode("// Method: %d\n" % (code & 0x3)))
             f.write(unicode("// Device Type: 0x%04X\n" % ((code >> 16) & 0xFFFF)))
-            f.write(unicode("// Function: 0x%03X\n\n" % ((code >> 2) & 0xFFF)))
-            f.write(unicode(dispatch_c))
+            f.write(unicode("// Function: 0x%03X\n" % ((code >> 2) & 0xFFF)))
+            f.write(unicode("// Access: %d\n" % ((code >> 14) & 0x3)))
+            f.write(unicode("// Handler: %s (see ../dispatch_ioctl.c)\n" % result["dispatch_name"]))
 
     result["success"] = True
     write_result(output_dir, result)

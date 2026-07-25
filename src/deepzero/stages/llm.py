@@ -34,21 +34,13 @@ class GenericLLM(MapProcessor):
             if not prompt_path.exists():
                 errors.append(f"Prompt template does not exist: {prompt_ref}")
 
-        # structurally validate LLM bindings early
+        # structurally validate LLM bindings early - each backend checks its own
+        # prerequisites (api keys, cli presence, ...) via the registry
         model = ctx.global_config.get("model")
         if model:
-            try:
-                import litellm
+            from deepzero.engine.backends import validate_model_binding
 
-                env_state = litellm.validate_environment(model=model)
-                if not env_state.get("keys_in_environment", True):
-                    missing_keys = env_state.get("missing_keys", [])
-                    if missing_keys:
-                        errors.append(
-                            f"LLM backend '{model}' missing credentials in environment. Need: {missing_keys}"
-                        )
-            except ImportError:
-                errors.append("LLM configured, but 'litellm' framework is not installed")
+            errors.extend(validate_model_binding(model))
 
         return errors
 

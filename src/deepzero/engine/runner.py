@@ -457,6 +457,7 @@ class PipelineRunner:
 
         if parallelism <= 1:
             dirty: list[SampleState] = []
+            last_flush = time.monotonic()
             for state in pending:
                 if self._shutdown_event.is_set():
                     break
@@ -475,16 +476,18 @@ class PipelineRunner:
                         filtered=1 if outcome == "filtered" else 0,
                         failed=1 if outcome == "failed" else 0,
                     )
-                if len(dirty) >= 50:
+                if len(dirty) >= 50 or time.monotonic() - last_flush > 10:
                     for s in dirty:
                         self.state_store.save_sample(s)
                     dirty.clear()
+                    last_flush = time.monotonic()
                     self._notify_progress()
             for s in dirty:
                 self.state_store.save_sample(s)
         else:
             max_workers = min(parallelism, len(pending))
             dirty: list[SampleState] = []
+            last_flush = time.monotonic()
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_map = {
                     executor.submit(self._process_one_map, s, spec, processor): s for s in pending
@@ -523,10 +526,11 @@ class PipelineRunner:
                             filtered=1 if outcome == "filtered" else 0,
                             failed=1 if outcome == "failed" else 0,
                         )
-                    if len(dirty) >= 50:
+                    if len(dirty) >= 50 or time.monotonic() - last_flush > 10:
                         for s in dirty:
                             self.state_store.save_sample(s)
                         dirty.clear()
+                        last_flush = time.monotonic()
                         self._notify_progress()
             for s in dirty:
                 self.state_store.save_sample(s)

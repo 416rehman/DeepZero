@@ -387,3 +387,18 @@ class TestFilteredOutIsNotCalledClear:
         assert "clear" in out
         assert "Filtered out" in out
         assert "not a judgement" in out
+
+
+class TestLabelsExplainThemselves:
+    def test_every_outcome_label_carries_its_rule(self, tmp_path):
+        from deepzero.engine.report import _BUCKET_LABELS, _BUCKET_RULE
+
+        # a label a reader cannot interpret is a label that misleads
+        assert set(_BUCKET_RULE) == set(_BUCKET_LABELS)
+        for bucket, text in _BUCKET_RULE.items():
+            assert len(text) > 40, f"{bucket} has no usable explanation"
+
+    def test_the_page_exposes_them_on_hover(self, tmp_path):
+        out = render_index(collect(_seed(tmp_path)), tmp_path)
+        assert 'title="An assessment stage recorded a verdict' in out
+        assert "cursor:help" in out

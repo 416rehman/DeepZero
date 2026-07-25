@@ -76,6 +76,35 @@ _BUCKET_HELP = {
     BUCKET_CLEAN: "analysed all the way through and nothing was flagged",
 }
 
+# how each outcome is decided, shown when the label is hovered
+_BUCKET_RULE = {
+    BUCKET_VULNERABLE: (
+        "An assessment stage recorded a verdict matching one of this pipeline's "
+        "vulnerable_when values. Work through these first."
+    ),
+    BUCKET_SUSPICIOUS: (
+        "A scan produced findings, but no assessment stage has confirmed or "
+        "dismissed them yet. Either assessment has not reached these, or the "
+        "pipeline has no assessment stage."
+    ),
+    BUCKET_FAILED: (
+        "A stage recorded an error for these, so they never finished the "
+        "pipeline. Their result says nothing about whether they are safe."
+    ),
+    BUCKET_UNASSESSED: (
+        "An assessment ran and produced text, but its verdict did not match "
+        "either the vulnerable_when or safe_when values this pipeline declares."
+    ),
+    BUCKET_FILTERED: (
+        "A stage excluded these before the analysis finished, so the later "
+        "stages never saw them. This is not a judgement about the item."
+    ),
+    BUCKET_CLEAN: (
+        "These went through every stage, produced no findings, and were not "
+        "flagged by an assessment."
+    ),
+}
+
 # keys worth promoting into the summary table when a pipeline declares no columns
 _INTERESTING_HINTS = ("count", "score", "severity", "total", "hits", "size", "stars", "rank")
 
@@ -492,7 +521,9 @@ h1 .qty{color:var(--faint);font-weight:400;letter-spacing:-.02em}
 
 .dist{margin:38px 0 0;padding-top:22px;border-top:1px solid var(--rule)}
 .ticks{display:flex;flex-wrap:wrap;gap:0 48px}
+.tick{cursor:help}
 .tick b{letter-spacing:-.03em}
+.shead[title]{cursor:help}
 .tick b{display:block;color:var(--ink);font:600 27px/1 var(--mono)}
 .tick .lbl{display:block;margin-top:7px}
 .tick.pos b{color:var(--positive)}
@@ -867,13 +898,14 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     n_ok = max(total - n_pos - n_rev - n_err - n_set, 0)
 
     ticks = "".join(
-        f"<div class='tick {cls}'><b>{n:,}</b><span class='lbl'>{label}</span></div>"
-        for cls, n, label in (
-            ("pos", n_pos, "vulnerable"),
-            ("rev", n_rev, "needs review"),
-            ("err", n_err, "errored"),
-            ("ok", n_ok, "clear"),
-            ("set", n_set, "filtered out"),
+        f"<div class='tick {cls}' title=\"{_esc(_BUCKET_RULE.get(bucket, ''))}\">"
+        f"<b>{n:,}</b><span class='lbl'>{label}</span></div>"
+        for cls, n, label, bucket in (
+            ("pos", n_pos, "vulnerable", BUCKET_VULNERABLE),
+            ("rev", n_rev, "needs review", BUCKET_SUSPICIOUS),
+            ("err", n_err, "errored", BUCKET_FAILED),
+            ("ok", n_ok, "clear", BUCKET_CLEAN),
+            ("set", n_set, "filtered out", BUCKET_FILTERED),
         )
     )
 
@@ -911,7 +943,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             for n, i in enumerate(shown, start=1)
         )
         return f"""<section>
-  <div class="shead{" q" if quiet else ""}">
+  <div class="shead{" q" if quiet else ""}" title="{_esc(_BUCKET_RULE.get(bucket, ""))}">
     <h2>{_esc(_BUCKET_LABELS.get(bucket, bucket))}</h2><span class="n">{len(rows):,}</span>
     <span class="of">{_esc(_BUCKET_HELP.get(bucket, ""))}</span>
   </div>
@@ -939,7 +971,8 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             f"{n:,} at {_esc(k)}" for k, n in sorted(by_stage.items(), key=lambda kv: -kv[1])
         )
         sections += (
-            f"<section><div class='shead q'><h2>Filtered out</h2>"
+            f"<section><div class='shead q' title=\"{_esc(_BUCKET_RULE[BUCKET_FILTERED])}\">"
+            f"<h2>Filtered out</h2>"
             f"<span class='n'>{n_set:,}</span>"
             f"<span class='of'>{_esc(_BUCKET_HELP[BUCKET_FILTERED])}</span></div>"
             f"<p class='aside'>These were excluded before the analysis finished, so they are "

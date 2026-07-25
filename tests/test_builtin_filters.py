@@ -245,3 +245,48 @@ class TestTopKSelector:
         errors = processor.validate(ctx)
         assert len(errors) == 1
         assert "requires 'metric_path'" in errors[0]
+
+    def _ranked(self, keep_top, count=5):
+        import tempfile
+        from pathlib import Path
+
+        from deepzero.engine.stage import ProcessorContext, ProcessorEntry, StageSpec
+        from deepzero.engine.state import StageOutput
+        from deepzero.stages.top_k import TopKSelector
+
+        processor = TopKSelector(
+            StageSpec(
+                name="rank",
+                processor="top_k",
+                config={
+                    "metric_path": "scan.finding_count",
+                    "keep_top": keep_top,
+                    "sort_order": "desc",
+                },
+            )
+        )
+        tmp = Path(tempfile.gettempdir())
+        ctx = ProcessorContext(pipeline_dir=tmp, global_config={}, llm=None)
+        entries = []
+        for i in range(count):
+            e = ProcessorEntry(
+                sample_id=f"s{i}",
+                source_path=tmp / f"s{i}.sys",
+                filename=f"s{i}.sys",
+                sample_dir=tmp / f"s{i}",
+                _store=None,
+            )
+            e._history = {"scan": StageOutput(status="completed", data={"finding_count": i})}
+            entries.append(e)
+        return processor.process(ctx, entries)
+
+    def test_keep_top_zero_ranks_without_discarding(self):
+        # ranking every sample must not throw any of them away
+        ids = self._ranked(0)
+        assert ids == ["s4", "s3", "s2", "s1", "s0"]
+
+    def test_negative_keep_top_also_keeps_everything(self):
+        assert len(self._ranked(-1)) == 5
+
+    def test_keep_top_larger_than_input_keeps_everything(self):
+        assert len(self._ranked(99)) == 5

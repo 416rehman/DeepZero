@@ -13,7 +13,7 @@ name: loldrivers
 description: windows kernel driver vulnerability research pipeline
 version: "2.0"
 
-model: claude-code/opus
+model: claude-code/claude-opus-5
 
 # how `deepzero report` presents this pipeline's results. every field is
 # optional - a pipeline that declares nothing still gets a useful report.
@@ -87,15 +87,16 @@ stages:
       min_findings: 1
       rules_dir: pipelines/loldrivers/rules
 
-  # pick top 10 candidates by semgrep finding count
-  - name: pick_top_10
+  # order every surviving driver by how many findings it has, worst first, so
+  # assessment works through the riskiest drivers first without dropping any
+  - name: rank_by_findings
     processor: top_k
     config:
       metric_path: "semgrep_scanner.finding_count"
-      keep_top: 10
+      keep_top: 0
       sort_order: desc
 
-  # llm deep analysis - only the top 10 survivors
+  # llm deep analysis of every driver that survived scanning
   - name: assess
     processor: generic_llm
     parallel: 2

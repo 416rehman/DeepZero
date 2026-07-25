@@ -11,6 +11,8 @@ class TopKSelector(ReduceProcessor):
     @dataclass
     class Config:
         metric_path: str = ""
+        # 0 or less keeps every sample, still ordered by the metric, so a stage
+        # can rank work without discarding any of it
         keep_top: int = 10
         sort_order: str = "desc"
 
@@ -40,13 +42,21 @@ class TopKSelector(ReduceProcessor):
         reverse = self.config.sort_order == "desc"
         scored = sorted(entries, key=_get_metric, reverse=reverse)
 
-        kept = scored[: self.config.keep_top]
+        keep_top = self.config.keep_top
+        kept = scored if keep_top <= 0 else scored[:keep_top]
         dropped = len(scored) - len(kept)
         if dropped > 0:
             self.log.info(
-                "top_k: kept %d, dropped %d (metric: %s, order: %s)",
+                "kept %d, dropped %d (metric: %s, order: %s)",
                 len(kept),
                 dropped,
+                self.config.metric_path,
+                self.config.sort_order,
+            )
+        else:
+            self.log.info(
+                "ranked %d samples by %s (%s), keeping all",
+                len(kept),
                 self.config.metric_path,
                 self.config.sort_order,
             )

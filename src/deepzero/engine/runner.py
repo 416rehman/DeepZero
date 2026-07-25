@@ -223,6 +223,7 @@ class PipelineRunner:
             else:
                 self._run_map(processor, active, spec, stage_stats)
 
+
             self._apply_stage_limit(spec, sample_states, stage_stats)
 
             elapsed = time.monotonic() - t0
@@ -507,6 +508,7 @@ class PipelineRunner:
                         for s in dirty:
                             self.state_store.save_sample(s)
                         dirty.clear()
+                        self._notify_progress()
             for s in dirty:
                 self.state_store.save_sample(s)
 
@@ -522,7 +524,9 @@ class PipelineRunner:
 
         if result.status == StageStatus.COMPLETED:
             if result.data and "__skipped" in result.data:
-                state.mark_stage_skipped(spec.name, result.data["__skipped"])
+                # work that was already done counts as passed and the sample
+                # continues to the next stage, per MapProcessor.should_skip
+                state.mark_stage_cached(spec.name, result.data["__skipped"])
             else:
                 state.mark_stage_completed(
                     spec.name,

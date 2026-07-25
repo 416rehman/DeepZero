@@ -51,6 +51,9 @@ class StageOutput:
     # namespaced processor output - never merged across stages
     data: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    # why this stage did no work (cached output, filtered out). kept separate from
+    # error so a normal skip is never reported as a failure
+    skip_reason: str = ""
 
 
 @dataclass
@@ -105,6 +108,22 @@ class SampleState:
         self.error = error
         self.verdict = SampleStatus.FAILED
 
+    def mark_stage_cached(self, stage_name: str, reason: str = "") -> None:
+        """work for this stage was already done (e.g. output already on disk).
+
+        the sample stays in the pipeline: per MapProcessor.should_skip, a skipped
+        sample counts as passed. this is NOT mark_stage_skipped, which filters the
+        sample out of the run entirely.
+        """
+        if stage_name not in self.history:
+            self.history[stage_name] = StageOutput()
+        stage = self.history[stage_name]
+        stage.status = StageStatus.COMPLETED
+        stage.verdict = Verdict.CONTINUE
+        stage.completed_at = _now()
+        if reason:
+            stage.skip_reason = reason
+
     def mark_stage_skipped(self, stage_name: str, reason: str = "") -> None:
         if stage_name not in self.history:
             self.history[stage_name] = StageOutput()
@@ -113,7 +132,7 @@ class SampleState:
         stage.verdict = Verdict.FILTER
         stage.completed_at = _now()
         if reason:
-            stage.error = reason
+            stage.skip_reason = reason
         self.verdict = SampleStatus.FILTERED
 
     def is_stage_done(self, stage_name: str) -> bool:

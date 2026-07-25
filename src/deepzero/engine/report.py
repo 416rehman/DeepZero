@@ -64,16 +64,16 @@ _BUCKET_LABELS = {
     BUCKET_SUSPICIOUS: "Needs review",
     BUCKET_FAILED: "Errored",
     BUCKET_UNASSESSED: "Not assessed",
-    BUCKET_FILTERED: "Set aside",
-    BUCKET_CLEAN: "No findings",
+    BUCKET_FILTERED: "Filtered out",
+    BUCKET_CLEAN: "Clear",
 }
 _BUCKET_HELP = {
     BUCKET_VULNERABLE: "an assessment stage concluded these are vulnerable",
     BUCKET_SUSPICIOUS: "findings exist but no assessment confirmed them",
     BUCKET_FAILED: "a stage errored, so these were never fully analysed",
     BUCKET_UNASSESSED: "assessed but the verdict could not be classified",
-    BUCKET_FILTERED: "a stage excluded these, so later stages never saw them",
-    BUCKET_CLEAN: "analysed to the end and nothing was flagged",
+    BUCKET_FILTERED: "a stage excluded these, so the later stages never saw them",
+    BUCKET_CLEAN: "analysed all the way through and nothing was flagged",
 }
 
 # keys worth promoting into the summary table when a pipeline declares no columns
@@ -872,8 +872,8 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             ("pos", n_pos, "vulnerable"),
             ("rev", n_rev, "needs review"),
             ("err", n_err, "errored"),
-            ("ok", n_ok, "no findings"),
-            ("set", n_set, "set aside"),
+            ("ok", n_ok, "clear"),
+            ("set", n_set, "filtered out"),
         )
     )
 
@@ -939,7 +939,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             f"{n:,} at {_esc(k)}" for k, n in sorted(by_stage.items(), key=lambda kv: -kv[1])
         )
         sections += (
-            f"<section><div class='shead q'><h2>Set aside</h2>"
+            f"<section><div class='shead q'><h2>Filtered out</h2>"
             f"<span class='n'>{n_set:,}</span>"
             f"<span class='of'>{_esc(_BUCKET_HELP[BUCKET_FILTERED])}</span></div>"
             f"<p class='aside'>These were excluded before the analysis finished, so they are "

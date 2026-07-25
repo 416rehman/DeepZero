@@ -344,7 +344,7 @@ class TestPipelineAgnostic:
         assert f["line"] == 88
 
 
-class TestSetAsideIsNotCalledClean:
+class TestFilteredOutIsNotCalledClear:
     """a sample a stage excluded was never analysed to the end, so it must not be
     counted alongside ones that were analysed and had nothing flagged."""
 
@@ -384,6 +384,6 @@ class TestSetAsideIsNotCalledClean:
 
     def test_the_page_does_not_call_them_clean(self, tmp_path):
         out = render_index(collect(self._run(tmp_path)), tmp_path)
-        assert "no findings" in out
-        assert "Set aside" in out
+        assert "clear" in out
+        assert "Filtered out" in out
         assert "not a judgement" in out

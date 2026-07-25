@@ -271,7 +271,10 @@ def _expand_string(s: str) -> str:
         if ":-" in var:
             name, default = var.split(":-", 1)
             return os.environ.get(name, default)
-        return os.environ.get(var, match.group(0))
+        # an unset var expands to empty rather than leaking the literal "${VAR}",
+        # which would read as a truthy value downstream and produce confusing
+        # errors like "ghidra not found at ${GHIDRA_INSTALL_DIR}"
+        return os.environ.get(var, "")
 
     return re.sub(r"\$\{([^}]+)\}", _replace, s)
 

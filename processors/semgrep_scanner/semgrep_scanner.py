@@ -170,18 +170,29 @@ class SemgrepScanner(BulkMapProcessor):
                 results[idx] = ProcessorResult.fail(f"semgrep batch timed out after {timeout}s")
             return [r for r in results if r is not None]
 
-        if proc.returncode not in (0, 1):
-            err = stderr_bytes.decode("utf-8", errors="replace")[:500]
-            for idx, _ in uncached_entries:
-                results[idx] = ProcessorResult.fail(f"semgrep error: {err}")
-            return [r for r in results if r is not None]
+        out_str = stdout_bytes.decode("utf-8", errors="replace")
+        err_str = stderr_bytes.decode("utf-8", errors="replace")
 
-        try:
-            out_str = stdout_bytes.decode("utf-8", errors="replace")
-            output = json.loads(out_str) if out_str.strip() else {}
-        except json.JSONDecodeError:
+        # semgrep emits a complete results document on stdout even when it exits
+        # with an unexpected code (observed on windows), so a parseable scan
+        # result is authoritative over the exit code. only treat the run as
+        # failed when no usable output came back - and always report the exit
+        # code, never an empty "semgrep error:".
+        output: dict[str, Any] | None = None
+        if out_str.strip():
+            try:
+                parsed = json.loads(out_str)
+                if isinstance(parsed, dict) and "results" in parsed:
+                    output = parsed
+            except json.JSONDecodeError:
+                output = None
+
+        if output is None:
+            detail = (err_str.strip() or "no parseable output on stdout")[:500]
             for idx, _ in uncached_entries:
-                results[idx] = ProcessorResult.fail("failed to parse semgrep json output")
+                results[idx] = ProcessorResult.fail(
+                    f"semgrep failed (exit {proc.returncode}): {detail}"
+                )
             return [r for r in results if r is not None]
 
         self._distribute_findings(output, file_to_sample, uncached_entries, results, min_findings)

@@ -174,8 +174,10 @@ def run(
     # ensure built-in stages are registered
     import deepzero.stages  # noqa: F401
     from deepzero.engine.pipeline import load_pipeline
+    from deepzero.engine.report import write_report
     from deepzero.engine.state import RunState, StateStore
 
+    log_report = logging.getLogger("deepzero.report")
     target_path = Path(target).resolve()
 
     try:
@@ -246,6 +248,12 @@ def run(
     if is_resume:
         run_state = existing_run
         run_state.status = RunStatus.RUNNING
+        # the pipeline's model may have changed since the run was created; record
+        # what this resumed run will actually call so status/reports don't lie
+        if run_state.model != pipeline_def.model:
+            log_msg = f"model changed since last run: {run_state.model or '(unset)'} -> {pipeline_def.model}"
+            console.print(f"[yellow]![/] {log_msg}")
+            run_state.model = pipeline_def.model
     else:
         # initialize fresh state
         state_store.save_pipeline_snapshot(pipeline_def.raw_yaml)
@@ -257,7 +265,79 @@ def run(
             model=pipeline_def.model,
         )
 
-    run_state = runner.run(target_path, run_state)
+    # a live report the user can open straight away and watch fill in. it is
+    # rebuilt when results actually land rather than on a timer, and rate
+    # limited so a fast stage cannot spend the run's time writing html
+    report_dir = pipeline_def.work_dir / "report"
+    report_index = report_dir / "index.html"
+    last_written = [0.0]
+
+    def _refresh_report(force: bool = False) -> None:
+        if not force and time.monotonic() - last_written[0] < 15:
+            return
+        try:
+            write_report(pipeline_def.work_dir, report_dir, config=pipeline_def.report)
+            last_written[0] = time.monotonic()
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            log_report.debug("could not refresh the report: %s", exc)
+
+    _refresh_report(force=True)
+    console.print(f" report   [bold]{report_index.resolve().as_uri()}[/]")
+    console.print(" [dim]open it now - it updates itself as results land[/]\n")
+
+    runner.progress_hook = _refresh_report
+    try:
+        run_state = runner.run(target_path, run_state)
+    finally:
+        _refresh_report(force=True)  # settle the final state, no reload banner
+        console.print(f"\n report   [bold]{report_index.resolve().as_uri()}[/]")
+
+
+@main.command()
+@click.option("--pipeline", "-p", default=None, help="pipeline name or path")
+@click.option("--work-dir", "-w", default=None, help="work directory (overrides --pipeline)")
+@click.option("--out", "-o", default=None, help="output directory (default <work_dir>/report)")
+@click.option("--open", "open_browser", is_flag=True, help="open the report when finished")
+@click.option("--verbose", "-v", is_flag=True, help="verbose logging")
+def report(
+    pipeline: str | None, work_dir: str | None, out: str | None, open_browser: bool, verbose: bool
+):
+    """build a browsable HTML report from a run's results (safe mid-run)"""
+    _setup_logging(verbose)
+
+    from deepzero.engine.report import write_report
+
+    report_cfg: dict = {}
+    if work_dir:
+        work_path = Path(work_dir)
+    elif pipeline:
+        import deepzero.stages  # noqa: F401
+        from deepzero.engine.pipeline import load_pipeline
+
+        _load_env()
+        try:
+            pipeline_def = load_pipeline(pipeline)
+        except ValueError as e:
+            console.print(f"[bold red]X ERROR[/]: {e}")
+            raise SystemExit(1)
+        work_path = pipeline_def.work_dir
+        report_cfg = pipeline_def.report
+    else:
+        console.print("[bold red]X ERROR[/]: pass --pipeline or --work-dir")
+        raise SystemExit(1)
+
+    if not work_path.exists():
+        console.print(f"[bold red]X ERROR[/]: work directory does not exist: {work_path}")
+        raise SystemExit(1)
+
+    html_path, json_path = write_report(work_path, Path(out) if out else None, config=report_cfg)
+    console.print(f"[green]\\[ok][/] report written to [bold]{html_path}[/]")
+    console.print(f"      machine-readable copy: {json_path}")
+
+    if open_browser:
+        import webbrowser
+
+        webbrowser.open(html_path.resolve().as_uri())
 
 
 @main.command()

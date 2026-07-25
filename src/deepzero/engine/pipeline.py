@@ -35,6 +35,7 @@ class PipelineDefinition:
         stage_specs: list[StageSpec],
         pipeline_dir: Path,
         raw_yaml: str,
+        report: dict[str, Any] | None = None,
     ):
         self.name = name
         self.description = description
@@ -44,6 +45,9 @@ class PipelineDefinition:
         self.stage_specs = stage_specs
         self.pipeline_dir = pipeline_dir
         self.raw_yaml = raw_yaml
+        # optional presentation hints for `deepzero report` - pipelines that
+        # declare nothing still get a useful report
+        self.report = report or {}
 
         # resolved processor instances
         self.ingest_processor: IngestProcessor | None = None
@@ -138,6 +142,7 @@ def load_pipeline(
         name=name,
         description=description,
         model=model,
+        report=data.get("report") or {},
         settings=settings,
         knowledge=knowledge,
         stage_specs=stage_specs,

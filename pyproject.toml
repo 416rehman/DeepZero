@@ -36,6 +36,11 @@ pythonpath = ["src", "."]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# docs contain illustrative python snippets in markdown. newer ruff versions
+# format embedded code blocks, which made `ruff format --check` fail in CI
+# purely from a ruff upgrade. documentation examples are prose, not build
+# artifacts - keep them out of the code formatter's scope.
+extend-exclude = ["docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]

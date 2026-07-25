@@ -19,28 +19,42 @@ from deepzero.engine.stage import (
 class SemgrepScanner(BulkMapProcessor):
     description = "runs semgrep batch scan against decompiled source across all active samples"
 
+    def _resolve_rules_path(self, ctx: ProcessorContext) -> Path | None:
+        # resolve rules_dir consistently for validate() and process(): try
+        # cwd-relative first (how the shipped pipelines reference their rules),
+        # then relative to the pipeline directory. resolving these differently
+        # let validation pass while the scan silently ran with no rules loaded.
+        rules_dir = self.config.get("rules_dir", "")
+        if not rules_dir:
+            return None
+        cwd_path = (Path.cwd() / rules_dir).resolve()
+        if cwd_path.exists():
+            return cwd_path
+        return (ctx.pipeline_dir / rules_dir).resolve()
+
     def validate(self, ctx: ProcessorContext) -> list[str]:
         errors = []
         if not shutil.which("semgrep"):
             errors.append("semgrep CLI not found in PATH - install with: pip install semgrep")
 
-        rules_dir = self.config.get("rules_dir")
-        if not rules_dir:
+        if not self.config.get("rules_dir"):
             errors.append("semgrep_scanner requires 'rules_dir' in config")
         else:
-            rules_path = (Path.cwd() / rules_dir).resolve()
-            if not rules_path.exists():
-                rules_path = (ctx.pipeline_dir / rules_dir).resolve()
-            if not rules_path.exists():
-                errors.append(f"rules_dir does not exist: {rules_dir}")
+            rules_path = self._resolve_rules_path(ctx)
+            if rules_path is None or not rules_path.exists():
+                errors.append(f"rules_dir does not exist: {self.config.get('rules_dir')}")
 
         return errors
 
     def process(
         self, ctx: ProcessorContext, entries: list[ProcessorEntry]
     ) -> list[ProcessorResult]:
-        rules_dir = self.config.get("rules_dir", "")
-        rules_path = (ctx.pipeline_dir / rules_dir).resolve()
+        rules_path = self._resolve_rules_path(ctx)
+        if rules_path is None or not rules_path.exists():
+            # fail fast rather than pointing semgrep at a fallback path and
+            # scanning with no rules loaded (the silent-empty-results class)
+            reason = f"semgrep rules_dir not found: {self.config.get('rules_dir') or '(unset)'}"
+            return [ProcessorResult.fail(reason) for _ in entries]
 
         target_subdir = self.config.get("target_dir", "decompiled")
         timeout = self.config.get("timeout", 300)
@@ -170,19 +184,45 @@ class SemgrepScanner(BulkMapProcessor):
                 results[idx] = ProcessorResult.fail(f"semgrep batch timed out after {timeout}s")
             return [r for r in results if r is not None]
 
-        if proc.returncode not in (0, 1):
-            err = stderr_bytes.decode("utf-8", errors="replace")[:500]
+        out_str = stdout_bytes.decode("utf-8", errors="replace")
+        err_str = stderr_bytes.decode("utf-8", errors="replace")
+
+        # semgrep emits a complete results document on stdout even when it exits
+        # with an unexpected code (observed on windows), so a parseable scan
+        # result is authoritative over the exit code. only treat the run as
+        # failed when no usable output came back - and always report the exit
+        # code, never an empty "semgrep error:".
+        output: dict[str, Any] | None = None
+        if out_str.strip():
+            try:
+                parsed = json.loads(out_str)
+                if isinstance(parsed, dict) and "results" in parsed:
+                    output = parsed
+            except json.JSONDecodeError:
+                output = None
+
+        if output is None:
+            detail = (err_str.strip() or "no parseable output on stdout")[:500]
             for idx, _ in uncached_entries:
-                results[idx] = ProcessorResult.fail(f"semgrep error: {err}")
+                results[idx] = ProcessorResult.fail(
+                    f"semgrep failed (exit {proc.returncode}): {detail}"
+                )
             return [r for r in results if r is not None]
 
-        try:
-            out_str = stdout_bytes.decode("utf-8", errors="replace")
-            output = json.loads(out_str) if out_str.strip() else {}
-        except json.JSONDecodeError:
+        # semgrep reports rule/config load failures in an "errors" array while
+        # still exiting 0 with empty results - which would otherwise look like
+        # "no vulnerabilities found". fail loudly when nothing scanned.
+        scan_errors = output.get("errors") or []
+        if scan_errors and not output.get("results"):
+            detail = "; ".join(
+                str(e.get("message") or e.get("type") or e) for e in scan_errors[:3]
+            )[:500]
             for idx, _ in uncached_entries:
-                results[idx] = ProcessorResult.fail("failed to parse semgrep json output")
+                results[idx] = ProcessorResult.fail(f"semgrep produced no results: {detail}")
             return [r for r in results if r is not None]
+
+        if scan_errors:
+            self.log.warning("semgrep reported %d non-fatal error(s) during scan", len(scan_errors))
 
         self._distribute_findings(output, file_to_sample, uncached_entries, results, min_findings)
         return [r for r in results if r is not None]

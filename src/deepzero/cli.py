@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from pathlib import Path
 from types import MappingProxyType
@@ -14,6 +15,21 @@ from rich.table import Table
 
 from deepzero.engine.types import RunStatus
 
+
+def _ensure_utf8_streams() -> None:
+    # deepzero prints unicode status glyphs (checkmarks, arrows, box drawing).
+    # on a legacy windows console or when stdout is redirected to a file, the
+    # default cp1252 encoding raises UnicodeEncodeError and crashes the run.
+    # force utf-8 with a non-fatal error handler before any Console is built.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, ValueError):
+            # stream is not a reconfigurable TextIOWrapper (e.g. already wrapped)
+            pass
+
+
+_ensure_utf8_streams()
 console = Console()
 
 

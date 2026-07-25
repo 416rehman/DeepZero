@@ -4,56 +4,27 @@ import logging
 import time
 from typing import Any
 
+from deepzero.engine.backends import create_backend
+
 log = logging.getLogger("deepzero.llm")
 
 
-# sentinel exception that is never raised, used as a safe fallback
-# when litellm exception classes are unavailable (e.g. in mock envs)
-class _NeverRaised(Exception):
-    pass
-
-
-def _resolve_exc(obj: Any, name: str) -> type[BaseException]:
-    cls = getattr(obj, name, None)
-    try:
-        if isinstance(cls, type) and issubclass(cls, BaseException):
-            return cls
-    except TypeError:
-        pass
-    return _NeverRaised
-
-
 class LLMProvider:
-    # litellm-backed llm provider with adaptive retry and backoff
+    # llm provider with adaptive retry and backoff.
+    #
+    # the backend is resolved from the model string by the backend registry
+    # (see deepzero.engine.backends). this class knows nothing about any
+    # specific backend - it only drives the retry roles each one declares.
 
     def __init__(self, model: str, **kwargs: Any):
         self.model = model
         self.default_kwargs = kwargs
-        self._ensure_litellm()
+        self.backend = create_backend(model, **kwargs)
 
-    def _ensure_litellm(self) -> None:
-        try:
-            import litellm
-
-            self._litellm = litellm
-            # suppress litellm's noisy logging and traceback spam
-            litellm.suppress_debug_info = True
-            logging.getLogger("litellm").setLevel(logging.CRITICAL)
-
-            # capture exception classes with safe fallbacks for test mocks
-            self._rate_limit_error = _resolve_exc(litellm, "RateLimitError")
-            self._context_window_error = _resolve_exc(litellm, "ContextWindowExceededError")
-
-            # build the retryable error tuple once at init
-            api_errors = tuple(
-                _resolve_exc(litellm, name) for name in ("APIConnectionError", "APIError")
-            )
-            self._retryable_errors = api_errors + (OSError, ValueError, RuntimeError)
-
-        except ImportError as exc:
-            raise ImportError(
-                "litellm is required for LLM support. install with: pip install litellm"
-            ) from exc
+    @property
+    def _litellm(self) -> Any:
+        # retained for backward compatibility with existing callers/tests
+        return getattr(self.backend, "litellm", None)
 
     def complete(
         self,
@@ -66,23 +37,22 @@ class LLMProvider:
     ) -> str:
         """send messages to the llm and return the response text.
         handles rate limiting with adaptive backoff."""
+        backend = self.backend
+        # forward all options; each backend uses what applies (litellm passes
+        # generation kwargs to the api, cli backends read controls like timeout
+        # and ignore the rest) so e.g. timeout= is not silently dropped
         merged = {**self.default_kwargs, **kwargs}
         backoff = initial_backoff
 
         for attempt in range(max_retries + 1):
             try:
-                response = self._litellm.completion(
-                    model=self.model,
-                    messages=messages,
-                    **merged,
-                )
-                content = response.choices[0].message.content or ""
+                content = backend.raw_complete(messages, **merged)
 
                 # decay backoff toward minimum on success
                 backoff = max(initial_backoff, backoff * backoff_decay)
                 return content
 
-            except self._rate_limit_error:
+            except backend.rate_limit_error:
                 if attempt == max_retries:
                     raise
                 backoff = min(max_backoff, backoff * 2.0)
@@ -94,11 +64,15 @@ class LLMProvider:
                 )
                 time.sleep(backoff)
 
-            except self._context_window_error:
+            except backend.context_window_error:
                 # context window errors won't be fixed by retry
                 raise
 
-            except self._retryable_errors as e:
+            except backend.non_retryable_errors:
+                # e.g. auth failures - surface immediately instead of burning retries
+                raise
+
+            except backend.retryable_errors as e:
                 if attempt == max_retries:
                     raise
                 wait = min(max_backoff, 2**attempt)
@@ -115,12 +89,8 @@ class LLMProvider:
 
     @property
     def provider_name(self) -> str:
-        if "/" in self.model:
-            return self.model.split("/")[0]
-        return "unknown"
+        return self.backend.provider_name
 
     @property
     def model_name(self) -> str:
-        if "/" in self.model:
-            return self.model.split("/", 1)[1]
-        return self.model
+        return self.backend.model_name

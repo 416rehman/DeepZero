@@ -19,6 +19,63 @@ from deepzero.engine.stage import (
 
 log = logging.getLogger("deepzero.processor.ghidra")
 
+# each ghidra headless worker is a separate JVM holding a full program
+# database in memory (roughly this many GiB during analysis). auto worker
+# counts are derived from this so `parallel: 0` cannot exhaust RAM.
+_GHIDRA_GB_PER_WORKER = 4.0
+_GHIDRA_MAX_AUTO_WORKERS = 16
+
+
+def _total_ram_gb() -> float | None:
+    """best-effort total physical RAM in GiB, or None if it can't be measured."""
+    try:
+        names = getattr(os, "sysconf_names", {})
+        if "SC_PHYS_PAGES" in names and "SC_PAGE_SIZE" in names:
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page = os.sysconf("SC_PAGE_SIZE")
+            if pages > 0 and page > 0:
+                return pages * page / (1024**3)
+    except (ValueError, OSError, AttributeError):
+        pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            class _MemStatus(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = _MemStatus()
+            stat.dwLength = ctypes.sizeof(_MemStatus)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return stat.ullTotalPhys / (1024**3)
+        except (OSError, AttributeError, ValueError):
+            pass
+    return None
+
+
+def _auto_ghidra_workers(cpu: int | None = None, ram_gb: float | None = None) -> int:
+    """a memory-safe default worker count for ghidra headless.
+
+    bounded by cpu count, available RAM (~4 GiB/worker), and a hard cap. falls
+    back to a conservative cpu-only bound when RAM can't be measured.
+    """
+    cpu = cpu or os.cpu_count() or 4
+    ram = ram_gb if ram_gb is not None else _total_ram_gb()
+    if ram is None:
+        return max(1, min(cpu, 4))
+    by_ram = max(1, int(ram // _GHIDRA_GB_PER_WORKER))
+    return max(1, min(cpu, by_ram, _GHIDRA_MAX_AUTO_WORKERS))
+
 
 class GhidraDecompile(MapProcessor):
     description = (
@@ -34,6 +91,15 @@ class GhidraDecompile(MapProcessor):
         max_depth: int | None = None
         ghidra_install_dir: str = ""
         java_home: str = ""
+        # ceiling on auto (parallel: 0) concurrency. 0 = derive a memory-safe
+        # default (~4 GiB RAM per worker; each worker is a full JVM). raise it
+        # to use more of a large machine, e.g. max_parallel: 24.
+        max_parallel: int = 0
+
+    def max_parallelism(self) -> int | None:
+        if self.config.max_parallel and self.config.max_parallel > 0:
+            return self.config.max_parallel
+        return _auto_ghidra_workers()
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         if not self.config.ghidra_install_dir:

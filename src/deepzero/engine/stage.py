@@ -265,6 +265,15 @@ class Processor(ABC):
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def max_parallelism(self) -> int | None:
+        # optional hard ceiling on AUTO (parallel: 0) concurrency for this
+        # processor. return an int to stop auto-scaling from using every core;
+        # None means no ceiling. heavy processors that spawn external, memory-
+        # hungry workers (e.g. one JVM per sample) override this so a default
+        # `parallel: 0` cannot exhaust the machine. an explicit `parallel: N`
+        # in the pipeline is always honored as-is.
+        return None
+
     def setup(self, global_config: dict[str, Any]) -> None:
         # called once before pipeline execution begins
         pass

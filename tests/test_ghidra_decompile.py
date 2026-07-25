@@ -4,7 +4,37 @@ from unittest.mock import patch
 
 from deepzero.engine.stage import ProcessorContext, StageSpec
 from deepzero.engine.state import StageOutput
-from processors.ghidra_decompile.ghidra_decompile import GhidraDecompile
+from processors.ghidra_decompile.ghidra_decompile import (
+    _GHIDRA_MAX_AUTO_WORKERS,
+    GhidraDecompile,
+    _auto_ghidra_workers,
+)
+
+
+class TestDecompileParallelism:
+    def test_ram_caps_workers(self):
+        # each worker ~4 GiB; bounded by cpu, ram, and the hard cap
+        assert _auto_ghidra_workers(cpu=32, ram_gb=128) == _GHIDRA_MAX_AUTO_WORKERS  # hard cap
+        assert _auto_ghidra_workers(cpu=32, ram_gb=16) == 4  # 16 // 4
+        assert _auto_ghidra_workers(cpu=2, ram_gb=128) == 2  # cpu-bound
+        assert _auto_ghidra_workers(cpu=8, ram_gb=64) == 8  # cpu-bound
+
+    def test_unknown_ram_is_conservative(self):
+        with patch("processors.ghidra_decompile.ghidra_decompile._total_ram_gb", return_value=None):
+            assert _auto_ghidra_workers(cpu=64) == 4
+
+    def test_never_zero(self):
+        assert _auto_ghidra_workers(cpu=1, ram_gb=1) == 1
+
+    def test_config_max_parallel_overrides_auto(self):
+        proc = GhidraDecompile(
+            StageSpec(name="decompile", processor="ghidra_decompile", config={"max_parallel": 24})
+        )
+        assert proc.max_parallelism() == 24
+
+    def test_auto_ceiling_is_bounded_when_unset(self):
+        proc = GhidraDecompile(StageSpec(name="decompile", processor="ghidra_decompile", config={}))
+        assert 1 <= proc.max_parallelism() <= _GHIDRA_MAX_AUTO_WORKERS
 
 
 def _make_ctx(tmp_path, config=None, global_config=None):

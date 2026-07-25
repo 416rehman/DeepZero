@@ -397,6 +397,24 @@ class PipelineRunner:
 
     # -- map execution --
 
+    def _resolve_parallelism(self, spec: StageSpec, processor: Processor) -> int:
+        # explicit `parallel: N` is honored as-is; `parallel: 0` auto-scales to
+        # cpu count but is clamped to the processor's declared ceiling (if any)
+        # so heavy stages don't spawn one worker per core.
+        parallelism = spec.parallel
+        if parallelism > 0:
+            return parallelism
+        parallelism = os.cpu_count() or 4
+        ceiling = processor.max_parallelism()
+        if ceiling is not None and 0 < ceiling < parallelism:
+            log.info(
+                "%s: capping auto concurrency to %d workers (processor limit)", spec.name, ceiling
+            )
+            parallelism = ceiling
+        else:
+            log.debug("%s: auto-scaled to %d workers", spec.name, parallelism)
+        return parallelism
+
     def _run_map(
         self,
         processor: MapProcessor,
@@ -416,10 +434,7 @@ class PipelineRunner:
         if not pending:
             return
 
-        parallelism = spec.parallel
-        if parallelism <= 0:
-            parallelism = os.cpu_count() or 4
-            log.debug("%s: auto-scaled to %d workers", spec.name, parallelism)
+        parallelism = self._resolve_parallelism(spec, processor)
 
         if parallelism <= 1:
             dirty: list[SampleState] = []

@@ -152,8 +152,19 @@ def main(ctx: click.Context):
 @click.option("--work-dir", "-w", default=None, help="work directory override")
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
 @click.option("--clean", is_flag=True, help="permanently delete previous run data and start fresh")
+@click.option(
+    "--preflight",
+    is_flag=True,
+    help="verify the LLM backend is authenticated before running (makes one tiny call)",
+)
 def run(
-    target: str, pipeline: str, model: str | None, work_dir: str | None, verbose: bool, clean: bool
+    target: str,
+    pipeline: str,
+    model: str | None,
+    work_dir: str | None,
+    verbose: bool,
+    clean: bool,
+    preflight: bool,
 ):
     """run a pipeline against a target file or directory (resumes automatically)"""
     _setup_logging(verbose)
@@ -221,6 +232,16 @@ def run(
     )
 
     runner, llm = _build_runner(pipeline_def, dashboard=dashboard)
+
+    if preflight and llm is not None:
+        console.print("[dim]preflight: checking LLM backend authentication...[/]")
+        problem = llm.check_auth()
+        if problem:
+            console.print(
+                f"[bold red]X ERROR[/]: LLM backend '{pipeline_def.model}' is not ready: {problem}"
+            )
+            raise SystemExit(1)
+        console.print("[green]\\[ok][/] LLM backend authenticated")
 
     if is_resume:
         run_state = existing_run

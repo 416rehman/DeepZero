@@ -360,10 +360,12 @@ def main():
         # write per-ioctl file
         # FIX: Use io.open with utf-8 encoding and unicode() cast for Jython stability
         with io.open(os.path.join(ioctls_dir, "0x%08X.c" % code), "w", encoding="utf-8") as f:
-            f.write("// IOCTL Code: 0x%08X\n" % code)
-            f.write("// Method: %d\n" % (code & 0x3))
-            f.write("// Device Type: 0x%04X\n" % ((code >> 16) & 0xFFFF))
-            f.write("// Function: 0x%03X\n\n" % ((code >> 2) & 0xFFF))
+            # unicode() cast required: a jython io text stream rejects str,
+            # and "..." % int yields str (raising "can't write str to text stream")
+            f.write(unicode("// IOCTL Code: 0x%08X\n" % code))
+            f.write(unicode("// Method: %d\n" % (code & 0x3)))
+            f.write(unicode("// Device Type: 0x%04X\n" % ((code >> 16) & 0xFFFF)))
+            f.write(unicode("// Function: 0x%03X\n\n" % ((code >> 2) & 0xFFF)))
             f.write(unicode(dispatch_c))
 
     result["success"] = True

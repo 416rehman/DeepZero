@@ -102,13 +102,23 @@ class GenericLLM(MapProcessor):
             raw = template_path.read_text(encoding="utf-8")
             template_vars = self._build_template_vars(ctx, entry)
 
+            # a prompt that names a value the pipeline never produced would
+            # otherwise render as empty and the model would be asked to judge
+            # nothing, so an unknown name is an error naming what is available
             env = jinja2.Environment(
                 loader=jinja2.FileSystemLoader(str(template_path.parent)),
-                undefined=jinja2.Undefined,
+                undefined=jinja2.StrictUndefined,
                 autoescape=jinja2.select_autoescape(),
             )
             template = env.from_string(raw)
-            return template.render(**template_vars)
+            try:
+                return template.render(**template_vars)
+            except jinja2.UndefinedError as exc:
+                available = ", ".join(sorted(template_vars)) or "nothing"
+                raise ValueError(
+                    f"prompt {template_path.name} uses a value this pipeline does not "
+                    f"produce: {exc}. available: {available}"
+                ) from exc
 
         return prompt_ref
 

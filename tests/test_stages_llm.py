@@ -259,3 +259,54 @@ class TestArtifactContextBudget:
         vars_, _ = self._vars(tmp_path, cfg)
         assert "truncated" in vars_["big_c"]
         assert len(vars_["big_c"]) < 5000
+
+
+class TestPromptCompleteness:
+    """a prompt that silently renders empty asks the model to judge nothing, so
+    a name the pipeline does not produce has to be an error."""
+
+    def _render(self, tmp_path, template_text, vars_present=None):
+        from deepzero.engine.stage import ProcessorContext, ProcessorEntry, StageSpec
+        from deepzero.stages.llm import GenericLLM
+
+        tpl = tmp_path / "prompt.j2"
+        tpl.write_text(template_text, encoding="utf-8")
+        sample_dir = tmp_path / "s1"
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        for name, body in (vars_present or {}).items():
+            (sample_dir / name).write_text(body, encoding="utf-8")
+
+        stage = GenericLLM(
+            StageSpec(name="assess", processor="generic_llm", config={"prompt": str(tpl)})
+        )
+        ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=None)
+        entry = ProcessorEntry(
+            sample_id="s1",
+            source_path=tmp_path / "s1.sys",
+            filename="s1.sys",
+            sample_dir=sample_dir,
+        )
+        entry._history = {}
+        return stage._render_prompt(str(tpl), ctx, entry)
+
+    def test_unknown_value_is_reported_with_what_is_available(self, tmp_path):
+        import pytest
+
+        with pytest.raises(ValueError) as exc:
+            self._render(tmp_path, "Payload:\n{{ dispatch_code }}")
+        msg = str(exc.value)
+        assert "does not produce" in msg
+        assert "available:" in msg
+
+    def test_known_value_still_renders(self, tmp_path):
+        out = self._render(
+            tmp_path, "Payload:\n{{ decompiled_c }}", {"decompiled.c": "void handler(){}"}
+        )
+        assert "void handler(){}" in out
+
+    def test_guarded_optional_value_is_allowed(self, tmp_path):
+        out = self._render(
+            tmp_path,
+            "{% if missing_thing is defined %}{{ missing_thing }}{% else %}none{% endif %}",
+        )
+        assert "none" in out

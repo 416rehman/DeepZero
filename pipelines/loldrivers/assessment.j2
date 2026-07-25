@@ -50,16 +50,20 @@ Device: {{ device_name }}
 {% if symbolic_link is defined %}
 Symbolic Link: {{ symbolic_link }}
 {% endif %}
-{% if dispatch_handler is defined %}
-Dispatch Handler: {{ dispatch_handler }}
+{% if dispatch_name is defined and dispatch_name %}
+Dispatch Handler: {{ dispatch_name }}
 {% endif %}
-{% if findings is defined and findings|length > 0 %}
+{% if findings_json is defined and findings_json|length > 0 %}
 Semgrep Findings ({{ finding_count }}):
-{% for f in findings[:20] %}
+{% for f in findings_json[:20] %}
   - [{{ f.severity }}] {{ f.rule_id }}: {{ f.message[:200] }}
     {{ f.file }}:{{ f.line_start }}
 {% endfor %}
 {% endif %}
 
 Payload:
-{{ dispatch_code }}
+{% if decompiled_dispatch_ioctl_c is defined %}
+{{ decompiled_dispatch_ioctl_c }}
+{% else %}
+(no dispatch routine was recovered for this driver)
+{% endif %}

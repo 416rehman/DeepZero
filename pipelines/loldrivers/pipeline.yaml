@@ -13,7 +13,21 @@ name: loldrivers
 description: windows kernel driver vulnerability research pipeline
 version: "2.0"
 
-model: claude-code/sonnet
+model: claude-code/opus
+
+# how `deepzero report` presents this pipeline's results. every field is
+# optional - a pipeline that declares nothing still gets a useful report.
+report:
+  title: Windows kernel driver review
+  entity: driver
+  classification_key: classification
+  vulnerable_when: [vulnerable]
+  safe_when: [safe]
+  columns:
+    - semgrep_scanner.finding_count
+    - discover.priority_score
+    - decompile.function_count
+    - discover.dangerous_imports
 
 settings:
   work_dir: work

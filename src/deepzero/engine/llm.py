@@ -38,9 +38,9 @@ class LLMProvider:
         """send messages to the llm and return the response text.
         handles rate limiting with adaptive backoff."""
         backend = self.backend
-        # forward all options; each backend uses what applies (litellm passes
-        # generation kwargs to the api, cli backends read controls like timeout
-        # and ignore the rest) so e.g. timeout= is not silently dropped
+        # every option is forwarded and each backend takes what applies to it:
+        # litellm passes generation kwargs to the api, while cli backends read
+        # controls such as timeout and ignore the rest
         merged = {**self.default_kwargs, **kwargs}
         backoff = initial_backoff
 

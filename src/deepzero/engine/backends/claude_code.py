@@ -15,9 +15,15 @@ import sys
 from pathlib import Path
 from typing import Any, ClassVar
 
-from deepzero.engine.backends.base import BackendError, CLIAgentBackend
+from deepzero.engine.backends.base import BackendAuthError, BackendError, CLIAgentBackend
 
 log = logging.getLogger("deepzero.llm.claude_code")
+
+# what to tell the user when the cli reports an auth failure. deepzero does not
+# inspect claude's credential store: whatever auth the cli has is the auth we
+# use, and if it has none the cli says so and we relay it.
+_AUTH_HINT = "run `claude` in a terminal and sign in, then retry"
+
 
 # the prompt carries untrusted content (decompiled malware, attacker-controlled
 # strings). a completion never needs tools, so deny the ones that could turn a
@@ -43,11 +49,8 @@ class ClaudeCodeBackend(CLIAgentBackend):
     binary_names: ClassVar[tuple[str, ...]] = ("claude",)
     install_hint: ClassVar[str] = "install it and sign in (https://claude.com/claude-code)."
     # never use --bare: it disables oauth/keychain reads, which is exactly the
-    # auth this backend exists to use
-    subscription_auth_env_blocklist: ClassVar[tuple[str, ...]] = (
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-    )
+    # auth this backend exists to use. the cli decides how to authenticate from
+    # its own config and environment - deepzero does not second-guess it.
 
     def __init__(self, model: str, **kwargs: Any):
         super().__init__(model, **kwargs)
@@ -70,6 +73,13 @@ class ClaudeCodeBackend(CLIAgentBackend):
                 paths += [base / "claude.cmd", base / "claude.exe", base / "claude"]
             paths.append(home / ".local" / "bin" / "claude.exe")
         return paths
+
+    def classify_error(self, detail: str, status: Any = None) -> BackendError:
+        err = super().classify_error(detail, status)
+        # the cli's own auth message is the source of truth; just add the remedy
+        if isinstance(err, BackendAuthError):
+            return BackendAuthError(f"{err} - {_AUTH_HINT}")
+        return err
 
     def build_argv(self, system: str) -> tuple[list[str], str]:
         argv = [str(self._binary), "-p", "--output-format", "json"]

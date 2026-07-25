@@ -5,6 +5,7 @@ from pathlib import Path
 from deepzero.engine.runner import PipelineRunner
 from deepzero.engine.stage import (
     BulkMapProcessor,
+    IngestProcessor,
     MapProcessor,
     ProcessorContext,
     ProcessorEntry,
@@ -334,3 +335,87 @@ class TestResolveParallelism:
         proc = self._NoCeilingProc(StageSpec(name="d", processor="x"))
         spec = StageSpec(name="d", processor="x", parallel=0)
         assert PipelineRunner._resolve_parallelism(None, spec, proc) == 8
+
+
+class TestCachedSamplesStayInThePipeline:
+    """a sample whose work was already done still flows to the following
+    stages. skipping work is not the same as filtering the sample out: a
+    resumed run must analyse exactly what a fresh run would."""
+
+    class _AlreadyDone(MapProcessor):
+        def should_skip(self, ctx, entry):
+            return "output already cached"
+
+        def process(self, ctx, entry):
+            raise AssertionError("process() must not run when should_skip returns a reason")
+
+    class _Counting(MapProcessor):
+        seen: list = []
+
+        def process(self, ctx, entry):
+            type(self).seen.append(entry.sample_id)
+            return ProcessorResult.ok(data={"ran": True})
+
+    def test_cached_stage_is_completed_not_filtered(self, tmp_path):
+        from deepzero.engine.state import SampleState
+        from deepzero.engine.types import SampleStatus, StageStatus, Verdict
+
+        state = SampleState(sample_id="s1", filename="a.sys")
+        state.mark_stage_cached("decompile", "output already cached")
+
+        out = state.history["decompile"]
+        assert out.status == StageStatus.COMPLETED
+        assert out.verdict == Verdict.CONTINUE
+        assert out.skip_reason == "output already cached"
+        # a skip reason is not an error
+        assert out.error is None
+        # and the sample is still eligible for later stages
+        assert state.verdict != SampleStatus.FILTERED
+
+    def test_skip_reason_is_not_stored_as_an_error(self, tmp_path):
+        from deepzero.engine.state import SampleState
+
+        state = SampleState(sample_id="s1", filename="a.sys")
+        state.mark_stage_skipped("kernel_filter", "not a kernel driver")
+        out = state.history["kernel_filter"]
+        assert out.skip_reason == "not a kernel driver"
+        assert out.error is None
+
+    def test_downstream_stage_still_sees_a_cached_sample(self, tmp_path):
+        type(self._Counting).seen = []
+        self._Counting.seen = []
+        store = StateStore(tmp_path / "work")
+        run = RunState(run_id="r1", pipeline="p")
+        store.save_run(run)
+
+        target = tmp_path / "a.sys"
+        target.write_bytes(b"MZ")
+
+        class OneSample(IngestProcessor):
+            def __init__(self):
+                self.spec = StageSpec(name="discover", processor="i")
+                self.config = {}
+
+            def setup(self, global_config):
+                pass
+
+            def process(self, ctx, t):
+                return [Sample(sample_id="s1", source_path=target, filename="a.sys")]
+
+        cached_spec = StageSpec(name="decompile", processor="x")
+        after_spec = StageSpec(name="scan", processor="y")
+        after = self._Counting(after_spec)
+
+        runner = PipelineRunner(
+            ingest=OneSample(),
+            stages=[(cached_spec, self._AlreadyDone(cached_spec)), (after_spec, after)],
+            state_store=store,
+            pipeline_dir=tmp_path,
+            global_config={},
+        )
+        runner.run(tmp_path, run)
+
+        # the whole point: the cached sample reached the next stage
+        assert after.seen == ["s1"], "cached sample was dropped before the next stage"
+        final = store.load_sample("s1")
+        assert "scan" in final.history

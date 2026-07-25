@@ -9,7 +9,7 @@ import threading
 import time
 import traceback as tb_module
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from rich.console import Console
 
@@ -76,6 +76,7 @@ class PipelineRunner:
         default_max_workers: int = 4,
         console: Console | None = None,
         dashboard: PipelineDashboard | None = None,
+        progress_hook: Callable[[], None] | None = None,
     ):
         self.ingest = ingest
         self.stages = stages
@@ -86,8 +87,19 @@ class PipelineRunner:
         self.default_max_workers = default_max_workers
         self.console = console or Console()
         self.dashboard = dashboard
+        # called when new results have landed, so a caller can refresh a live
+        # view. never allowed to interrupt the run
+        self.progress_hook = progress_hook
         self._shutdown_event = threading.Event()
         self._original_sigint = None
+
+    def _notify_progress(self) -> None:
+        if self.progress_hook is None:
+            return
+        try:
+            self.progress_hook()
+        except Exception as exc:  # noqa: BLE001 - a view refresh must never fail a run
+            log.debug("progress hook failed: %s", exc)
 
     def _make_entry(self, state: SampleState) -> ProcessorEntry:
         # centralizes ProcessorEntry construction for map/reduce/batch
@@ -222,6 +234,8 @@ class PipelineRunner:
                 self._run_batch(processor, active, spec, stage_stats)
             else:
                 self._run_map(processor, active, spec, stage_stats)
+
+            self._notify_progress()
 
             self._apply_stage_limit(spec, sample_states, stage_stats)
 
@@ -460,6 +474,7 @@ class PipelineRunner:
                     for s in dirty:
                         self.state_store.save_sample(s)
                     dirty.clear()
+                    self._notify_progress()
             for s in dirty:
                 self.state_store.save_sample(s)
         else:
@@ -507,6 +522,7 @@ class PipelineRunner:
                         for s in dirty:
                             self.state_store.save_sample(s)
                         dirty.clear()
+                        self._notify_progress()
             for s in dirty:
                 self.state_store.save_sample(s)
 
@@ -522,7 +538,9 @@ class PipelineRunner:
 
         if result.status == StageStatus.COMPLETED:
             if result.data and "__skipped" in result.data:
-                state.mark_stage_skipped(spec.name, result.data["__skipped"])
+                # work that was already done counts as passed and the sample
+                # continues to the next stage, per MapProcessor.should_skip
+                state.mark_stage_cached(spec.name, result.data["__skipped"])
             else:
                 state.mark_stage_completed(
                     spec.name,

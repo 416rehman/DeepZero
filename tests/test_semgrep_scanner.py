@@ -24,8 +24,8 @@ class TestRulesPathResolution:
         )
 
     def test_validate_and_process_resolve_the_same_path(self, tmp_path, monkeypatch):
-        # regression: validate() approved a cwd-relative path while process()
-        # used a pipeline_dir-relative one, so the scan ran with no rules.
+        # the check that approves a run and the run itself must agree on where
+        # the rules live, otherwise a scan can start with no rules loaded.
         # pin cwd so the cwd-relative "rules" resolves deterministically.
         monkeypatch.chdir(tmp_path)
         rules = tmp_path / "rules"

@@ -51,3 +51,6 @@ docs/_site/
 .jekyll-cache
 docs/.jekyll-cache/
 _site/
+
+# local research artifacts: run logs, generated reports, scratch previews
+research/

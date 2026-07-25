@@ -132,14 +132,11 @@ class TestCommandConstruction:
 
 
 class TestEnvHandling:
-    def test_api_key_hidden_by_default(self):
+    def test_env_is_passed_through_untouched(self):
+        # deepzero does not strip or inject auth vars - the cli decides how to
+        # authenticate from its own config and environment
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-x"}, clear=False):
             env = _backend().build_env()
-        assert "ANTHROPIC_API_KEY" not in env
-
-    def test_api_key_preserved_when_opted_out(self):
-        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-x"}, clear=False):
-            env = _backend(prefer_subscription_auth=False).build_env()
         assert env["ANTHROPIC_API_KEY"] == "sk-ant-x"
 
 
@@ -167,7 +164,10 @@ class TestResponseParsing:
         with patch("subprocess.run", return_value=_completed(body)):
             with pytest.raises(BackendAuthError) as exc:
                 _backend().raw_complete([{"role": "user", "content": "hi"}])
-        assert "not authenticated" in str(exc.value)
+        msg = str(exc.value)
+        assert "not authenticated" in msg
+        # relay the cli's own message plus a fixed remedy - no credential probing
+        assert "sign in" in msg
 
     def test_rate_limit_is_classified(self):
         body = _result_json(is_error=True, api_error_status=429, result="rate limit exceeded")
@@ -303,11 +303,14 @@ class TestValidation:
             errors = self._validate("claude-code")
         assert errors and "claude code cli not found" in errors[0].lower()
 
-    def test_claude_code_binding_does_not_require_api_keys(self):
-        # no ANTHROPIC_API_KEY in env, yet validation passes
-        with patch.dict("os.environ", {}, clear=True):
-            with patch(_FIND, return_value="/usr/bin/claude"):
-                assert self._validate("claude-code") == []
+    def test_claude_code_binding_does_not_require_api_keys(self, monkeypatch):
+        # no api keys anywhere, yet a valid subscription credential validates.
+        # (clears only the key vars - wiping the whole env would also remove the
+        # credential location, which is a different failure)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+        with patch(_FIND, return_value="/usr/bin/claude"):
+            assert self._validate("claude-code") == []
 
 
 class TestAuthPreflight:

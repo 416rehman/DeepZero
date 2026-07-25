@@ -55,6 +55,7 @@ _SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "ERROR": 1, "MEDIUM": 2, "WARNING":
 BUCKET_VULNERABLE = "vulnerable"
 BUCKET_SUSPICIOUS = "suspicious"
 BUCKET_CLEAN = "clean"
+BUCKET_FILTERED = "filtered"
 BUCKET_FAILED = "failed"
 BUCKET_UNASSESSED = "unassessed"
 
@@ -63,14 +64,16 @@ _BUCKET_LABELS = {
     BUCKET_SUSPICIOUS: "Needs review",
     BUCKET_FAILED: "Errored",
     BUCKET_UNASSESSED: "Not assessed",
-    BUCKET_CLEAN: "Clean",
+    BUCKET_FILTERED: "Set aside",
+    BUCKET_CLEAN: "No findings",
 }
 _BUCKET_HELP = {
     BUCKET_VULNERABLE: "an assessment stage concluded these are vulnerable",
     BUCKET_SUSPICIOUS: "findings exist but no assessment confirmed them",
     BUCKET_FAILED: "a stage errored, so these were never fully analysed",
     BUCKET_UNASSESSED: "assessed but the verdict could not be classified",
-    BUCKET_CLEAN: "no findings and nothing flagged",
+    BUCKET_FILTERED: "a stage excluded these, so later stages never saw them",
+    BUCKET_CLEAN: "analysed to the end and nothing was flagged",
 }
 
 # keys worth promoting into the summary table when a pipeline declares no columns
@@ -132,6 +135,7 @@ class ItemReport:
     severity_counts: dict[str, int] = field(default_factory=dict)
     rule_hits: dict[str, int] = field(default_factory=dict)
     sample_dir: str = ""
+    filtered_at: str = ""
     _bucket: str = ""
 
     @property
@@ -234,7 +238,12 @@ def iter_items(work_dir: Path, cfg: ReportConfig) -> Iterator[ItemReport]:
 
         for stage_name, output in (state.history or {}).items():
             status = str(getattr(output.status, "value", output.status))
+            verdict = str(getattr(output.verdict, "value", output.verdict or ""))
             item.stages[stage_name] = status
+            # a filter records a completed stage with a filter verdict, so this
+            # is where the sample left the pipeline
+            if not item.filtered_at and (status == "filtered" or verdict == "filter"):
+                item.filtered_at = stage_name
             # a skip reason is not a failure; older runs stored it in `error`
             if getattr(output, "skip_reason", ""):
                 item.skips[stage_name] = output.skip_reason
@@ -297,6 +306,9 @@ def iter_items(work_dir: Path, cfg: ReportConfig) -> Iterator[ItemReport]:
                 bucket = BUCKET_SUSPICIOUS
             elif item.classification or item.texts:
                 bucket = BUCKET_UNASSESSED
+            elif item.filtered_at:
+                # never reached the later stages, so it was not judged clean
+                bucket = BUCKET_FILTERED
             else:
                 bucket = BUCKET_CLEAN
         item._bucket = bucket
@@ -851,7 +863,8 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     n_pos = buckets.get(BUCKET_VULNERABLE, 0)
     n_rev = buckets.get(BUCKET_SUSPICIOUS, 0)
     n_err = buckets.get(BUCKET_FAILED, 0)
-    n_ok = max(total - n_pos - n_rev - n_err, 0)
+    n_set = buckets.get(BUCKET_FILTERED, 0)
+    n_ok = max(total - n_pos - n_rev - n_err - n_set, 0)
 
     ticks = "".join(
         f"<div class='tick {cls}'><b>{n:,}</b><span class='lbl'>{label}</span></div>"
@@ -859,7 +872,8 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             ("pos", n_pos, "vulnerable"),
             ("rev", n_rev, "needs review"),
             ("err", n_err, "errored"),
-            ("ok", n_ok, f"clean {entity}s"),
+            ("ok", n_ok, "no findings"),
+            ("set", n_set, "set aside"),
         )
     )
 
@@ -914,6 +928,25 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
         + section(BUCKET_FAILED, quiet=True)
         + section(BUCKET_UNASSESSED, quiet=True)
     )
+    if n_set:
+        by_stage: dict[str, int] = {}
+        for i in items:
+            if i.bucket == BUCKET_FILTERED:
+                by_stage[i.filtered_at or "an earlier stage"] = (
+                    by_stage.get(i.filtered_at or "an earlier stage", 0) + 1
+                )
+        where = ", ".join(
+            f"{n:,} at {_esc(k)}" for k, n in sorted(by_stage.items(), key=lambda kv: -kv[1])
+        )
+        sections += (
+            f"<section><div class='shead q'><h2>Set aside</h2>"
+            f"<span class='n'>{n_set:,}</span>"
+            f"<span class='of'>{_esc(_BUCKET_HELP[BUCKET_FILTERED])}</span></div>"
+            f"<p class='aside'>These were excluded before the analysis finished, so they are "
+            f"not a judgement about the {_esc(entity)}"
+            + (f": {where}." if where else ".")
+            + " Every one is listed in <a href='inventory.csv'>inventory.csv</a>.</p></section>"
+        )
     if not sections:
         sections = "<section><p class='aside'>No findings or assessments have landed yet." + (
             " This page updates itself as results arrive.</p></section>"

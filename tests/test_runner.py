@@ -419,3 +419,57 @@ class TestCachedSamplesStayInThePipeline:
         assert after.seen == ["s1"], "cached sample was dropped before the next stage"
         final = store.load_sample("s1")
         assert "scan" in final.history
+
+
+class TestReduceOrderingIsHonoured:
+    """a reduce stage ranks what it keeps. later stages work through that order,
+    so stopping a long run early still leaves the most important ones done."""
+
+    class _RankReversed(ReduceProcessor):
+        def process(self, ctx, entries):
+            # keep everything, worst-last order reversed so the effect is visible
+            return [e.sample_id for e in reversed(entries)]
+
+    class _RecordOrder(MapProcessor):
+        def __init__(self, spec):
+            super().__init__(spec)
+            self.seen: list[str] = []
+
+        def process(self, ctx, entry):
+            self.seen.append(entry.sample_id)
+            return ProcessorResult.ok()
+
+    def test_following_stage_follows_the_ranked_order(self, tmp_path):
+        store = StateStore(tmp_path / "work")
+        run = RunState(run_id="r1", pipeline="p")
+        store.save_run(run)
+        target = tmp_path / "a.sys"
+        target.write_bytes(b"MZ")
+
+        class ThreeSamples(IngestProcessor):
+            def __init__(self):
+                self.spec = StageSpec(name="discover", processor="i")
+                self.config = {}
+
+            def setup(self, global_config):
+                pass
+
+            def process(self, ctx, t):
+                return [
+                    Sample(sample_id=f"s{i}", source_path=target, filename=f"s{i}.sys")
+                    for i in range(3)
+                ]
+
+        rank_spec = StageSpec(name="rank", processor="r")
+        after_spec = StageSpec(name="after", processor="m", parallel=1)
+        after = self._RecordOrder(after_spec)
+
+        PipelineRunner(
+            ingest=ThreeSamples(),
+            stages=[(rank_spec, self._RankReversed(rank_spec)), (after_spec, after)],
+            state_store=store,
+            pipeline_dir=tmp_path,
+            global_config={},
+        ).run(tmp_path, run)
+
+        assert after.seen == ["s2", "s1", "s0"], f"ranked order was not followed: {after.seen}"

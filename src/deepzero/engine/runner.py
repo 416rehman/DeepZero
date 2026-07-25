@@ -229,7 +229,12 @@ class PipelineRunner:
             t0 = time.monotonic()
 
             if isinstance(processor, ReduceProcessor):
-                self._run_reduce(processor, active, spec, stage_stats)
+                ordered = self._run_reduce(processor, active, spec, stage_stats)
+                # a reduce stage ranks what it keeps, so later stages work
+                # through the samples in that order: if a long run is stopped
+                # early, the ones it judged most important are already done
+                if ordered:
+                    self._reorder(sample_states, ordered)
             elif isinstance(processor, BulkMapProcessor):
                 self._run_batch(processor, active, spec, stage_stats)
             else:
@@ -663,6 +668,16 @@ class PipelineRunner:
 
         return ProcessorResult.fail("processor max attempts exceeded")
 
+    @staticmethod
+    def _reorder(sample_states: dict[str, SampleState], order: list[str]) -> None:
+        ranked = [sid for sid in order if sid in sample_states]
+        if not ranked:
+            return
+        rest = [sid for sid in sample_states if sid not in set(ranked)]
+        reordered = {sid: sample_states[sid] for sid in ranked + rest}
+        sample_states.clear()
+        sample_states.update(reordered)
+
     # -- reduce execution --
 
     def _run_reduce(
@@ -671,7 +686,8 @@ class PipelineRunner:
         active: list[SampleState],
         spec: StageSpec,
         stage_stats: dict[str, int],
-    ) -> None:
+    ) -> list[str]:
+        """run a reduce stage. returns the ids it kept, in the order it chose."""
         log.info("%s: reducing %d active samples", spec.name, len(active))
         ctx = ProcessorContext(
             pipeline_dir=self.pipeline_dir,
@@ -685,7 +701,7 @@ class PipelineRunner:
             results = processor.process(ctx, entries)
         except PROCESSOR_ERRORS as exc:
             log.error("  reduce processor '%s' crashed: %s", spec.name, exc)
-            return
+            return []
 
         kept_ids = set(results)
         for state in active:
@@ -699,6 +715,8 @@ class PipelineRunner:
                     state.mark_stage_skipped(spec.name, "filtered by reduce")
                     stage_stats["filtered"] += 1
             self.state_store.save_sample(state)
+
+        return list(results)
 
     # -- batch execution --
 

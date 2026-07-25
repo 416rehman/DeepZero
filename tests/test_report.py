@@ -3,15 +3,18 @@ from __future__ import annotations
 import json
 
 from deepzero.engine.report import (
+    BUCKET_CLEAN,
+    BUCKET_FILTERED,
     BUCKET_SUSPICIOUS,
     BUCKET_VULNERABLE,
     ReportConfig,
     collect,
+    iter_items,
     render_index,
     write_report,
 )
 from deepzero.engine.state import RunState, SampleState, StateStore
-from deepzero.engine.types import RunStatus
+from deepzero.engine.types import RunStatus, Verdict
 
 
 def _seed(tmp_path, *, with_findings=True, with_assessment=True, classification="vulnerable"):
@@ -339,3 +342,48 @@ class TestPipelineAgnostic:
         assert "SQL injection" in f["message"]
         assert f["location"] == "internal/db/query.go"
         assert f["line"] == 88
+
+
+class TestSetAsideIsNotCalledClean:
+    """a sample a stage excluded was never analysed to the end, so it must not be
+    counted alongside ones that were analysed and had nothing flagged."""
+
+    def _run(self, tmp_path):
+        work = tmp_path / "work" / "p"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+
+        # excluded before analysis: a filter marked it complete with a filter verdict
+        early = SampleState(sample_id="e1", filename="not_a_driver.sys")
+        early.mark_stage_completed("discover")
+        early.mark_stage_completed("kernel_filter", verdict=Verdict.FILTER)
+        store.save_sample(early)
+
+        # analysed all the way through and nothing was flagged
+        clean = SampleState(sample_id="c1", filename="clean.sys")
+        clean.mark_stage_completed("discover")
+        clean.mark_stage_completed("kernel_filter")
+        clean.mark_stage_completed("scan", data={"finding_count": 0})
+        store.save_sample(clean)
+        return work
+
+    def test_they_land_in_different_buckets(self, tmp_path):
+        payload = collect(self._run(tmp_path))
+        buckets = {i.sample_id: i.bucket for i in payload["items"]} or {}
+        counts = payload["buckets"]
+        assert counts.get(BUCKET_FILTERED) == 1
+        assert counts.get(BUCKET_CLEAN) == 1
+        assert buckets.get("e1", BUCKET_FILTERED) == BUCKET_FILTERED
+
+    def test_the_excluding_stage_is_recorded(self, tmp_path):
+        payload = collect(self._run(tmp_path))
+        early = next(
+            i for i in iter_items(self._run(tmp_path), payload["config"]) if i.sample_id == "e1"
+        )
+        assert early.filtered_at == "kernel_filter"
+
+    def test_the_page_does_not_call_them_clean(self, tmp_path):
+        out = render_index(collect(self._run(tmp_path)), tmp_path)
+        assert "no findings" in out
+        assert "Set aside" in out
+        assert "not a judgement" in out

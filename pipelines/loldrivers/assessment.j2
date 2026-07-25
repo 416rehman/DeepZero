@@ -37,13 +37,48 @@ speculative and must be marked SAFE
    c) the dangerous operation uses a value derived from the IOCTL input buffer
    d) no hardware, firmware, or PnP initialization is required to reach the code path
 
+YOUR JOB: decide whether this driver is vulnerable. A separate step will try to
+exploit whatever you report, on a real machine, and will only confirm a finding if
+a proof of concept reproduces it. So report a vulnerability when you can show one,
+and give that step everything it needs to reproduce it. A report that cannot be
+reproduced wastes the attempt; a vulnerability you leave out is never found.
+
 OUTPUT FORMAT:
 - the very first line MUST be either [VULNERABLE] or [SAFE]
 - if SAFE, briefly explain which false positive pattern applies
-- if VULNERABLE, include:
-  1. the exact IOCTL code
-  2. root cause trace showing data flow from input buffer to dangerous sink
-  3. PoC strategy with pseudo-code
+- if VULNERABLE, write the analysis:
+  1. the exact IOCTL code and how a request reaches the sink
+  2. the trace from the input buffer to the dangerous operation, naming offsets
+  3. what an attacker gains (arbitrary physical read, kernel write, and so on)
+
+  then end your answer with a fenced json block, exactly this shape, giving the
+  values a proof of concept needs. use real values, not placeholders:
+
+```json
+{
+  "device": "\\.\DeviceName",
+  "ioctl": "0x00222004",
+  "method": "METHOD_BUFFERED",
+  "input_size": 16,
+  "input_fields": [
+    {"offset": 0, "size": 8, "meaning": "physical address to map", "value": "0xFEE00000"},
+    {"offset": 8, "size": 4, "meaning": "length to map", "value": "0x1000"}
+  ],
+  "output_size": 4096,
+  "primitive": "arbitrary physical memory read",
+  "confirms_if": "the output buffer comes back non-zero and matches memory the caller never supplied",
+  "preconditions": "none"
+}
+```
+
+  - "device" is the path a usermode process opens, as it appears in the driver
+  - "input_fields" describes the buffer the caller sends: every offset the
+    handler reads, what it means, and a value that exercises the flaw safely
+  - "confirms_if" is the observable result that distinguishes a real hit from the
+    driver simply accepting the request. Prefer something an unprivileged caller
+    can check without crashing the machine.
+  - "value" must be a value you expect to work on a machine with no special
+    hardware. If a safe value cannot be chosen, say so in "preconditions"
 {% if device_name is defined %}
 Device: {{ device_name }}
 {% endif %}
@@ -52,6 +87,9 @@ Symbolic Link: {{ symbolic_link }}
 {% endif %}
 {% if dispatch_name is defined and dispatch_name %}
 Dispatch Handler: {{ dispatch_name }}
+{% endif %}
+{% if ioctl_codes is defined and ioctl_codes %}
+IOCTL codes found in the dispatch routine: {{ ioctl_codes | join(", ") }}
 {% endif %}
 {% if findings_json is defined and findings_json|length > 0 %}
 Semgrep Findings ({{ finding_count }}):

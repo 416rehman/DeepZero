@@ -165,6 +165,14 @@ class GhidraDecompile(MapProcessor):
             if key in result:
                 data[key] = result[key]
 
+        # the codes the dispatch routine compares against: what a later stage
+        # needs to name when it reports which request reaches a sink
+        handlers = result.get("ioctl_handlers") or []
+        codes = sorted({h["code"] for h in handlers if isinstance(h, dict) and "code" in h})
+        if codes:
+            data["ioctl_codes"] = [f"0x{c:08X}" for c in codes]
+            data["ioctl_count"] = len(codes)
+
         artifacts = {"ghidra_result": "decompiled/ghidra_result.json"}
         dispatch_file = output_dir / "dispatch_ioctl.c"
         if dispatch_file.exists():

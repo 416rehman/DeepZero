@@ -38,8 +38,10 @@ class LLMProvider:
         """send messages to the llm and return the response text.
         handles rate limiting with adaptive backoff."""
         backend = self.backend
-        # cli backends take their options via argv, not per-call kwargs
-        merged = {**self.default_kwargs, **kwargs} if backend.accepts_generation_kwargs else {}
+        # forward all options; each backend uses what applies (litellm passes
+        # generation kwargs to the api, cli backends read controls like timeout
+        # and ignore the rest) so e.g. timeout= is not silently dropped
+        merged = {**self.default_kwargs, **kwargs}
         backoff = initial_backoff
 
         for attempt in range(max_retries + 1):

@@ -49,7 +49,12 @@ class SemgrepScanner(BulkMapProcessor):
     def process(
         self, ctx: ProcessorContext, entries: list[ProcessorEntry]
     ) -> list[ProcessorResult]:
-        rules_path = self._resolve_rules_path(ctx) or (ctx.pipeline_dir).resolve()
+        rules_path = self._resolve_rules_path(ctx)
+        if rules_path is None or not rules_path.exists():
+            # fail fast rather than pointing semgrep at a fallback path and
+            # scanning with no rules loaded (the silent-empty-results class)
+            reason = f"semgrep rules_dir not found: {self.config.get('rules_dir') or '(unset)'}"
+            return [ProcessorResult.fail(reason) for _ in entries]
 
         target_subdir = self.config.get("target_dir", "decompiled")
         timeout = self.config.get("timeout", 300)

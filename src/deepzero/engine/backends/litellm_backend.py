@@ -26,7 +26,6 @@ def _resolve_exc(obj: Any, name: str) -> type[BaseException]:
 
 class LiteLLMBackend(LLMBackend):
     display_name: ClassVar[str] = "litellm"
-    accepts_generation_kwargs: ClassVar[bool] = True
     # litellm surfaces auth problems as APIError subclasses that are also in the
     # retryable set, so there is no distinct fail-fast class to declare
     non_retryable_errors: ClassVar[tuple[type[BaseException], ...]] = (_NeverRaised,)

@@ -77,10 +77,6 @@ class LLMBackend(ABC):
     non_retryable_errors: ClassVar[tuple[type[BaseException], ...]] = (BackendAuthError,)
     retryable_errors: ClassVar[tuple[type[BaseException], ...]] = (BackendError, OSError)
 
-    # whether per-call generation kwargs (temperature, max_tokens, ...) are
-    # forwarded to raw_complete. cli backends take their options via argv.
-    accepts_generation_kwargs: ClassVar[bool] = True
-
     def __init__(self, model: str, **kwargs: Any):
         self.model = model
         self.options = kwargs
@@ -126,8 +122,6 @@ class CLIAgentBackend(LLMBackend):
 
     # argv has hard length limits (~32k on windows); larger text goes via stdin
     max_argv_text: ClassVar[int] = 8000
-
-    accepts_generation_kwargs: ClassVar[bool] = False
 
     def __init__(self, model: str, **kwargs: Any):
         super().__init__(model, **kwargs)

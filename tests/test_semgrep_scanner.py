@@ -23,16 +23,20 @@ class TestRulesPathResolution:
             StageSpec(name="scan", processor="semgrep", config={"rules_dir": rules_dir})
         )
 
-    def test_validate_and_process_resolve_the_same_path(self, tmp_path):
+    def test_validate_and_process_resolve_the_same_path(self, tmp_path, monkeypatch):
         # regression: validate() approved a cwd-relative path while process()
         # used a pipeline_dir-relative one, so the scan ran with no rules.
+        # pin cwd so the cwd-relative "rules" resolves deterministically.
+        monkeypatch.chdir(tmp_path)
         rules = tmp_path / "rules"
         rules.mkdir()
         (rules / "r.yaml").write_text("rules: []")
         scanner = self._scanner("rules")
         ctx = _ctx(tmp_path)
 
-        assert scanner.validate(ctx) == [] or "semgrep CLI" in scanner.validate(ctx)[0]
+        validation = scanner.validate(ctx)
+        # [] when semgrep is installed, else only the "semgrep CLI not found" note
+        assert validation == [] or "semgrep CLI" in validation[0]
         assert scanner._resolve_rules_path(ctx) == rules.resolve()
         assert scanner._resolve_rules_path(ctx).exists()
 
@@ -41,6 +45,15 @@ class TestRulesPathResolution:
         ctx = _ctx(tmp_path)
         errs = [e for e in scanner.validate(ctx) if "rules_dir" in e]
         assert errs
+
+    def test_process_fails_fast_when_rules_unresolvable(self, tmp_path):
+        # must not fall back to scanning with an unintended config path
+        scanner = self._scanner("nope_missing_rules")
+        ctx = _ctx(tmp_path)
+        results = scanner.process(ctx, [_entry(tmp_path)])
+        assert len(results) == 1
+        assert results[0].status == "failed"
+        assert "rules_dir not found" in results[0].error
 
 
 class _FakeProc:

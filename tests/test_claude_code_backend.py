@@ -308,3 +308,36 @@ class TestValidation:
         with patch.dict("os.environ", {}, clear=True):
             with patch(_FIND, return_value="/usr/bin/claude"):
                 assert self._validate("claude-code") == []
+
+
+class TestAuthPreflight:
+    def test_check_auth_ok_when_authenticated(self):
+        with patch("subprocess.run", return_value=_completed(_result_json())):
+            assert _backend().check_auth() is None
+
+    def test_check_auth_reports_401(self):
+        body = _result_json(
+            is_error=True, api_error_status=401, result="OAuth access token has been revoked"
+        )
+        with patch("subprocess.run", return_value=_completed(body)):
+            msg = _backend().check_auth()
+        assert msg and "not authenticated" in msg
+
+    def test_check_auth_does_not_block_on_transient(self):
+        # a rate limit during preflight is not an auth failure
+        body = _result_json(is_error=True, api_error_status=429, result="rate limit")
+        with patch("subprocess.run", return_value=_completed(body)):
+            assert _backend().check_auth() is None
+
+    def test_provider_check_auth_delegates(self):
+        with patch(_FIND, return_value="/usr/bin/claude"):
+            provider = LLMProvider("claude-code")
+        with patch("subprocess.run", return_value=_completed(_result_json())):
+            assert provider.check_auth() is None
+        with patch(
+            "subprocess.run",
+            return_value=_completed(
+                _result_json(is_error=True, api_error_status=401, result="revoked")
+            ),
+        ):
+            assert provider.check_auth() is not None

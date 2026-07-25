@@ -96,6 +96,12 @@ class LLMBackend(ABC):
         m = (model or "").strip()
         return m.split("/", 1)[1].strip() if "/" in m else ""
 
+    def check_auth(self) -> str | None:
+        """opt-in readiness probe. return None if the backend can authenticate,
+        else a human-readable reason. may make one minimal call. default assumes
+        ok - api-key presence is already checked by validate_model()."""
+        return None
+
     @property
     def provider_name(self) -> str:
         return self.scheme or "unknown"
@@ -289,4 +295,18 @@ class CLIAgentBackend(LLMBackend):
             return f"could not run {self.display_name or self.scheme}: {exc}"
         if proc.returncode != 0:
             return f"exited {proc.returncode}: {(proc.stderr or '').strip()[:200]}"
+        return None
+
+    def check_auth(self) -> str | None:
+        """definitive readiness probe: sends a minimal prompt and reports an
+        auth failure. spends a tiny amount of usage, so it is opt-in (e.g.
+        `deepzero run --preflight`). transient errors (rate limit, network) are
+        not treated as auth failures and do not block the run."""
+        try:
+            self.raw_complete([{"role": "user", "content": "ping"}], timeout=60)
+        except (BackendAuthError, BackendNotFoundError) as exc:
+            return str(exc)
+        except BackendError:
+            # transient (rate limit, timeout, network) - not an auth problem
+            return None
         return None

@@ -87,6 +87,11 @@ class LLMProvider:
 
         raise RuntimeError("exhausted retries without raising")
 
+    def check_auth(self) -> str | None:
+        """opt-in readiness probe; delegates to the backend. returns None if
+        ready, else a human-readable reason."""
+        return self.backend.check_auth()
+
     @property
     def provider_name(self) -> str:
         return self.backend.provider_name

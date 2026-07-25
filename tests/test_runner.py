@@ -302,3 +302,35 @@ class TestPipelineRunner:
         for s in samples:
             if "late_fail" in s.history:
                 assert s.history["late_fail"].status != StageStatus.FAILED
+
+
+class TestResolveParallelism:
+    # _resolve_parallelism uses no instance state, so call it unbound with None
+    class _CeilingProc(MapProcessor):
+        def max_parallelism(self):
+            return 3
+
+        def process(self, ctx, entry):
+            return ProcessorResult.ok()
+
+    class _NoCeilingProc(MapProcessor):
+        def process(self, ctx, entry):
+            return ProcessorResult.ok()
+
+    def test_auto_is_capped_to_processor_ceiling(self, monkeypatch):
+        monkeypatch.setattr("os.cpu_count", lambda: 32)
+        proc = self._CeilingProc(StageSpec(name="d", processor="x"))
+        spec = StageSpec(name="d", processor="x", parallel=0)
+        assert PipelineRunner._resolve_parallelism(None, spec, proc) == 3
+
+    def test_explicit_parallel_is_honored_over_ceiling(self, monkeypatch):
+        monkeypatch.setattr("os.cpu_count", lambda: 32)
+        proc = self._CeilingProc(StageSpec(name="d", processor="x"))
+        spec = StageSpec(name="d", processor="x", parallel=20)
+        assert PipelineRunner._resolve_parallelism(None, spec, proc) == 20
+
+    def test_auto_uses_cpu_when_no_ceiling(self, monkeypatch):
+        monkeypatch.setattr("os.cpu_count", lambda: 8)
+        proc = self._NoCeilingProc(StageSpec(name="d", processor="x"))
+        spec = StageSpec(name="d", processor="x", parallel=0)
+        assert PipelineRunner._resolve_parallelism(None, spec, proc) == 8

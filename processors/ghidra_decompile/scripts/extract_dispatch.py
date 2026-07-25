@@ -346,6 +346,9 @@ def main():
         os.makedirs(ioctls_dir)
 
     for code in ioctl_codes:
+        # every code is handled by the same dispatch routine, which is recorded
+        # once as result["dispatch_c"] and written to dispatch_ioctl.c. repeating
+        # it per code made this file grow to tens of megabytes for one driver.
         handler_info = {
             "code": code,
             "hex": "0x%08X" % code,
@@ -353,7 +356,6 @@ def main():
             "function": (code >> 2) & 0xFFF,
             "method": code & 0x3,
             "access": (code >> 14) & 0x3,
-            "decompiled_c": dispatch_c,  # full dispatch for now
         }
         result["ioctl_handlers"].append(handler_info)
 

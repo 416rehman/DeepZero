@@ -148,12 +148,18 @@ class SemgrepScanner(BulkMapProcessor):
         results: list[ProcessorResult | None],
         min_findings: int,
     ) -> list[ProcessorResult]:
+        # scanning thousands of files produces a results document far too large to
+        # read back through a pipe, so semgrep writes it to a file and we read that
+        report_path = bulk_dir.parent / "semgrep_output.json"
+        report_path.unlink(missing_ok=True)
         cmd = [
             "semgrep",
             "scan",
             "--config",
             str(rules_path),
             "--json",
+            "--output",
+            str(report_path),
             "--no-git-ignore",
             "--quiet",
             "--metrics=off",
@@ -175,17 +181,27 @@ class SemgrepScanner(BulkMapProcessor):
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except OSError:
+        except FileNotFoundError:
             for idx, _ in uncached_entries:
                 results[idx] = ProcessorResult.fail("semgrep not installed - pip install semgrep")
+            return [r for r in results if r is not None]
+        except OSError as exc:
+            # report what actually went wrong rather than guessing at the cause
+            for idx, _ in uncached_entries:
+                results[idx] = ProcessorResult.fail(f"could not run semgrep: {exc}")
             return [r for r in results if r is not None]
         except asyncio.TimeoutError:
             for idx, _ in uncached_entries:
                 results[idx] = ProcessorResult.fail(f"semgrep batch timed out after {timeout}s")
             return [r for r in results if r is not None]
 
-        out_str = stdout_bytes.decode("utf-8", errors="replace")
         err_str = stderr_bytes.decode("utf-8", errors="replace")
+        try:
+            out_str = report_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            out_str = stdout_bytes.decode("utf-8", errors="replace")
+        finally:
+            report_path.unlink(missing_ok=True)
 
         # semgrep emits a complete results document on stdout even when it exits
         # with an unexpected code (observed on windows), so a parseable scan

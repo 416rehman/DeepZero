@@ -211,3 +211,51 @@ class TestGenericLLMResolveTemplate:
         processor = self._make_tool(config={})
         result = processor._resolve_template("/nonexistent/path/prompt.j2")
         assert result is None
+
+
+class TestArtifactContextBudget:
+    """artifacts feed the prompt, so one oversized file must not be able to
+    consume the whole context budget or the memory of the run."""
+
+    def _vars(self, tmp_path, config):
+        from deepzero.engine.stage import ProcessorContext, ProcessorEntry, StageSpec
+        from deepzero.stages.llm import GenericLLM
+
+        sample_dir = tmp_path / "s1"
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        stage = GenericLLM(StageSpec(name="assess", processor="generic_llm", config=config))
+        ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=None)
+        entry = ProcessorEntry(
+            sample_id="s1",
+            source_path=tmp_path / "s1.sys",
+            filename="s1.sys",
+            sample_dir=sample_dir,
+        )
+        entry._history = {}
+        return stage._build_template_vars(ctx, entry), sample_dir
+
+    def test_oversized_json_artifact_is_skipped(self, tmp_path):
+        import json as _json
+
+        cfg = {"max_context_tokens": 10}  # 40 characters of budget
+        _, sample_dir = self._vars(tmp_path, cfg)
+        (sample_dir / "huge.json").write_text(_json.dumps({"blob": "x" * 5000}), encoding="utf-8")
+        vars_, _ = self._vars(tmp_path, cfg)
+        assert "huge_json" not in vars_
+
+    def test_json_within_budget_is_still_parsed(self, tmp_path):
+        import json as _json
+
+        cfg = {"max_context_tokens": 900_000}
+        _, sample_dir = self._vars(tmp_path, cfg)
+        (sample_dir / "small.json").write_text(_json.dumps({"device": "Dev"}), encoding="utf-8")
+        vars_, _ = self._vars(tmp_path, cfg)
+        assert vars_["small_json"]["device"] == "Dev"
+
+    def test_oversized_text_artifact_is_truncated_not_dropped(self, tmp_path):
+        cfg = {"max_context_tokens": 10}
+        _, sample_dir = self._vars(tmp_path, cfg)
+        (sample_dir / "big.c").write_text("y" * 5000, encoding="utf-8")
+        vars_, _ = self._vars(tmp_path, cfg)
+        assert "truncated" in vars_["big_c"]
+        assert len(vars_["big_c"]) < 5000

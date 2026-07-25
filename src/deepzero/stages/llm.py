@@ -133,16 +133,27 @@ class GenericLLM(MapProcessor):
             rel = f.relative_to(entry.sample_dir)
             key = str(rel).replace("\\", "/").replace("/", "_").replace(".", "_")
 
+            max_tokens = self.config.get("max_context_tokens", 900_000)
+            char_budget = max_tokens * 4
+
             if f.suffix == ".json":
+                # an artifact far larger than the whole prompt budget cannot be
+                # used, and parsing it costs time and memory on every sample
                 try:
+                    if f.stat().st_size > char_budget:
+                        _log.warning(
+                            "skipping %s: %d bytes exceeds the context budget of %d",
+                            f.name,
+                            f.stat().st_size,
+                            char_budget,
+                        )
+                        continue
                     template_vars[key] = json.loads(f.read_text(encoding="utf-8"))
                 except (json.JSONDecodeError, OSError) as exc:
                     _log.debug("skipping unreadable json artifact %s: %s", f.name, exc)
             elif f.suffix in (".c", ".h", ".txt", ".md", ".py", ".yaml", ".yml"):
                 try:
                     content = f.read_text(encoding="utf-8", errors="replace")
-                    max_tokens = self.config.get("max_context_tokens", 900_000)
-                    char_budget = max_tokens * 4
                     if len(content) > char_budget:
                         content = (
                             content[:char_budget]

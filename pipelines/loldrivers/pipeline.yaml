@@ -99,7 +99,7 @@ stages:
   # llm deep analysis of every driver that survived scanning
   - name: assess
     processor: generic_llm
-    parallel: 2
+    parallel: 4
     on_failure: skip
     config:
       prompt: pipelines/loldrivers/assessment.j2

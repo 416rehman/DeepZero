@@ -171,11 +171,32 @@ class TestPromptsAreCheckedBeforeARun:
 
 def test_the_bundled_pipeline_prompt_resolves():
     """the shipped pipeline is the one users run first, so its prompt has to
-    reference only values its own stages record."""
-    import deepzero.stages  # noqa: F401
+    reference only values its own stages record.
 
-    repo_pipeline = Path(__file__).resolve().parent.parent / "pipelines" / "loldrivers"
-    if not (repo_pipeline / "pipeline.yaml").exists():
+    Checked against the stages' declarations rather than through
+    validate_pipeline, because that also demands a Ghidra install and a signed-in
+    model backend. Those say nothing about whether the prompt is correct, and
+    requiring them would mean this never ran anywhere it mattered.
+    """
+    import jinja2
+    import yaml as _yaml
+    from jinja2 import meta
+
+    import deepzero.stages  # noqa: F401
+    from deepzero.engine.pipeline import resolve_processor_class
+    from deepzero.engine.stage import ALWAYS_PROVIDED
+
+    bundled = Path(__file__).resolve().parent.parent / "pipelines" / "loldrivers"
+    if not (bundled / "pipeline.yaml").exists():
         pytest.skip("bundled pipeline not present in this checkout")
-    errors = [w for w in validate_pipeline(str(repo_pipeline)) if w.startswith("ERROR")]
-    assert errors == []
+
+    spec = _yaml.safe_load((bundled / "pipeline.yaml").read_text(encoding="utf-8"))
+    available = set(ALWAYS_PROVIDED)
+    for stage in spec["stages"]:
+        available |= set(getattr(resolve_processor_class(stage["processor"]), "provides", ()))
+
+    template = (bundled / "assessment.j2").read_text(encoding="utf-8")
+    used = meta.find_undeclared_variables(
+        jinja2.Environment(autoescape=jinja2.select_autoescape()).parse(template)
+    )
+    assert sorted(used - available) == []

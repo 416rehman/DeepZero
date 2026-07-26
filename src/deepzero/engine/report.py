@@ -62,9 +62,10 @@ BUCKET_UNASSESSED = "unassessed"
 
 _BUCKET_LABELS = {
     BUCKET_VULNERABLE: "Vulnerable",
-    BUCKET_SUSPICIOUS: "Needs review",
+    BUCKET_SUSPICIOUS: "Needs assessment",
     BUCKET_FAILED: "Errored",
-    BUCKET_UNASSESSED: "Not assessed",
+    # these were assessed - what is missing is a verdict the pipeline recognises
+    BUCKET_UNASSESSED: "Unclear verdict",
     BUCKET_FILTERED: "Filtered out",
     BUCKET_CLEAN: "Clear",
 }
@@ -1169,11 +1170,11 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     # acknowledged on one line, so the eye is not asked to triage five equals.
     lead = (
         ("pos", n_pos, "vulnerable", BUCKET_VULNERABLE),
-        ("rev", n_rev, "needs review", BUCKET_SUSPICIOUS),
+        ("rev", n_rev, "needs assessment", BUCKET_SUSPICIOUS),
     )
     rest = (
         ("err", n_err, "errored", BUCKET_FAILED),
-        ("una", n_una, "not assessed", BUCKET_UNASSESSED),
+        ("una", n_una, "unclear verdict", BUCKET_UNASSESSED),
         ("ok", n_ok, "clear", BUCKET_CLEAN),
         ("set", n_set, "filtered out", BUCKET_FILTERED),
     )

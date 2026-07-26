@@ -176,11 +176,13 @@ class TestIndex:
         assert "items/aaa1.html" in out
 
     def test_empty_buckets_are_omitted(self, tmp_path):
-        # nothing suspicious in this run, so no empty "Needs review" table
+        # nothing needs assessment in this run, so it must not be offered as a
+        # filter that would only ever narrow the list to nothing
         out = render_index(collect(_seed(tmp_path)), tmp_path)
-        assert "Needs review</h2>" not in out
+        assert "data-b='suspicious'" not in out
+        assert "data-b='vulnerable'" in out
 
-    def test_suspicious_section_appears_after_vulnerable(self, tmp_path):
+    def test_suspicious_ranks_below_vulnerable(self, tmp_path):
         work = _seed(tmp_path)
         # add a second driver with findings but no assessment -> suspicious
         store = StateStore(work)
@@ -192,7 +194,9 @@ class TestIndex:
             encoding="utf-8",
         )
         out = render_index(collect(work), tmp_path)
-        assert out.index("Vulnerable") < out.index("Needs review")
+        # one ranked list, so the confirmed one has to come first in it
+        assert out.index("risky.sys") < out.index("maybe.sys")
+        assert out.index("Vulnerable") < out.index("Needs assessment")
 
 
 class TestWriteReport:
@@ -330,8 +334,8 @@ class TestPipelineAgnostic:
         text = index.read_text(encoding="utf-8")
         # default entity wording, and the finding is still surfaced for review
         assert "sample" in text
-        # no verdict key configured, so it lands in review rather than confirmed
-        assert "Needs review" in text
+        # no verdict key configured, so nothing can confirm it either way
+        assert "Needs assessment" in text
 
     def test_alien_finding_shape_is_normalized(self, tmp_path):
         work = self._github_run(tmp_path)

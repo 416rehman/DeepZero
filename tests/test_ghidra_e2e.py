@@ -29,6 +29,7 @@ class E2EIngest(IngestProcessor):
         ]
 
 
+@pytest.mark.ghidra
 def test_physical_ghidra_pipeline_run(tmp_path):
     """
     Absolutely unmocked physical integration test interacting natively with the

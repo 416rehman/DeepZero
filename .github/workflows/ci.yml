@@ -6,7 +6,47 @@ on:
   pull_request:
     branches: [ "main", "master" ]
 
+# a newer push to the same branch makes an in-flight run obsolete, so stop it
+# rather than paying for a result nobody will read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GHIDRA_VERSION: "11.0.3"
+  GHIDRA_BUILD: "20240410"
+  GHIDRA_SHA256: "2462a2d0ab11e30f9e907cd3b4aa6b48dd2642f325617e3d922c28e752be6761"
+
 jobs:
+  # linting and the security scan read the source, not the interpreter, so they
+  # run once instead of repeating identically for every version in the matrix
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
+
+    # the lint extra pulls the tools and the package's own light dependencies,
+    # and nothing from full: no JVM, no compiled extensions
+    - name: Install lint tools
+      run: pip install -e ".[lint]"
+
+    - name: Lint with Ruff
+      run: |
+        ruff check .
+        ruff format --check .
+
+    - name: Security scan with Bandit
+      run: bandit -ll -ii -c pyproject.toml -r .
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -18,40 +58,69 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
-        
-    - name: Install Java and Ghidra
-      run: |
-        sudo apt-get update && sudo apt-get install -y default-jdk wget unzip
-        GHIDRA_VERSION="11.0.3"
-        GHIDRA_ZIP="ghidra_${GHIDRA_VERSION}_PUBLIC_20240410.zip"
-        GHIDRA_URL="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/${GHIDRA_ZIP}"
-        GHIDRA_SHA256="2462a2d0ab11e30f9e907cd3b4aa6b48dd2642f325617e3d922c28e752be6761"
-        wget "${GHIDRA_URL}" -O ghidra.zip
-        echo "${GHIDRA_SHA256}  ghidra.zip" | sha256sum -c -
-        unzip -q ghidra.zip -d /opt/
-        echo "GHIDRA_INSTALL_DIR=/opt/ghidra_${GHIDRA_VERSION}_PUBLIC" >> $GITHUB_ENV
-        
+        cache-dependency-path: pyproject.toml
+
     - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e ".[dev]"
-        pip install ruff bandit
-        
-    - name: Lint with Ruff
-      run: |
-        ruff check .
-        ruff format --check .
-        
-    - name: Security scan with Bandit
-      run: |
-        bandit -ll -ii -c pyproject.toml -r .
-        
+      run: pip install -e ".[dev]"
+
+    # the one test that drives Ghidra runs in the integration job below, so no
+    # interpreter here pays for a JDK and a several-hundred-megabyte download
     - name: Test with pytest
+      run: pytest -m "not ghidra"
+
+  # Ghidra is driven as a subprocess, so the interpreter it was launched from is
+  # not what this exercises. Running it once keeps the coverage while leaving the
+  # matrix free of the archive, and the archive itself is cached between runs.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
+
+    # the runner images ship JDKs, so this resolves locally instead of
+    # reaching for apt and building a package list first
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+
+    - name: Restore Ghidra
+      id: ghidra-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/ghidra
+        key: ghidra-${{ env.GHIDRA_VERSION }}-${{ env.GHIDRA_BUILD }}
+
+    # unpacked under HOME rather than /opt so the cache needs no privileges to
+    # restore, and checksummed because it is a binary from outside the build
+    - name: Install Ghidra
+      if: steps.ghidra-cache.outputs.cache-hit != 'true'
       run: |
-        pytest
+        ZIP="ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_BUILD}.zip"
+        URL="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/${ZIP}"
+        wget -q "${URL}" -O ghidra.zip
+        echo "${GHIDRA_SHA256}  ghidra.zip" | sha256sum -c -
+        mkdir -p ~/ghidra
+        unzip -q ghidra.zip -d ~/ghidra
+        rm ghidra.zip
+
+    - name: Point at Ghidra
+      run: echo "GHIDRA_INSTALL_DIR=$HOME/ghidra/ghidra_${GHIDRA_VERSION}_PUBLIC" >> $GITHUB_ENV
+
+    - name: Install dependencies
+      run: pip install -e ".[dev]"
+
+    - name: Test against a real Ghidra install
+      run: pytest -m ghidra

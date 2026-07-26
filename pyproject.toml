@@ -21,7 +21,11 @@ llm = ["litellm>=1.0"]
 serve = ["starlette>=0.27", "uvicorn>=0.22"]
 pe = ["lief>=0.14.0"]
 full = ["deepzero[llm,serve,pe]"]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "deepzero[full]"]
+# pinned to a minor: these tools change their own rules between releases, so an
+# unpinned upgrade can fail the build with nothing in this repository having
+# changed. Bump deliberately, and local checks then match what CI runs.
+lint = ["ruff==0.16.*", "bandit==1.9.*"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "deepzero[full,lint]"]
 
 [project.scripts]
 deepzero = "deepzero.cli:main"
@@ -32,6 +36,11 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+markers = [
+    # needs a real Ghidra install and a JDK, so it is selected on its own rather
+    # than making every interpreter under test pay to download one
+    "ghidra: drives a local Ghidra install (requires GHIDRA_INSTALL_DIR)",
+]
 
 [tool.ruff]
 line-length = 100

@@ -113,10 +113,12 @@ class TestRunCommand:
         pipeline_file = tmp_path / "pipeline.yaml"
         pipeline_file.write_text(yaml_content)
 
+        # trash dirs live beside the corpus run dirs under <work>/<pipeline>/, and
+        # GC sweeps that directory on every run.
         work_root = tmp_path / "work"
         pipeline_work_dir = work_root / "test"
         pipeline_work_dir.mkdir(parents=True)
-        trash_dir = pipeline_work_dir.with_name("trash_test_123")
+        trash_dir = pipeline_work_dir / "trash_test_123"
         trash_dir.mkdir()
 
         target = tmp_path / "test.sys"
@@ -150,15 +152,17 @@ class TestRunCommand:
         pipeline_file = tmp_path / "pipeline.yaml"
         pipeline_file.write_text(yaml_content)
 
-        work_root = tmp_path / "work"
-        pipeline_work_dir = work_root / "test"
-        pipeline_work_dir.mkdir(parents=True)
-
-        # Inject dummy file to prove deletion
-        (pipeline_work_dir / "dummy.txt").write_text("keep")
-
         target = tmp_path / "test.sys"
         target.write_bytes(b"MZ")
+
+        # runs are scoped per corpus: <work>/<pipeline>/<corpus-key>/. --clean
+        # purges this corpus's prior run dir, so pre-create it with a marker file.
+        from deepzero.engine.pipeline import corpus_segment
+
+        work_root = tmp_path / "work"
+        corpus_dir = work_root / "test" / corpus_segment(target)
+        corpus_dir.mkdir(parents=True)
+        (corpus_dir / "dummy.txt").write_text("keep")
 
         runner = CliRunner()
         # Pass --clean flag to initiate force reset
@@ -171,9 +175,9 @@ class TestRunCommand:
         assert result.exit_code == 0
         assert "purging" in result.output
 
-        # The clean flag moves the original workdir to a trash directory which is then recursively wiped
-        # Since we ran synchronously via mock, the directory should be completely empty and devoid of dummy.txt
-        assert not (pipeline_work_dir / "dummy.txt").exists()
+        # The clean flag moves the corpus run dir to a trash directory which is then
+        # recursively wiped; run synchronously via mock, so dummy.txt is gone.
+        assert not (corpus_dir / "dummy.txt").exists()
 
 
 class TestServeCommand:

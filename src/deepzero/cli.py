@@ -84,6 +84,21 @@ class _ShortNameFormatter(logging.Formatter):
         return f"[{color}]\\[{short}][/{color}] {msg_escaped}"
 
 
+def _latest_run_dir(base: Path) -> Path | None:
+    """Pick the most recent corpus run directory under a pipeline's base dir.
+
+    Runs are namespaced per corpus (``<base>/<corpus-key>/``), so ``status`` and
+    ``report`` with only ``--pipeline`` resolve to the newest run. A ``run.json``
+    directly in ``base`` (e.g. ``--work-dir`` pointed straight at a run) also works.
+    """
+    if not base.exists():
+        return None
+    runs = [d for d in base.iterdir() if d.is_dir() and (d / "run.json").exists()]
+    if runs:
+        return max(runs, key=lambda d: (d / "run.json").stat().st_mtime)
+    return base if (base / "run.json").exists() else None
+
+
 def _setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     handler = RichHandler(
@@ -185,6 +200,10 @@ def run(
     except ValueError as e:
         console.print(f"[bold red]X ERROR[/]: {e}")
         raise SystemExit(1)
+
+    # scope the run to this corpus so different targets through the same pipeline
+    # get isolated, independently resumable work directories under one root.
+    pipeline_def.bind_corpus(target_path)
 
     import os
     import shutil
@@ -320,7 +339,12 @@ def report(
         except ValueError as e:
             console.print(f"[bold red]X ERROR[/]: {e}")
             raise SystemExit(1)
-        work_path = pipeline_def.work_dir
+        work_path = _latest_run_dir(pipeline_def.base_work_dir)
+        if work_path is None:
+            console.print(
+                f"[bold red]X ERROR[/]: no runs found under {pipeline_def.base_work_dir}"
+            )
+            raise SystemExit(1)
         report_cfg = pipeline_def.report
     else:
         console.print("[bold red]X ERROR[/]: pass --pipeline or --work-dir")
@@ -362,7 +386,12 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
             console.print(f"[bold red]X ERROR[/]: {e}")
             raise SystemExit(1)
 
-        work_path = pipeline_def.work_dir
+        work_path = _latest_run_dir(pipeline_def.base_work_dir)
+        if work_path is None:
+            console.print(
+                f"[yellow]no runs found under {pipeline_def.base_work_dir}[/]"
+            )
+            raise SystemExit(1)
     else:
         console.print("[red]specify --pipeline or --work-dir[/]")
         raise SystemExit(1)

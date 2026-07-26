@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,23 @@ from deepzero.engine.stage import (
 )
 
 log = logging.getLogger("deepzero.pipeline")
+
+
+def corpus_segment(target: Path) -> str:
+    """A stable, filesystem-safe directory segment identifying a corpus (the run
+    target). Two different corpora, or the same corpus at two paths, never
+    collide; the same resolved path always maps to the same segment, so a rerun
+    resumes in place.
+
+    Shape: ``<readable-basename>-<8 hex of sha256(resolved-abspath)>``.
+    """
+    resolved = target.expanduser().resolve()
+    # case-fold on case-insensitive filesystems so C:\X and c:\x agree
+    key_src = str(resolved).lower() if os.name == "nt" else str(resolved)
+    digest = hashlib.sha256(key_src.encode("utf-8")).hexdigest()[:8]
+    base = resolved.name or "root"
+    base = re.sub(r"[^A-Za-z0-9._-]", "_", base)[:48].strip("._-") or "corpus"
+    return f"{base}-{digest}"
 
 
 class PipelineDefinition:
@@ -53,13 +72,31 @@ class PipelineDefinition:
         self.ingest_processor: IngestProcessor | None = None
         self.stages: list[tuple[StageSpec, Processor]] = []
 
+        # set once the run target is known (see bind_corpus); each corpus gets
+        # its own isolated, resumable run directory under the pipeline.
+        self.corpus_key: str | None = None
+
     @property
-    def work_dir(self) -> Path:
+    def base_work_dir(self) -> Path:
+        """The pipeline's root: ``<work_dir setting>/<pipeline name>``. Holds one
+        subdirectory per corpus."""
         raw = self.settings.get("work_dir", "work")
         p = Path(raw)
         if not p.is_absolute():
             p = Path.cwd() / p
         return p / self.name
+
+    @property
+    def work_dir(self) -> Path:
+        """The active run directory. Corpus-scoped once bound, so different
+        targets through the same pipeline never share a sample store or report."""
+        base = self.base_work_dir
+        return base / self.corpus_key if self.corpus_key else base
+
+    def bind_corpus(self, target: Path) -> None:
+        """Scope this run's work directory to a specific corpus (run target).
+        Must be called before ``work_dir`` is used for a run."""
+        self.corpus_key = corpus_segment(target)
 
     @property
     def max_workers(self) -> int:

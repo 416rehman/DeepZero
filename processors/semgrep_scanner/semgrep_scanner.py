@@ -21,7 +21,14 @@ class SemgrepScanner(BulkMapProcessor):
 
     # findings_json is the parsed report; `findings` holds its filename, which is
     # why a prompt wanting the findings themselves has to name findings_json
-    provides = ("finding_count", "findings_cached", "findings", "findings_json")
+    provides = (
+        "finding_count",
+        "findings_cached",
+        "files_submitted",
+        "files_scanned",
+        "findings",
+        "findings_json",
+    )
 
     def _resolve_rules_path(self, ctx: ProcessorContext) -> Path | None:
         # resolve rules_dir consistently for validate() and process(): try
@@ -89,31 +96,46 @@ class SemgrepScanner(BulkMapProcessor):
         if not uncached_entries:
             return [r for r in results if r is not None]
 
-        bulk_dir = entries[0].sample_dir.parent.parent / ".bulk_temp" / "semgrep"
-        file_to_sample = self._build_bulk_dir(uncached_entries, bulk_dir, target_subdir)
+        # one semgrep run per batch of samples, so a batch that times out or
+        # comes back unreadable costs only its own samples. A whole corpus in a
+        # single run means six minutes of work discarded by one failure.
+        batch_size = int(self.config.get("batch_size", 200) or 0)
+        if batch_size > 0:
+            batches = [
+                uncached_entries[i : i + batch_size]
+                for i in range(0, len(uncached_entries), batch_size)
+            ]
+        else:
+            batches = [uncached_entries]
 
-        if not file_to_sample:
-            for idx, _entry in uncached_entries:
-                results[idx] = ProcessorResult.ok(
-                    data={"finding_count": 0, "findings_cached": False},
+        base_dir = entries[0].sample_dir.parent.parent / ".bulk_temp"
+        for n, batch in enumerate(batches):
+            bulk_dir = base_dir / f"semgrep_{n}"
+            file_to_sample = self._build_bulk_dir(batch, bulk_dir, target_subdir)
+            try:
+                if not file_to_sample:
+                    for idx, _entry in batch:
+                        results[idx] = self._make_result(
+                            [], min_findings, cached=False, submitted=0, scanned=0
+                        )
+                    continue
+                if len(batches) > 1:
+                    self.log.info("batch %d/%d", n + 1, len(batches))
+                asyncio.run(
+                    self._run_and_distribute(
+                        rules_path,
+                        bulk_dir,
+                        timeout,
+                        batch,
+                        file_to_sample,
+                        results,
+                        min_findings,
+                    )
                 )
-            self._cleanup_bulk_dir(bulk_dir)
-            return [r for r in results if r is not None]
+            finally:
+                self._cleanup_bulk_dir(bulk_dir)
 
-        try:
-            return asyncio.run(
-                self._run_and_distribute(
-                    rules_path,
-                    bulk_dir,
-                    timeout,
-                    uncached_entries,
-                    file_to_sample,
-                    results,
-                    min_findings,
-                )
-            )
-        finally:
-            self._cleanup_bulk_dir(bulk_dir)
+        return [r for r in results if r is not None]
 
     def _build_bulk_dir(
         self,
@@ -151,10 +173,10 @@ class SemgrepScanner(BulkMapProcessor):
         file_to_sample: dict[str, int],
         results: list[ProcessorResult | None],
         min_findings: int,
-    ) -> list[ProcessorResult]:
+    ) -> None:
         # scanning thousands of files produces a results document far too large to
         # read back through a pipe, so semgrep writes it to a file and we read that
-        report_path = bulk_dir.parent / "semgrep_output.json"
+        report_path = bulk_dir.parent / f"{bulk_dir.name}_output.json"
         report_path.unlink(missing_ok=True)
         cmd = [
             "semgrep",
@@ -188,16 +210,16 @@ class SemgrepScanner(BulkMapProcessor):
         except FileNotFoundError:
             for idx, _ in uncached_entries:
                 results[idx] = ProcessorResult.fail("semgrep not installed - pip install semgrep")
-            return [r for r in results if r is not None]
+            return
         except OSError as exc:
             # report what actually went wrong rather than guessing at the cause
             for idx, _ in uncached_entries:
                 results[idx] = ProcessorResult.fail(f"could not run semgrep: {exc}")
-            return [r for r in results if r is not None]
+            return
         except asyncio.TimeoutError:
             for idx, _ in uncached_entries:
                 results[idx] = ProcessorResult.fail(f"semgrep batch timed out after {timeout}s")
-            return [r for r in results if r is not None]
+            return
 
         err_str = stderr_bytes.decode("utf-8", errors="replace")
         try:
@@ -222,12 +244,12 @@ class SemgrepScanner(BulkMapProcessor):
                 output = None
 
         if output is None:
-            detail = (err_str.strip() or "no parseable output on stdout")[:500]
+            detail = (err_str.strip() or "no readable results document")[:500]
             for idx, _ in uncached_entries:
                 results[idx] = ProcessorResult.fail(
                     f"semgrep failed (exit {proc.returncode}): {detail}"
                 )
-            return [r for r in results if r is not None]
+            return
 
         # semgrep reports rule/config load failures in an "errors" array while
         # still exiting 0 with empty results - which would otherwise look like
@@ -239,13 +261,28 @@ class SemgrepScanner(BulkMapProcessor):
             )[:500]
             for idx, _ in uncached_entries:
                 results[idx] = ProcessorResult.fail(f"semgrep produced no results: {detail}")
-            return [r for r in results if r is not None]
+            return
 
         if scan_errors:
             self.log.warning("semgrep reported %d non-fatal error(s) during scan", len(scan_errors))
 
-        self._distribute_findings(output, file_to_sample, uncached_entries, results, min_findings)
-        return [r for r in results if r is not None]
+        # semgrep lists the files it actually read. Reading none of them is not
+        # the same result as reading them and finding nothing: the first means
+        # the scan never looked, and recording it as zero findings would send
+        # every sample on to assessment described as clean.
+        scanned_paths = (output.get("paths") or {}).get("scanned")
+        if isinstance(scanned_paths, list) and not scanned_paths:
+            detail = (err_str.strip() or "semgrep listed no scanned files")[:500]
+            for idx, _ in uncached_entries:
+                results[idx] = ProcessorResult.fail(
+                    f"semgrep read none of the {len(file_to_sample)} files submitted, "
+                    f"so this is not a clean result: {detail}"
+                )
+            return
+
+        self._distribute_findings(
+            output, file_to_sample, uncached_entries, results, min_findings, scanned_paths
+        )
 
     def _distribute_findings(
         self,
@@ -254,9 +291,22 @@ class SemgrepScanner(BulkMapProcessor):
         uncached_entries: list[tuple[int, ProcessorEntry]],
         results: list[ProcessorResult | None],
         min_findings: int,
+        scanned_paths: list | None = None,
     ) -> None:
         sev_map = {"ERROR": "HIGH", "WARNING": "MEDIUM", "INFO": "LOW"}
         per_sample_findings: dict[int, list[dict]] = {idx: [] for idx, _ in uncached_entries}
+
+        # how many of each sample's files semgrep actually read, so a sample
+        # reported as having nothing can be told apart from one whose files were
+        # never opened - the report shows both as zero findings otherwise
+        submitted: dict[int, int] = dict.fromkeys((idx for idx, _ in uncached_entries), 0)
+        for name, idx in file_to_sample.items():
+            submitted[idx] = submitted.get(idx, 0) + 1
+        scanned: dict[int, int] = dict.fromkeys((idx for idx, _ in uncached_entries), 0)
+        for path in scanned_paths or []:
+            idx = file_to_sample.get(Path(str(path)).name)
+            if idx is not None:
+                scanned[idx] = scanned.get(idx, 0) + 1
 
         for result_entry in output.get("results", []):
             file_path = result_entry.get("path", "")
@@ -292,15 +342,30 @@ class SemgrepScanner(BulkMapProcessor):
                 except OSError:
                     self.log.debug("cleanup of failed temp json ignored")
                 self.log.debug("failed to write findings for %s: %s", entry.sample_id, exc)
-            results[idx] = self._make_result(findings, min_findings, cached=False)
+            results[idx] = self._make_result(
+                findings,
+                min_findings,
+                cached=False,
+                submitted=submitted.get(idx, 0),
+                scanned=scanned.get(idx) if scanned_paths is not None else None,
+            )
 
     def _make_result(
-        self, findings: list[dict], min_findings: int, cached: bool
+        self,
+        findings: list[dict],
+        min_findings: int,
+        cached: bool,
+        submitted: int | None = None,
+        scanned: int | None = None,
     ) -> ProcessorResult:
         data: dict[str, Any] = {
             "finding_count": len(findings),
             "findings_cached": cached,
         }
+        if submitted is not None:
+            data["files_submitted"] = submitted
+        if scanned is not None:
+            data["files_scanned"] = scanned
 
         if min_findings > 0 and len(findings) < min_findings:
             return ProcessorResult.filter(

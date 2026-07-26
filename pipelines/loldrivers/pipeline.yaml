@@ -86,6 +86,10 @@ stages:
     config:
       min_findings: 1
       rules_dir: pipelines/loldrivers/rules
+      # scan this many drivers per semgrep run. A batch that times out or comes
+      # back unreadable then costs only its own drivers, instead of discarding
+      # the results for an entire corpus after it has already done the work.
+      batch_size: 200
 
   # order every surviving driver by how many findings it has, worst first, so
   # assessment works through the riskiest drivers first without dropping any

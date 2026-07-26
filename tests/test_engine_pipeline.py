@@ -34,9 +34,7 @@ def test_corpus_segment_distinguishes_same_basename(tmp_path: Path):
     (tmp_path / "x" / "drivers").mkdir(parents=True)
     (tmp_path / "y" / "drivers").mkdir(parents=True)
     # identical basename, different paths -> distinct segments (no silent sharing)
-    assert corpus_segment(tmp_path / "x" / "drivers") != corpus_segment(
-        tmp_path / "y" / "drivers"
-    )
+    assert corpus_segment(tmp_path / "x" / "drivers") != corpus_segment(tmp_path / "y" / "drivers")
 
 
 def test_work_dir_scoped_by_corpus(tmp_path: Path, monkeypatch):

@@ -341,9 +341,7 @@ def report(
             raise SystemExit(1)
         work_path = _latest_run_dir(pipeline_def.base_work_dir)
         if work_path is None:
-            console.print(
-                f"[bold red]X ERROR[/]: no runs found under {pipeline_def.base_work_dir}"
-            )
+            console.print(f"[bold red]X ERROR[/]: no runs found under {pipeline_def.base_work_dir}")
             raise SystemExit(1)
         report_cfg = pipeline_def.report
     else:
@@ -388,9 +386,7 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
 
         work_path = _latest_run_dir(pipeline_def.base_work_dir)
         if work_path is None:
-            console.print(
-                f"[yellow]no runs found under {pipeline_def.base_work_dir}[/]"
-            )
+            console.print(f"[yellow]no runs found under {pipeline_def.base_work_dir}[/]")
             raise SystemExit(1)
     else:
         console.print("[red]specify --pipeline or --work-dir[/]")

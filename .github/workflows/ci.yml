@@ -10,8 +10,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      # every supported interpreter should report, so one failure must not
+      # cancel the rest: which versions broke is the useful part of the answer
+      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
     - uses: actions/checkout@v4

@@ -481,32 +481,41 @@ def _artifact_uri(sample_dir: str, rel: str, out_dir: Path) -> str:
         return _esc(target.resolve().as_uri())
 
 
-_CSS = """
+_CSS = r"""
 /* Cold paper, hairline rules, and wide-tracked monospace micro-labels set
-   against a tight heavy headline. A single colour marks a positive result. */
+   against a tight heavy headline. Colour is spent only on outcomes, so
+   anything on this page carrying colour is saying something. */
 :root{
-  --paper:#F7F8FA; --plate:#FFFFFF; --ink:#0E1216; --body:#3A424C;
-  --faint:#5E6672; --rule:#DCE1E7; --rule-hard:#A6AFBA;
+  /* one spacing scale, each step ~1.6x the last, so a wide gap and a tight gap
+     never look accidentally alike. The margin goes on the larger element. */
+  --s1:4px; --s2:7px; --s3:11px; --s4:18px; --s5:29px; --s6:47px; --s7:76px;
+  --bar:52px;  /* height of the sticky filter; the table head parks under it */
+  /* Deep and muted in both modes. The dark set is a counterpart to the light
+     one - same hues walked down in saturation - not a second palette. */
+  --paper:#F5F7F8; --plate:#FFFFFF; --ink:#0D1114; --body:#39424B;
+  --faint:#5C6570; --rule:#DDE2E6; --rule-hard:#A8B1B9;
   --positive:#9B1C31; --positive-wash:#9B1C310F;
-  --review:#5B3FBF;  --review-wash:#5B3FBF0F;
-  --ok:#1F7A5C; --inert:#C3CAD2;
+  --review:#4B3A9E;  --review-wash:#4B3A9E0F;
+  --warn:#8A5209; --ok:#1D6E54; --inert:#C3CAD2;
+  --lift:0 10px 24px -18px rgba(13,17,20,.55);
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
 }
 @media (prefers-color-scheme: dark){
   :root{
-    --paper:#0E1116; --plate:#141920; --ink:#F1F4F7; --body:#A9B2BD;
-    --faint:#8B95A2; --rule:#222932; --rule-hard:#3E4854;
-    --positive:#FF6A75; --positive-wash:#FF6A7514;
-    --review:#A78BFA; --review-wash:#A78BFA14;
-    --ok:#4ADE80; --inert:#39424E;
+    --paper:#0F1215; --plate:#171C21; --ink:#E7EBEE; --body:#A3ACB6;
+    --faint:#7E8892; --rule:#222930; --rule-hard:#3B4550;
+    --positive:#E8555F; --positive-wash:#E8555F16;
+    --review:#8C7BE0;  --review-wash:#8C7BE016;
+    --warn:#DFA05C; --ok:#45C98A; --inert:#39424E;
+    --lift:0 10px 24px -18px rgba(0,0,0,.8);
   }
 }
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{
   margin:0;background:var(--paper);color:var(--body);
-  font:400 13px/1.6 var(--sans);padding:0 32px 120px;
+  font:400 13px/1.6 var(--sans);padding:0 var(--s5) var(--s7);
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
 }
 .shell{max-width:1180px;margin:0 auto}
@@ -519,91 +528,166 @@ a:hover{border-bottom-color:currentColor}
 .lbl{font:500 9.5px/1 var(--mono);letter-spacing:.19em;text-transform:uppercase;color:var(--faint)}
 
 /* requisition plate ------------------------------------------------------- */
-.mast{padding:58px 0 0}
-.kicker{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
+.mast{padding:var(--s5) 0 0}
+.kicker{display:flex;gap:var(--s3);align-items:baseline;flex-wrap:wrap}
 .kicker .mark{font:700 10.5px/1 var(--mono);letter-spacing:.24em;color:var(--ink)}
+.kicker .id{margin-left:auto;font:400 10.5px/1 var(--mono);color:var(--faint)}
 h1{
-  margin:20px 0 0;color:var(--ink);
+  margin:var(--s4) 0 0;color:var(--ink);
   font:700 clamp(30px,4.6vw,52px)/0.98 var(--sans);letter-spacing:-.035em;
 }
 h1 .qty{color:var(--faint);font-weight:400;letter-spacing:-.02em}
 .plate{
-  margin:32px 0 0;border-top:1px solid var(--rule-hard);border-bottom:1px solid var(--rule);
+  margin:var(--s5) 0 0;border-top:1px solid var(--rule-hard);border-bottom:1px solid var(--rule);
   display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
 }
-.plate > div{padding:15px 20px 16px 0;border-right:1px solid var(--rule)}
+.plate > div{padding:var(--s3) var(--s4) var(--s3) 0;border-right:1px solid var(--rule)}
 .plate > div:last-child{border-right:0}
-.plate dd{margin:8px 0 0;font:400 12.5px/1.45 var(--mono);color:var(--ink);word-break:break-word}
+.plate dd{margin:var(--s2) 0 0;font:400 12.5px/1.45 var(--mono);color:var(--ink);word-break:break-word}
+.plate .why{margin:var(--s1) 0 0;font:400 11.5px/1.5 var(--sans);color:var(--faint)}
 
 /* the run state carries a dot because it is the one value on the plate that
    can change while somebody is looking at the page. */
-.run{display:flex;align-items:center;gap:8px}
+.run{display:flex;align-items:center;gap:var(--s2)}
 .run i{width:7px;height:7px;border-radius:50%;background:var(--inert);flex:none}
-.run.running i{background:var(--ok)}
+.run.running i{background:var(--ok);animation:beat 2s ease-in-out infinite}
 .run.stopped i{background:var(--positive)}
 .run.finished i{background:var(--rule-hard)}
 .run .age{color:var(--faint);font-size:11.5px}
-.plate .why{margin:6px 0 0;font:400 11.5px/1.5 var(--sans);color:var(--faint)}
+@keyframes beat{50%{opacity:.2}}
 
-.dist{margin:38px 0 0;padding-top:22px;border-top:1px solid var(--rule)}
-.ticks{display:flex;flex-wrap:wrap;gap:0 48px}
+/* readout: the two outcomes worth acting on at full size, then the shape of
+   the whole corpus, then the ones that only need acknowledging. */
+.readout{margin:var(--s5) 0 0;padding-top:var(--s5);border-top:1px solid var(--rule)}
+.ticks{display:flex;flex-wrap:wrap;gap:var(--s4) var(--s7)}
 .tick{cursor:help}
-.tick b{letter-spacing:-.03em}
-.shead[title]{cursor:help}
-.tick b{display:block;color:var(--ink);font:600 27px/1 var(--mono)}
-.tick .lbl{display:block;margin-top:7px}
+.tick b{display:block;color:var(--ink);letter-spacing:-.04em;
+  font:600 clamp(30px,3.6vw,38px)/1 var(--mono)}
+.tick .lbl{display:block;margin-top:var(--s2)}
 .tick.pos b{color:var(--positive)}
 .tick.rev b{color:var(--review)}
+.tick.zero b{color:var(--inert)}
+
+/* the shape of the whole corpus in one line. It dims to whatever the outcome
+   filter is showing, so it always reads as the view currently on screen. */
+.spread{display:flex;gap:1px;height:7px;margin:var(--s5) 0 0;background:var(--rule)}
+.spread i{display:block;background:var(--inert);min-width:3px;
+  transition:opacity .15s,transform .15s}
+.spread i.pos{background:var(--positive)}
+.spread i.rev{background:var(--review)}
+.spread i.err{background:var(--warn)}
+.spread i.una{background:var(--rule-hard)}
+.spread i.ok{background:var(--ok)}
+.spread i:hover{transform:scaleY(1.7)}
+.spread.narrowed i{opacity:.22}
+.spread.narrowed i.on{opacity:1}
+.rest{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5);margin:var(--s3) 0 0;
+  font:400 11.5px/1.4 var(--mono);color:var(--faint)}
+.rest span{display:flex;align-items:center;cursor:help}
+.rest i{width:6px;height:6px;border-radius:50%;background:var(--inert);flex:none;
+  margin-right:var(--s2)}
+.rest .err i{background:var(--warn)}
+.rest .una i{background:var(--rule-hard)}
+.rest .ok i{background:var(--ok)}
+.rest b{color:var(--body);font-weight:600;margin-right:.38em}
 
 /* statements -------------------------------------------------------------- */
 .finding-note{
-  margin:30px 0 0;padding:15px 18px;background:var(--positive-wash);
+  margin:var(--s5) 0 0;padding:var(--s3) var(--s4);background:var(--positive-wash);
   border-left:2px solid var(--positive);color:var(--ink);font-size:13px
 }
+.finding-note.rev{background:var(--review-wash);border-left-color:var(--review)}
 .finding-note b{font-weight:600}
 .aside{
-  margin:20px 0 0;padding:13px 0 0;border-top:1px solid var(--rule);
+  margin:var(--s4) 0 0;padding:var(--s3) 0 0;border-top:1px solid var(--rule);
   color:var(--faint);font-size:12px
 }
-.files{margin:26px 0 0;display:flex;gap:22px;flex-wrap:wrap}
-.files a{font:400 11.5px/1 var(--mono);color:var(--body)}
+.files{margin:var(--s5) 0 0;display:flex;gap:var(--s3);flex-wrap:wrap}
+.files a{
+  border:1px solid var(--rule-hard);padding:var(--s2) var(--s3);color:var(--body);
+  font:400 11px/1 var(--mono);letter-spacing:.04em;transition:border-color .12s,color .12s
+}
+.files a:hover{border-color:var(--ink);color:var(--ink)}
+
+/* filter ------------------------------------------------------------------ */
+/* a corpus list is longer than a screen, so the way to narrow it travels. its
+   measured height becomes --bar, which is where the table head parks. */
+.filter{
+  position:sticky;top:0;z-index:6;margin:var(--s5) 0 0;padding:var(--s3) 0;
+  display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;background:var(--paper);
+  border-bottom:1px solid var(--rule);transition:box-shadow .15s
+}
+/* once it is actually pinned it should read as floating over the list */
+.filter.stuck{box-shadow:var(--lift)}
+.field{
+  display:flex;align-items:center;gap:var(--s2);background:var(--plate);
+  border:1px solid var(--rule-hard);padding:0 var(--s3);min-width:250px;
+  transition:border-color .12s,box-shadow .12s
+}
+.field:focus-within{border-color:var(--review);box-shadow:0 0 0 3px var(--review-wash)}
+.field .glyph{color:var(--faint);font:400 14px/1 var(--mono)}
+input[type=search]{
+  flex:1;background:transparent;color:var(--ink);border:0;outline:0;
+  padding:var(--s3) 0;font:400 13px/1 var(--mono)
+}
+input[type=search]::placeholder{color:var(--faint)}
+.hint{color:var(--faint);font-size:11.5px;margin-left:auto}
+
+/* outcome toggles: narrowing to a single outcome is the move a triage pass
+   makes over and over, so it travels with the search rather than sitting in
+   the header where the list would scroll away from it */
+.chipf{
+  display:inline-flex;align-items:center;gap:var(--s2);background:transparent;
+  border:1px solid var(--rule);color:var(--faint);padding:var(--s2) var(--s3);
+  font:500 9.5px/1 var(--mono);letter-spacing:.13em;text-transform:uppercase;
+  cursor:pointer;transition:border-color .12s,color .12s,background .12s
+}
+.chipf b{font:600 11px/1 var(--mono);letter-spacing:0}
+.chipf:hover{border-color:var(--rule-hard);color:var(--body)}
+.chipf[aria-pressed="true"]{border-color:currentColor;color:var(--ink)}
+.chipf.pos[aria-pressed="true"]{color:var(--positive);background:var(--positive-wash)}
+.chipf.rev[aria-pressed="true"]{color:var(--review);background:var(--review-wash)}
 
 /* sections ---------------------------------------------------------------- */
-section{margin-top:62px}
-.shead{display:flex;align-items:baseline;gap:16px;padding-bottom:12px;border-bottom:1px solid var(--rule-hard)}
+section{margin-top:var(--s6)}
+.shead{display:flex;align-items:baseline;gap:var(--s4);
+  padding-bottom:var(--s3);border-bottom:1px solid var(--rule-hard)}
 .shead h2{margin:0;color:var(--ink);font:600 13px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase}
 .shead .n{font:600 13px/1 var(--mono);color:var(--positive)}
 .shead.q h2{color:var(--body)}
 .shead.q .n{color:var(--faint)}
 .shead .of{margin-left:auto;color:var(--faint);font-size:11.5px;text-align:right;max-width:44ch}
+.shead[title]{cursor:help}
 
 /* result table ------------------------------------------------------------ */
-.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* no scroll container at desktop width: an overflow ancestor becomes the
+   scrollport, which is what stops a sticky table head from ever sticking. */
+.scroll{overflow:visible}
 table{width:100%;border-collapse:collapse}
 thead th{
-  position:sticky;top:0;z-index:2;background:var(--paper);
+  position:sticky;top:var(--bar);z-index:2;background:var(--paper);
   font:500 9.5px/1 var(--mono);letter-spacing:.17em;text-transform:uppercase;color:var(--faint);
-  text-align:left;padding:15px 14px 10px 0;white-space:nowrap;border-bottom:1px solid var(--rule);
-  cursor:pointer;user-select:none
+  text-align:left;padding:var(--s4) var(--s3) var(--s3) 0;white-space:nowrap;
+  border-bottom:1px solid var(--rule);cursor:pointer;user-select:none
 }
-thead th::after{
-  content:"95";margin-left:7px;opacity:.4;font-size:10px;letter-spacing:0
-}
+thead th::after{content:"\2195";margin-left:var(--s2);opacity:.35;font-size:10px;letter-spacing:0}
 thead th:hover{color:var(--ink)}
 thead th:hover::after{opacity:1}
-thead th[data-dir="asc"], thead th[data-dir="desc"]{color:var(--ink)}
-thead th[data-dir="asc"]::after{content:"91";opacity:1}
-thead th[data-dir="desc"]::after{content:"93";opacity:1}
+thead th[data-dir]{color:var(--ink)}
+thead th[data-dir="asc"]::after{content:"\2191";opacity:1}
+thead th[data-dir="desc"]::after{content:"\2193";opacity:1}
 thead th.r{text-align:right}
 tbody tr{cursor:pointer}
-tbody td{padding:14px 14px 14px 0;border-bottom:1px solid var(--rule);vertical-align:baseline}
-tbody tr:hover td{background:var(--plate)}
+tbody td{padding:var(--s3) var(--s3) var(--s3) 0;border-bottom:1px solid var(--rule);
+  vertical-align:baseline}
+/* hovering tints the row in its own outcome colour, so the palette is teaching
+   what the colours mean every time somebody runs down the list */
+tbody tr:hover td,tbody tr:focus-within td{background:var(--plate)}
+tbody tr.pos:hover td,tbody tr.pos:focus-within td{background:var(--positive-wash)}
+tbody tr.rev:hover td,tbody tr.rev:focus-within td{background:var(--review-wash)}
 tbody tr:hover td.spec a{border-bottom-color:var(--ink)}
-tbody tr:focus-within td{background:var(--plate)}
-td.open{width:1%;text-align:right;font:400 14px/1 var(--mono);color:var(--faint);opacity:0}
-tbody tr:hover td.open{opacity:1;color:var(--ink)}
 td.r{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink)}
-td.idx{font:400 11px/1.5 var(--mono);color:var(--faint);white-space:nowrap;padding-right:20px}
+td.spec{word-break:break-word}
 td.spec a{font:500 13.5px/1.35 var(--sans);color:var(--ink);letter-spacing:-.01em;
   border-bottom:1px solid var(--rule-hard)}
 td.spec a:hover{border-bottom-color:var(--ink)}
@@ -612,70 +696,79 @@ td.muted{color:var(--faint)}
 .res.pos{color:var(--positive)}
 .res.rev{color:var(--review)}
 .res.non{color:var(--faint)}
-.grade{font-family:var(--mono);white-space:nowrap;color:var(--faint)}
-.grade b{color:var(--positive);font-weight:600}
-.grade i{color:var(--body);font-style:normal}
+td.out{width:1%;white-space:nowrap}
+td.out .res{cursor:help}
+
+/* severity: the counts themselves, coloured by tier. Counts rather than a
+   proportional bar, because a bar shows the mix within a row and says nothing
+   about how much there is - one high and nine high would fill it alike. */
+td.sev{text-align:right;white-space:nowrap;color:var(--faint);
+  font:400 11.5px/1.5 var(--mono);font-variant-numeric:tabular-nums}
+td.sev span{margin-left:var(--s2)}
+td.sev .c{color:var(--positive);font-weight:700}
+td.sev .h{color:var(--positive)}
+td.sev .m{color:var(--warn)}
 
 /* specimen fingerprint ---------------------------------------------------- */
-.strip{display:flex;gap:14px;flex-wrap:wrap;margin-top:7px}
+.strip{display:flex;gap:var(--s3);flex-wrap:wrap;margin-top:var(--s2)}
 .chip{font:400 11px/1.4 var(--mono);color:var(--body);white-space:nowrap}
-.chip em{color:var(--faint);font-style:normal;margin-right:5px;letter-spacing:.06em}
+.chip em{color:var(--faint);font-style:normal;margin-right:var(--s1);letter-spacing:.06em}
 .chip.on{color:var(--positive)}
 
-/* filter ------------------------------------------------------------------ */
-.filter{margin:38px 0 0;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.field{
-  display:flex;align-items:center;gap:9px;background:var(--plate);
-  border:1px solid var(--rule-hard);padding:0 12px;min-width:300px
-}
-.field:focus-within{border-color:var(--review);box-shadow:0 0 0 3px var(--review-wash)}
-.field .glyph{color:var(--faint);font:400 14px/1 var(--mono)}
-input[type=search]{
-  flex:1;background:transparent;color:var(--ink);border:0;outline:0;
-  padding:11px 0;font:400 13px/1 var(--mono)
-}
-input[type=search]::placeholder{color:var(--faint)}
-.hint{color:var(--faint);font-size:11.5px}
-.files a{
-  border:1px solid var(--rule-hard);padding:6px 11px;color:var(--body);
-  font:400 11px/1 var(--mono);letter-spacing:.04em
-}
-.files a:hover{border-color:var(--ink);color:var(--ink)}
-
 /* specimen page ----------------------------------------------------------- */
-.back{display:inline-block;margin:44px 0 0;font:400 11px/1 var(--mono);letter-spacing:.1em;
+.back{display:inline-block;margin:var(--s6) 0 0;font:400 11px/1 var(--mono);letter-spacing:.1em;
   text-transform:uppercase;color:var(--faint);border:0}
 .back:hover{color:var(--ink)}
-.verdict{display:block;margin-top:18px}
+.verdict{display:block;margin-top:var(--s4)}
 .verdict .res{font-size:11px;letter-spacing:.2em}
-.verdict hr{margin:10px 0 0;border:0;border-top:2px solid var(--positive);width:44px}
+.verdict .tally{margin-left:var(--s3);font:400 11.5px/1 var(--mono);color:var(--faint)}
+.verdict hr{margin:var(--s2) 0 0;border:0;border-top:2px solid var(--positive);width:44px}
 .verdict.rev hr{border-top-color:var(--review)}
 .verdict.non hr{border-top-color:var(--rule-hard)}
 .evidence{list-style:none;padding:0;margin:0}
-.evidence li{padding:22px 0;border-bottom:1px solid var(--rule)}
-.ehead{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
-.ehead .sev{font:600 9.5px/1 var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--positive)}
+.evidence li{padding:var(--s5) 0;border-bottom:1px solid var(--rule)}
+.ehead{display:flex;gap:var(--s3);align-items:baseline;flex-wrap:wrap}
+.ehead .sev{font:600 9.5px/1 var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--faint)}
+.ehead .sev.c,.ehead .sev.h{color:var(--positive)}
+.ehead .sev.m{color:var(--warn)}
 .ehead .rule{font:500 12.5px/1 var(--mono);color:var(--ink)}
 .ehead .at{margin-left:auto;font:400 11px/1 var(--mono);color:var(--faint)}
-.emsg{margin:9px 0 0;color:var(--body);font-size:13px;max-width:76ch}
+.emsg{margin:var(--s2) 0 0;color:var(--body);font-size:13px;max-width:76ch}
 pre{
-  margin:13px 0 0;padding:16px 18px;background:var(--plate);
+  margin:var(--s3) 0 0;padding:var(--s4);background:var(--plate);
   border:1px solid var(--rule);border-left:2px solid var(--rule-hard);
   overflow-x:auto;font:400 12px/1.7 var(--mono);color:var(--ink);
   white-space:pre-wrap;word-break:break-word
 }
-.prose pre{border-left-color:var(--positive)}
-.kv{width:100%;border-collapse:collapse;margin-top:6px}
-.kv td{padding:10px 16px 10px 0;border-bottom:1px solid var(--rule);
+.evidence li.c pre,.evidence li.h pre{border-left-color:var(--positive)}
+.evidence li.m pre{border-left-color:var(--warn)}
+.prose pre{border-left-color:var(--review)}
+.kv{width:100%;border-collapse:collapse;margin-top:var(--s1)}
+.kv td{padding:var(--s3) var(--s4) var(--s3) 0;border-bottom:1px solid var(--rule);
   font:400 12px/1.5 var(--mono);vertical-align:baseline;color:var(--ink)}
 .kv td:first-child{color:var(--faint);white-space:nowrap;width:1%;letter-spacing:.04em}
-.empty{color:var(--faint);font-size:12.5px;padding:22px 0}
+.empty{color:var(--faint);font-size:12.5px;padding:var(--s5) 0}
 @media (max-width:640px){
-  body{padding:0 18px 72px}
-  .mast{padding-top:36px}
+  body{padding:0 var(--s4) var(--s6)}
+  .mast{padding-top:var(--s5)}
+  .kicker .id{margin-left:0}
   .plate > div{border-right:0;border-bottom:1px solid var(--rule)}
-  .shead .of{display:none}
+  .ticks{gap:var(--s4) var(--s6)}
+  /* the help text is what makes a label readable, so it stacks under the
+     heading rather than disappearing where hover does not exist */
+  .shead{flex-wrap:wrap}
+  .shead .of{margin-left:0;text-align:left;flex-basis:100%;max-width:none}
+  .filter{position:static}
+  .hint{margin-left:0}
+  thead th{top:0}
 }
+@media (max-width:900px){
+  /* narrow enough that the table cannot fit: it scrolls in its own box, and
+     the head stops sticking because that box is now the scrollport */
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  thead th{position:static}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 """
 
 _JS = """
@@ -689,15 +782,67 @@ _JS = """
     });
     if(hint)hint.textContent=shown===total?total+' shown':shown+' of '+total+' shown';
   }
-  if(q)q.addEventListener('input',function(){
-    var v=q.value.toLowerCase();
+
+  /* text and outcome narrow the same list: no chip pressed means show all */
+  var chips=[].slice.call(document.querySelectorAll('.chipf'));
+  var spread=document.querySelector('.spread');
+  function apply(){
+    var v=q?q.value.toLowerCase():'';
+    var on=chips.filter(function(c){return c.getAttribute('aria-pressed')==='true'})
+                .map(function(c){return c.dataset.b});
     document.querySelectorAll('tbody tr').forEach(function(r){
       if(!r.dataset.k)return;
-      r.style.display=r.dataset.k.indexOf(v)>-1?'':'none';
+      var hit=r.dataset.k.indexOf(v)>-1&&(!on.length||on.indexOf(r.dataset.b)>-1);
+      r.style.display=hit?'':'none';
     });
+    /* the corpus bar shows which slice of the run is on screen right now */
+    if(spread){
+      spread.classList.toggle('narrowed',on.length>0);
+      [].forEach.call(spread.children,function(seg){
+        seg.classList.toggle('on',on.indexOf(seg.dataset.b)>-1);
+      });
+    }
     report();
+  }
+  if(q)q.addEventListener('input',apply);
+  chips.forEach(function(c){
+    c.addEventListener('click',function(){
+      c.setAttribute('aria-pressed',c.getAttribute('aria-pressed')==='true'?'false':'true');
+      apply();
+    });
   });
   report();
+
+  /* the head parks under the filter, so it has to know how tall that is */
+  var barEl=document.querySelector('.filter');
+  function fit(){
+    document.documentElement.style.setProperty('--bar',barEl.offsetHeight+'px');
+  }
+  function stick(){barEl.classList.toggle('stuck',barEl.getBoundingClientRect().top<=0)}
+  if(barEl){
+    fit();stick();
+    window.addEventListener('resize',fit);
+    window.addEventListener('scroll',stick,{passive:true});
+  }
+
+  /* a live run rewrites this file every few seconds. reload to pick that up,
+     but put the reader back where they were rather than at the top, and stop
+     once the page has gone long enough without being rewritten to be stale. */
+  var live=document.body.dataset.live,store=null,key='dz:'+location.pathname;
+  try{store=window.sessionStorage}catch(e){}
+  if(live&&store){
+    try{
+      var was=JSON.parse(store.getItem(key)||'{}');
+      if(was.q&&q){q.value=was.q;apply()}
+      if(was.y)window.scrollTo(0,was.y);
+    }catch(e){}
+    window.addEventListener('beforeunload',function(){
+      try{store.setItem(key,JSON.stringify({q:q?q.value:'',y:window.scrollY}))}catch(e){}
+    });
+    var beat=document.querySelector('.run[data-beat]');
+    var age=beat?(Date.now()-Date.parse(beat.getAttribute('data-beat')))/1000:0;
+    if(!(age>300))setTimeout(function(){location.reload()},20000);
+  }
 
   /* a row opens its own page; the link inside keeps it keyboard reachable */
   document.querySelectorAll('tbody').forEach(function(body){
@@ -743,29 +888,17 @@ _JS = """
 """
 
 
-def _page(title: str, body: str, *, refresh: str = "") -> str:
+def _page(title: str, body: str, *, live: bool = False) -> str:
+    # a live page reloads itself from script rather than a meta refresh, so it
+    # can put the reader back where they were instead of at the top
+    attrs = ' data-live="1"' if live else ""
     return (
         '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"{refresh}<title>{_esc(title)}</title><style>{_CSS}</style></head>"
-        f'<body><div class="shell">{body}</div>'
+        f"<title>{_esc(title)}</title><style>{_CSS}</style></head>"
+        f'<body{attrs}><div class="shell">{body}</div>'
         f"<script>{_JS}{_LIVENESS_JS}</script></body></html>"
     )
-
-
-def _sev_cell(item: ItemReport) -> str:
-    sev = item.severity_counts
-    high = sev.get("CRITICAL", 0) + sev.get("HIGH", 0) + sev.get("ERROR", 0)
-    med = sev.get("MEDIUM", 0) + sev.get("WARNING", 0)
-    low = sev.get("LOW", 0) + sev.get("INFO", 0)
-    parts = []
-    if high:
-        parts.append(f"<span class='h'>{high}H</span>")
-    if med:
-        parts.append(f"<span class='m'>{med}M</span>")
-    if low:
-        parts.append(f"<span class='l'>{low}L</span>")
-    return f"<span class='sev'>{' '.join(parts) or '<span class=l>-</span>'}</span>"
 
 
 # already shown in their own column, so repeating them in the strip is noise
@@ -805,21 +938,39 @@ _RES_CLASS = {
     BUCKET_CLEAN: "non",
 }
 
+# the order a triage pass works in, and the only outcomes with rows to work on
+_LIST_ORDER = {
+    BUCKET_VULNERABLE: 0,
+    BUCKET_SUSPICIOUS: 1,
+    BUCKET_FAILED: 2,
+    BUCKET_UNASSESSED: 3,
+}
 
-def _grade(item: ItemReport) -> str:
-    """the severity mix of an item, most serious first."""
-    sev = item.severity_counts
-    high = sev.get("CRITICAL", 0) + sev.get("HIGH", 0) + sev.get("ERROR", 0)
-    med = sev.get("MEDIUM", 0) + sev.get("WARNING", 0)
-    low = sev.get("LOW", 0) + sev.get("INFO", 0)
-    parts = []
-    if high:
-        parts.append(f"<b>{high}&thinsp;high</b>")
-    if med:
-        parts.append(f"<i>{med}&thinsp;med</i>")
-    if low:
-        parts.append(f"{low}&thinsp;low")
-    return f"<span class='grade'>{' '.join(parts) or '&mdash;'}</span>"
+# a pipeline names its own severities, so they are folded onto the four tiers
+# the risk score actually weighs. Critical stays separate from high: it is worth
+# ten times as much in the ranking, so collapsing them would leave the severity
+# column unable to explain the order it is sorted in.
+_SEV_TIER = {"CRITICAL": "c", "HIGH": "h", "ERROR": "h", "MEDIUM": "m", "WARNING": "m"}
+_TIER_LABEL = (("c", "crit"), ("h", "high"), ("m", "med"), ("l", "low"))
+_DASH = "—"
+
+
+def _tiers(counts: dict[str, int]) -> dict[str, int]:
+    tally = {"c": 0, "h": 0, "m": 0, "l": 0}
+    for sev, n in counts.items():
+        tally[_SEV_TIER.get(sev, "l")] += n
+    return tally
+
+
+def _severity(item: ItemReport) -> str:
+    """the severity mix as counts, most serious first."""
+    tally = _tiers(item.severity_counts)
+    parts = [
+        f"<span class='{tier}'>{tally[tier]}</span>&thinsp;{label}"
+        for tier, label in _TIER_LABEL
+        if tally[tier]
+    ]
+    return " ".join(parts) or _DASH
 
 
 def render_item_page(item: ItemReport, out_dir: Path, cfg: ReportConfig, pipeline: str = "") -> str:
@@ -828,9 +979,10 @@ def render_item_page(item: ItemReport, out_dir: Path, cfg: ReportConfig, pipelin
     for f in sorted(item.findings, key=lambda x: _SEVERITY_ORDER.get(x["severity"], 9)):
         at = " ".join(x for x in (f["location"], f"line {f['line']}" if f["line"] else "") if x)
         code = f"<pre>{_esc(f['code'][:1400])}</pre>" if f["code"] else ""
+        tier = _SEV_TIER.get(f["severity"], "l")
         evidence.append(
-            "<li><div class='ehead'>"
-            f"<span class='sev'>{_esc(f['severity'])}</span>"
+            f"<li class='{tier}'><div class='ehead'>"
+            f"<span class='sev {tier}'>{_esc(f['severity'])}</span>"
             f"<span class='rule'>{_esc(f['rule_id'].split('.')[-1] or 'finding')}</span>"
             f"<span class='at'>{_esc(at)}</span></div>"
             f"<p class='emsg'>{_esc(f['message'])}</p>{code}</li>"
@@ -881,6 +1033,12 @@ def render_item_page(item: ItemReport, out_dir: Path, cfg: ReportConfig, pipelin
         )
 
     stages = ", ".join(f"{k} {v}" for k, v in item.stages.items())
+    # the verdict word alone does not say how much is behind it
+    counts = _tiers(item.severity_counts)
+    tally = (
+        ", ".join(f"{counts[t]} {label}" for t, label in _TIER_LABEL if counts[t])
+        or "nothing flagged"
+    )
     body = f"""<a class="back" href="../index.html">&larr; all results</a>
 <header class="mast" style="padding-top:26px">
   <div class="kicker"><span class="mark">{_esc(pipeline or "DEEPZERO")}</span>
@@ -888,6 +1046,7 @@ def render_item_page(item: ItemReport, out_dir: Path, cfg: ReportConfig, pipelin
   <h1>{_esc(item.name)}</h1>
   <div class="verdict {res}">
     <span class="res {res}">{_esc(_BUCKET_LABELS.get(item.bucket, item.bucket))}</span>
+    <span class="tally">{_esc(tally)}</span>
     <hr>
   </div>
   <div class="files">{"".join(files)}</div>
@@ -1002,71 +1161,112 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     n_pos = buckets.get(BUCKET_VULNERABLE, 0)
     n_rev = buckets.get(BUCKET_SUSPICIOUS, 0)
     n_err = buckets.get(BUCKET_FAILED, 0)
+    n_una = buckets.get(BUCKET_UNASSESSED, 0)
     n_set = buckets.get(BUCKET_FILTERED, 0)
-    n_ok = max(total - n_pos - n_rev - n_err - n_set, 0)
+    n_ok = max(total - n_pos - n_rev - n_err - n_una - n_set, 0)
 
-    ticks = "".join(
-        f"<div class='tick {cls}' title=\"{_esc(_BUCKET_RULE.get(bucket, ''))}\">"
-        f"<b>{n:,}</b><span class='lbl'>{label}</span></div>"
-        for cls, n, label, bucket in (
-            ("pos", n_pos, "vulnerable", BUCKET_VULNERABLE),
-            ("rev", n_rev, "needs review", BUCKET_SUSPICIOUS),
-            ("err", n_err, "errored", BUCKET_FAILED),
-            ("ok", n_ok, "clear", BUCKET_CLEAN),
-            ("set", n_set, "filtered out", BUCKET_FILTERED),
-        )
+    # the two outcomes somebody has to act on carry the headline; the rest are
+    # acknowledged on one line, so the eye is not asked to triage five equals.
+    lead = (
+        ("pos", n_pos, "vulnerable", BUCKET_VULNERABLE),
+        ("rev", n_rev, "needs review", BUCKET_SUSPICIOUS),
     )
-
-    def section(bucket: str, *, quiet: bool = False) -> str:
-        rows = [i for i in items if i.bucket == bucket]
-        if not rows:
-            return ""
-        shown = rows[:table_limit]
-        capped = (
-            f"<p class='aside'>Showing the {len(shown):,} highest-risk of {len(rows):,}. "
-            f"Every {entity} is in <a href='inventory.csv'>inventory.csv</a>.</p>"
-            if len(rows) > len(shown)
+    rest = (
+        ("err", n_err, "errored", BUCKET_FAILED),
+        ("una", n_una, "not assessed", BUCKET_UNASSESSED),
+        ("ok", n_ok, "clear", BUCKET_CLEAN),
+        ("set", n_set, "filtered out", BUCKET_FILTERED),
+    )
+    ticks = "".join(
+        f"<div class='tick {cls}{'' if n else ' zero'}' title=\"{_esc(_BUCKET_RULE[bucket])}\">"
+        f"<b>{n:,}</b><span class='lbl'>{label}</span></div>"
+        for cls, n, label, bucket in lead
+    )
+    trailing = "".join(
+        f"<span class='{cls}' title=\"{_esc(_BUCKET_RULE[bucket])}\"><i></i>"
+        f"<b>{n:,}</b>{label}</span>"
+        for cls, n, label, bucket in rest
+        if n
+    )
+    # the whole corpus as one line, keyed by outcome so the filter can dim it
+    # down to the slice on screen. It describes the list being looked at, which
+    # during a live run is also the clearest sign the corpus is still growing.
+    spread = "".join(
+        f"<i class='{cls}' data-b='{bucket}' style='flex:{n}' title='{n:,} {label}'></i>"
+        for cls, n, label, bucket in lead + rest
+        if n
+    )
+    readout = (
+        f"<div class='readout'><div class='ticks'>{ticks}</div>"
+        + (
+            f"<div class='spread' role='img' aria-label='{total:,} {_esc(entity)}s by "
+            f"outcome'>{spread}</div>"
+            if total
             else ""
         )
-        res = _RES_CLASS.get(bucket, "non")
-        body_rows = "".join(
-            "<tr data-k='{k}'><td class='idx'>{idx}</td>"
-            "<td class='spec'><a href='items/{sid}.html'>{name}</a>{strip}</td>"
-            "<td class='r{muted}' data-v='{fc}'>{fc}</td>"
-            "<td class='r' data-v='{risk}'>{grade}</td>"
-            "<td class='r'><span class='res {res}'>{verdict}</span></td>"
-            "<td class='open' aria-hidden='true'>&rarr;</td></tr>".format(
-                k=_esc(i.name.lower()),
-                idx=f"{n:03d}",
-                sid=_esc(i.sample_id),
-                name=_esc(i.name),
-                strip=_strip(i, columns),
-                fc=i.finding_count,
-                muted="" if i.finding_count else " muted",
-                risk=i.risk,
-                grade=_grade(i),
-                res=res,
-                verdict=_esc(i.classification or "&mdash;"),
-            )
-            for n, i in enumerate(shown, start=1)
+        + (f"<p class='rest'>{trailing}</p>" if trailing else "")
+        + "</div>"
+    )
+
+    # one list, ranked across every outcome, because risk ranks across the whole
+    # corpus rather than restarting per outcome. The outcome is a filter over
+    # that list, so a sort applies to everything the reader can currently see.
+    listed = sorted(
+        (i for i in items if i.bucket in _LIST_ORDER),
+        key=lambda x: (_LIST_ORDER[x.bucket], -x.risk, x.name.lower()),
+    )
+    shown = listed[:table_limit]
+    capped = (
+        f"<p class='aside'>Showing the {len(shown):,} highest-risk of {len(listed):,}. "
+        f"Every {entity} is in <a href='inventory.csv'>inventory.csv</a>.</p>"
+        if len(listed) > len(shown)
+        else ""
+    )
+    present: dict[str, int] = {}
+    for i in listed:
+        present[i.bucket] = present.get(i.bucket, 0) + 1
+    # a control gets the short gloss; the full rule belongs on the result it
+    # was applied to, which is where somebody stops to question a label
+    chips = "".join(
+        f"<button type='button' class='chipf {_RES_CLASS.get(b, 'non')}' data-b='{b}' "
+        f"aria-pressed='false' title=\"{_esc(_BUCKET_HELP[b])}\">"
+        f"{_esc(_BUCKET_LABELS[b])}<b>{n:,}</b></button>"
+        for b, n in sorted(present.items(), key=lambda kv: _LIST_ORDER[kv[0]])
+    )
+    body_rows = "".join(
+        "<tr class='{res}' data-k='{k}' data-b='{b}'>"
+        "<td class='spec'><a href='items/{sid}.html'>{name}</a>{strip}</td>"
+        "<td class='r{muted}' data-v='{fc}'>{fc}</td>"
+        "<td class='sev' data-v='{risk}'>{sev}</td>"
+        # sorts in triage order, not alphabetically: vulnerable before errored
+        "<td class='out' data-v='{ord}'><span class='res {res}' title=\"{rule}\">{label}</span></td>"
+        "</tr>".format(
+            k=_esc(i.name.lower()),
+            b=_esc(i.bucket),
+            ord=_LIST_ORDER[i.bucket],
+            sid=_esc(i.sample_id),
+            name=_esc(i.name),
+            strip=_strip(i, columns),
+            fc=i.finding_count,
+            muted="" if i.finding_count else " muted",
+            risk=i.risk,
+            sev=_severity(i),
+            res=_RES_CLASS.get(i.bucket, "non"),
+            rule=_esc(_BUCKET_RULE[i.bucket]),
+            label=_esc(_BUCKET_LABELS[i.bucket]),
         )
-        return f"""<section>
-  <div class="shead{" q" if quiet else ""}" title="{_esc(_BUCKET_RULE.get(bucket, ""))}">
-    <h2>{_esc(_BUCKET_LABELS.get(bucket, bucket))}</h2><span class="n">{len(rows):,}</span>
-    <span class="of">{_esc(_BUCKET_HELP.get(bucket, ""))}</span>
-  </div>
+        for i in shown
+    )
+    sections = (
+        f"""<section>
   {capped}
   <div class="scroll"><table data-sortable><thead><tr>
-    <th>&numero;</th><th>{_esc(entity)}</th><th class="r">findings</th>
-    <th class="r">severity</th><th class="r">result</th><th aria-label="open"></th>
+    <th>{_esc(entity)}</th><th class="r">findings</th>
+    <th class="r">severity</th><th>outcome</th>
   </tr></thead><tbody>{body_rows}</tbody></table></div>
 </section>"""
-
-    sections = (
-        section(BUCKET_VULNERABLE)
-        + section(BUCKET_SUSPICIOUS, quiet=True)
-        + section(BUCKET_FAILED, quiet=True)
-        + section(BUCKET_UNASSESSED, quiet=True)
+        if shown
+        else ""
     )
     if n_set:
         by_stage: dict[str, int] = {}
@@ -1112,13 +1312,23 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
         else ""
     )
 
-    note = (
-        f"<p class='finding-note'><b>{n_pos:,} {_esc(entity)}"
-        f"{'s' if n_pos != 1 else ''} assessed as vulnerable.</b> "
-        f"Listed first, ordered by severity.</p>"
-        if n_pos
-        else ""
-    )
+    # say what to do next, not only what happened
+    if n_pos:
+        note = (
+            f"<p class='finding-note'><b>{n_pos:,} {_esc(entity)}"
+            f"{'s' if n_pos != 1 else ''} assessed as vulnerable.</b> "
+            f"They lead the list below, ordered by the severity of what was "
+            f"found {_DASH} start at the top.</p>"
+        )
+    elif n_rev:
+        note = (
+            f"<p class='finding-note rev'><b>Nothing was confirmed vulnerable.</b> "
+            f"{n_rev:,} {_esc(entity)}{'s' if n_rev != 1 else ''} produced findings "
+            f"that no assessment has confirmed or dismissed {_DASH} those are the "
+            f"ones worth reading.</p>"
+        )
+    else:
+        note = ""
     trunc = (
         f"<p class='aside'>Detail pages are capped at {len(items):,}. The remaining "
         f"{payload['detail_truncated']:,} appear in <a href='inventory.csv'>inventory.csv</a>.</p>"
@@ -1127,37 +1337,38 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     )
 
     title = cfg.title or f"{run.get('pipeline', 'DeepZero')} results"
+    # the run id is an identifier you copy, not one you scan, so it sits in the
+    # kicker and the plate keeps the three values that describe the work
     plate = "".join(
         f"<div><div class='lbl'>{lbl}</div><dd>{_esc(val)}</dd></div>"
         for lbl, val in (
             ("corpus", run.get("target", "-")),
             ("assessed by", run.get("model", "-")),
-            ("run", run.get("run_id", "-")),
         )
     ) + _run_state_cell(run, str(payload.get("generated_at", "")))
-    refresh = '<meta http-equiv="refresh" content="20">' if running else ""
 
     body = f"""<header class="mast">
   <div class="kicker"><span class="mark">DEEPZERO</span>
-    <span class="lbl">vulnerability research</span></div>
+    <span class="lbl">vulnerability research</span>
+    <span class="id">{_esc(run.get("run_id", "") or "")}</span></div>
   <h1>{_esc(title)} <span class="qty">{t["samples"]:,} {_esc(entity)}s</span></h1>
   <dl class="plate">{plate}</dl>
-  <div class="dist"><div class="ticks">{ticks}</div></div>
+  {readout}
   {note}{trunc}
   <div class="files">
     <a href="inventory.csv">inventory.csv</a>
     <a href="findings.jsonl">findings.jsonl</a>
     <a href="report.json">report.json</a>
   </div>
-  <div class="filter">
-    <span class="field"><span class="glyph">&#9906;</span>
-      <input type="search" id="q" placeholder="Filter by name"></span>
-    <span class="hint" id="hint"></span>
-    <span class="hint">Click a column to sort. Click a row to open its evidence.</span>
-  </div>
 </header>
+<div class="filter">
+  <span class="field"><span class="glyph">&#9906;</span>
+    <input type="search" id="q" placeholder="Filter by name" aria-label="Filter by name"></span>
+  {chips}
+  <span class="hint" id="hint"></span>
+</div>
 {sections}{rules_section}"""
-    return _page(title, body, refresh=refresh)
+    return _page(title, body, live=running)
 
 
 def write_report(

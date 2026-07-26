@@ -200,6 +200,22 @@ class StageSpec:
 #   BulkMapProcessor   - processes all samples in one invocation
 
 
+def template_key_for_artifact(relative_path: str) -> str:
+    """the name a prompt uses to reach an artifact this pipeline wrote.
+
+    An artifact is addressed by its path with the separators and the extension
+    folded into the name, so `decompiled/dispatch_ioctl.c` is reached as
+    `decompiled_dispatch_ioctl_c`. Prompt rendering and `deepzero validate`
+    both go through here, so the name a prompt is checked against is the same
+    name it will be given at run time.
+    """
+    return str(relative_path).replace("\\", "/").replace("/", "_").replace(".", "_")
+
+
+# available to every prompt regardless of which stages ran before it
+ALWAYS_PROVIDED: tuple[str, ...] = ("sample_name", "sample_path", "history", "config")
+
+
 class Processor(ABC):
     # which lane of the pipeline this processor operates in
     processor_type: ProcessorType
@@ -220,6 +236,15 @@ class Processor(ABC):
     # human-readable metadata - used by `deepzero list-processors` and future web UI
     description: ClassVar[str] = ""
     version: ClassVar[str] = "1.0"
+
+    # the names a later stage's prompt can reference because this processor
+    # records them: every key it puts in `data`, plus one name per artifact it
+    # writes (see template_key_for_artifact for how a path becomes a name).
+    #
+    # `deepzero validate` checks each prompt against the names its upstream
+    # stages declare, so a prompt asking for something no stage produces is
+    # reported before a run starts rather than rendering as nothing.
+    provides: ClassVar[tuple[str, ...]] = ()
 
     # set by the resolver to the path of the .py file that defines this processor
     _source_file: Path | None = None

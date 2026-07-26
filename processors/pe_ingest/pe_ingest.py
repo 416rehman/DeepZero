@@ -13,6 +13,8 @@ class PEIngest(IngestProcessor):
     )
     version = "2.0"
 
+    provides = ("sha256", "md5", "size_bytes")
+
     def process(self, ctx: ProcessorContext, target: Path) -> list[Sample]:
         extensions = self.config.get("extensions", [".sys"])
         recursive = self.config.get("recursive", True)

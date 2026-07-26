@@ -83,6 +83,20 @@ class GhidraDecompile(MapProcessor):
     )
     version = "2.0"
 
+    # device_name, symbolic_link and dispatch_name are only recorded when the
+    # post-script found them, and the ioctl pair only when the dispatch routine
+    # compares against codes. A prompt should tolerate any of them being absent.
+    provides = (
+        "device_name",
+        "symbolic_link",
+        "dispatch_name",
+        "function_count",
+        "ioctl_codes",
+        "ioctl_count",
+        "decompiled_ghidra_result_json",
+        "decompiled_dispatch_ioctl_c",
+    )
+
     @dataclass
     class Config:
         strategy: str = ""

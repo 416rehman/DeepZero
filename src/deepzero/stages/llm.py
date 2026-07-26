@@ -13,6 +13,7 @@ from deepzero.engine.stage import (
     ProcessorContext,
     ProcessorEntry,
     ProcessorResult,
+    template_key_for_artifact,
 )
 
 _log = logging.getLogger("deepzero.stages.llm")
@@ -20,6 +21,11 @@ _log = logging.getLogger("deepzero.stages.llm")
 
 class GenericLLM(MapProcessor):
     description = "generic LLM assessment - sends context to an LLM via a jinja2 prompt template"
+
+    # the response is also written as an artifact, but its name comes from this
+    # stage's own `output_file` config, so it cannot be declared here. A prompt
+    # in a later stage reaches it by that filename with the dot folded in.
+    provides = ("llm_output_file", "classification")
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         errors = []
@@ -141,7 +147,7 @@ class GenericLLM(MapProcessor):
             if not f.is_file():
                 continue
             rel = f.relative_to(entry.sample_dir)
-            key = str(rel).replace("\\", "/").replace("/", "_").replace(".", "_")
+            key = template_key_for_artifact(rel)
 
             max_tokens = self.config.get("max_context_tokens", 900_000)
             char_budget = max_tokens * 4
@@ -176,18 +182,22 @@ class GenericLLM(MapProcessor):
         return template_vars
 
     def _resolve_template(self, ref: str, ctx: ProcessorContext | None = None) -> Path | None:
-        if "/" in ref or "\\" in ref:
-            resolved = (Path.cwd() / ref).resolve()
-            if resolved.exists():
-                return resolved
-            if ctx is not None:
-                resolved = (ctx.pipeline_dir / ref).resolve()
-                if resolved.exists():
-                    return resolved
-            return None
+        """find the file a prompt reference names, or None if it names no file.
 
+        A bare filename is resolved the same way a path is, because validate()
+        accepts one that exists next to the pipeline. Treating it as inline here
+        instead would send the model the filename as the entire request, and the
+        run would look like it worked.
+        """
         abs_path = Path(ref)
-        if abs_path.is_absolute() and abs_path.exists():
-            return abs_path
+        if abs_path.is_absolute():
+            return abs_path if abs_path.exists() else None
+
+        for base in (Path.cwd(), ctx.pipeline_dir if ctx is not None else None):
+            if base is None:
+                continue
+            resolved = (base / ref).resolve()
+            if resolved.exists() and resolved.is_file():
+                return resolved
 
         return None

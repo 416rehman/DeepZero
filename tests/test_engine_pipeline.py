@@ -93,3 +93,89 @@ stages:
     warnings = validate_pipeline(str(tmp_path))
     assert isinstance(warnings, list)
     assert any("no map" in w.lower() for w in warnings)
+
+
+class TestPromptsAreCheckedBeforeARun:
+    """a prompt naming a value no stage produces renders as nothing, and the
+    model then answers about an empty payload - which reads like a real run."""
+
+    def _pipeline(self, tmp_path: Path, template: str) -> Path:
+        import deepzero.stages  # noqa: F401  (populate the processor registry)
+
+        (tmp_path / "assess.j2").write_text(template, encoding="utf-8")
+        (tmp_path / "pipeline.yaml").write_text(
+            "name: p\nmodel: test/model\n"
+            "stages:\n"
+            "  - name: discover\n    processor: file_discovery\n"
+            "  - name: assess\n    processor: generic_llm\n"
+            "    config:\n      prompt: assess.j2\n",
+            encoding="utf-8",
+        )
+        return tmp_path
+
+    def test_a_value_no_stage_produces_is_an_error(self, tmp_path: Path):
+        p = self._pipeline(tmp_path, "Payload:\n{{ dispatch_code }}\n")
+        errors = [w for w in validate_pipeline(str(p)) if w.startswith("ERROR")]
+        assert len(errors) == 1
+        # the name at fault, and what could have been used instead
+        assert "dispatch_code" in errors[0]
+        assert "sample_name" in errors[0]
+
+    def test_values_every_prompt_gets_are_accepted(self, tmp_path: Path):
+        p = self._pipeline(tmp_path, "{{ sample_name }} at {{ sample_path }}\n")
+        assert not [w for w in validate_pipeline(str(p)) if w.startswith("ERROR")]
+
+    def test_a_value_an_earlier_stage_declares_is_accepted(self, tmp_path: Path):
+        import deepzero.stages  # noqa: F401
+        from deepzero.engine.stage import get_registered_processors
+
+        provided = getattr(get_registered_processors()["file_discovery"], "provides", ())
+        if not provided:
+            pytest.skip("file_discovery declares no values to test against")
+        p = self._pipeline(tmp_path, "{{ %s }}\n" % provided[0])
+        assert not [w for w in validate_pipeline(str(p)) if w.startswith("ERROR")]
+
+    def test_a_prompt_that_does_not_exist_is_reported(self, tmp_path: Path):
+        p = self._pipeline(tmp_path, "{{ sample_name }}")
+        (p / "assess.j2").unlink()
+        errors = [w for w in validate_pipeline(str(p)) if w.startswith("ERROR")]
+        assert any("does not exist" in e for e in errors)
+
+    def test_a_prompt_named_without_a_path_still_loads_the_file(self, tmp_path: Path):
+        """validate accepts a filename sitting next to the pipeline, so rendering
+        has to load that file rather than treating the name as the prompt."""
+        import deepzero.stages  # noqa: F401
+        from deepzero.engine.stage import StageSpec
+        from deepzero.stages.llm import GenericLLM
+
+        self._pipeline(tmp_path, "assessment body")
+        stage = GenericLLM(StageSpec(name="assess", processor="generic_llm", config={}))
+
+        class _Ctx:
+            pipeline_dir = tmp_path
+
+        assert stage._resolve_template("assess.j2", _Ctx()) == (tmp_path / "assess.j2").resolve()
+
+    def test_a_prompt_that_will_not_parse_is_reported(self, tmp_path: Path):
+        p = self._pipeline(tmp_path, "{% if %}")
+        errors = [w for w in validate_pipeline(str(p)) if w.startswith("ERROR")]
+        assert any("will not parse" in e for e in errors)
+
+    def test_a_stage_cannot_use_what_it_produces_itself(self, tmp_path: Path):
+        # a value becomes available to the stages after the one recording it, so
+        # a prompt cannot reach its own stage's output
+        p = self._pipeline(tmp_path, "{{ llm_output_file }}")
+        errors = [w for w in validate_pipeline(str(p)) if w.startswith("ERROR")]
+        assert any("llm_output_file" in e for e in errors)
+
+
+def test_the_bundled_pipeline_prompt_resolves():
+    """the shipped pipeline is the one users run first, so its prompt has to
+    reference only values its own stages record."""
+    import deepzero.stages  # noqa: F401
+
+    repo_pipeline = Path(__file__).resolve().parent.parent / "pipelines" / "loldrivers"
+    if not (repo_pipeline / "pipeline.yaml").exists():
+        pytest.skip("bundled pipeline not present in this checkout")
+    errors = [w for w in validate_pipeline(str(repo_pipeline)) if w.startswith("ERROR")]
+    assert errors == []

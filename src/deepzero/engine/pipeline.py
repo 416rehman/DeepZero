@@ -321,6 +321,73 @@ def _expand_string(s: str) -> str:
     return re.sub(r"\$\{([^}]+)\}", _replace, s)
 
 
+# suffixes that mean a prompt value was naming a file rather than being one
+_PROMPT_SUFFIXES = frozenset({".j2", ".jinja", ".jinja2", ".md", ".txt", ".tmpl", ".prompt"})
+
+
+def _check_prompts(pipeline: PipelineDefinition, resolved: dict[str, type]) -> list[str]:
+    """report prompt values no earlier stage in this pipeline produces.
+
+    A prompt is rendered from whatever the stages before it recorded, so a name
+    none of them produce is only ever going to render as nothing. Reaching the
+    model with an empty payload looks like a working run - the verdict comes
+    back confident and says nothing - so it is caught here instead.
+    """
+    import jinja2
+    from jinja2 import meta
+
+    from deepzero.engine.stage import ALWAYS_PROVIDED
+
+    problems: list[str] = []
+    available = set(ALWAYS_PROVIDED)
+    # only ever parses, never renders, but it matches how the prompt is rendered
+    # at run time so the two cannot disagree about what the template means
+    env = jinja2.Environment(autoescape=jinja2.select_autoescape())
+
+    for spec in pipeline.stage_specs:
+        prompt_ref = str((spec.config or {}).get("prompt", "") or "")
+        # a value carrying a separator or a template suffix was meant to name a
+        # file. Anything else is an inline prompt, which has no names to resolve.
+        # A filename that does not resolve is worth reporting either way: the
+        # engine would take it for an inline prompt and send the model the
+        # filename itself as the entire request.
+        named_a_file = bool(prompt_ref) and (
+            "/" in prompt_ref
+            or "\\" in prompt_ref
+            or Path(prompt_ref).suffix.lower() in _PROMPT_SUFFIXES
+        )
+        if named_a_file:
+            path = Path(prompt_ref)
+            for candidate in (Path.cwd() / path, pipeline.pipeline_dir / path):
+                if candidate.exists():
+                    try:
+                        source = candidate.read_text(encoding="utf-8")
+                    except OSError as exc:
+                        problems.append(f"ERROR: {spec.name}: cannot read {path.name}: {exc}")
+                        break
+                    try:
+                        used = meta.find_undeclared_variables(env.parse(source))
+                    except jinja2.TemplateSyntaxError as exc:
+                        problems.append(f"ERROR: {spec.name}: {path.name} will not parse: {exc}")
+                        break
+                    unknown = sorted(used - available)
+                    if unknown:
+                        problems.append(
+                            f"ERROR: {spec.name}: {path.name} uses "
+                            f"{', '.join(unknown)}, which no earlier stage produces. "
+                            f"available here: {', '.join(sorted(available))}"
+                        )
+                    break
+            # a prompt that resolves to nothing is reported by the processor's own
+            # validate(), which runs before this and knows what its config means
+
+        cls = resolved.get(spec.name)
+        if cls is not None:
+            available.update(getattr(cls, "provides", ()))
+
+    return problems
+
+
 def validate_pipeline(pipeline_ref: str) -> list[str]:
     warnings: list[str] = []
 
@@ -335,11 +402,13 @@ def validate_pipeline(pipeline_ref: str) -> list[str]:
     from deepzero.engine.stage import ProcessorType
 
     proc_types = []
+    resolved: dict[str, type] = {}
     for spec in pipeline.stage_specs:
         try:
             cls = resolve_processor_class(spec.processor)
             stype = getattr(cls, "processor_type", None)
             proc_types.append((spec.name, stype))
+            resolved[spec.name] = cls
         except (
             ValueError,
             FileNotFoundError,
@@ -353,6 +422,8 @@ def validate_pipeline(pipeline_ref: str) -> list[str]:
     has_map = any(st == ProcessorType.MAP for _, st in proc_types)
     if not has_map:
         warnings.append("no map processors found - pipeline has no sample processing stages")
+
+    warnings.extend(_check_prompts(pipeline, resolved))
 
     if not warnings:
         warnings.append("pipeline is valid - no issues found")

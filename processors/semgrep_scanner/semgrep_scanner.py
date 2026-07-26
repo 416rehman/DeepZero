@@ -19,6 +19,10 @@ from deepzero.engine.stage import (
 class SemgrepScanner(BulkMapProcessor):
     description = "runs semgrep batch scan against decompiled source across all active samples"
 
+    # findings_json is the parsed report; `findings` holds its filename, which is
+    # why a prompt wanting the findings themselves has to name findings_json
+    provides = ("finding_count", "findings_cached", "findings", "findings_json")
+
     def _resolve_rules_path(self, ctx: ProcessorContext) -> Path | None:
         # resolve rules_dir consistently for validate() and process(): try
         # cwd-relative first (how the shipped pipelines reference their rules),

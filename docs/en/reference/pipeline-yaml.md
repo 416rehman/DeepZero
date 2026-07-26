@@ -72,3 +72,45 @@ When invoked via the CLI, the parser attempts to resolve processors in strict hi
 ### Dynamic Expansion
 
 Before schema validation binds processors, DeepZero walks the entire YAML DOM tree, evaluating Regex matches against `\$\{([^}]+)\}`. Environment variables dictate the resolved runtime configuration. This explicitly prevents hardcoding API keys or installation directories within committed `.yaml` pipelines.
+
+### Prompt Values
+
+A stage whose `config` carries a `prompt` renders that file as a Jinja template. The
+value can be a path or a filename sitting next to the pipeline; either way the file
+is loaded, never used as the prompt text itself.
+
+Every prompt can use these:
+
+| Value | Type | Description |
+|-------|------|-------------|
+| `sample_name` | string | The sample's filename as the ingest stage recorded it |
+| `sample_path` | string | Absolute path to the sample on disk |
+| `history` | dict | `{stage_name: data}` for every stage that has already run |
+| `config` | dict | This stage's own `config` block |
+
+Beyond those, a prompt can use whatever the stages **before it** recorded. Each
+processor declares those names in its `provides` attribute, and there are two kinds:
+
+- **Data keys** — anything the processor puts in `data`, such as `device_name` or
+  `finding_count`. Available under that name directly, and under `history`.
+- **Artifacts** — a file the processor wrote, reachable by its path with the
+  separators and the extension folded into the name. `decompiled/dispatch_ioctl.c`
+  becomes `decompiled_dispatch_ioctl_c`. JSON is parsed into an object; `.c`, `.h`,
+  `.txt`, `.md`, `.py`, `.yaml` and `.yml` arrive as text. Other file types are not
+  exposed. Anything over the context budget is truncated, and oversized JSON is
+  skipped with a warning rather than parsed.
+
+A value is only available to stages *after* the one recording it, so a prompt cannot
+reach its own stage's output.
+
+To see what a given pipeline offers, run:
+
+```bash
+deepzero validate <pipeline>
+```
+
+A prompt naming something no earlier stage produces is reported as an error listing
+what was available instead, and the same check fails the run if it is reached. This
+matters because an unknown name would otherwise render as nothing: the model would be
+asked to judge an empty payload, and the verdict would come back confident and
+meaningless.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 
 from deepzero.engine.report import (
@@ -406,3 +407,69 @@ class TestLabelsExplainThemselves:
         out = render_index(collect(_seed(tmp_path)), tmp_path)
         assert 'title="An assessment stage recorded a verdict' in out
         assert "cursor:help" in out
+
+
+class TestTheReaderCanRecordWhatTheyChecked:
+    """what a pipeline concluded and what a person verified are separate claims.
+    Only the reader can make the second, so the report has to carry it."""
+
+    def test_a_result_page_offers_the_control(self, tmp_path):
+        index, _ = write_report(_seed(tmp_path))
+        page = (index.parent / "items" / "aaa1.html").read_text(encoding="utf-8")
+        assert 'class="review" data-sid="aaa1"' in page
+        assert 'data-state="confirmed"' in page and 'data-state="outstanding"' in page
+
+    def test_marks_saved_beside_the_report_are_rendered(self, tmp_path):
+        index, _ = write_report(_seed(tmp_path))
+        (index.parent / "marks.json").write_text(
+            json.dumps({"aaa1": {"state": "outstanding", "note": "ACL not checked"}}),
+            encoding="utf-8",
+        )
+        index, _ = write_report(_seed(tmp_path))
+        text = index.read_text(encoding="utf-8")
+        # readable by json, not html-escaped: script content is never decoded
+        assert '{"aaa1": {"state": "outstanding", "note": "ACL not checked"}}' in text
+
+    def test_a_mark_reaches_the_spreadsheet(self, tmp_path):
+        work = _seed(tmp_path)
+        index, _ = write_report(work)
+        (index.parent / "marks.json").write_text(
+            json.dumps({"aaa1": {"state": "confirmed", "note": "reproduced locally"}}),
+            encoding="utf-8",
+        )
+        index, _ = write_report(work)
+        rows = list(csv.DictReader((index.parent / "inventory.csv").open(encoding="utf-8")))
+        risky = next(r for r in rows if r["sample_id"] == "aaa1")
+        assert risky["review"] == "confirmed"
+        assert risky["review_note"] == "reproduced locally"
+
+    def test_an_unrecognised_state_is_not_rendered(self, tmp_path):
+        work = _seed(tmp_path)
+        index, _ = write_report(work)
+        (index.parent / "marks.json").write_text(
+            json.dumps({"aaa1": {"state": "probably-fine", "note": "x"}}), encoding="utf-8"
+        )
+        index, _ = write_report(work)
+        assert "probably-fine" not in index.read_text(encoding="utf-8")
+
+    def test_a_note_cannot_close_the_script_tag(self, tmp_path):
+        work = _seed(tmp_path)
+        index, _ = write_report(work)
+        (index.parent / "marks.json").write_text(
+            json.dumps({"aaa1": {"state": "confirmed", "note": "</script><script>alert(1)"}}),
+            encoding="utf-8",
+        )
+        index, _ = write_report(work)
+        text = index.read_text(encoding="utf-8")
+        assert "<script>alert(1)" not in text
+        assert "\u003c/script>" in text
+
+    def test_marks_are_keyed_on_the_corpus_not_the_page(self, tmp_path):
+        # a rerun rewrites the report; marks have to survive that
+        index, _ = write_report(_seed(tmp_path))
+        text = index.read_text(encoding="utf-8")
+        assert 'data-corpus="loldrivers:C:/drivers"' in text
+
+    def test_the_marks_can_be_taken_out_of_the_browser(self, tmp_path):
+        index, _ = write_report(_seed(tmp_path))
+        assert 'id="export-marks"' in index.read_text(encoding="utf-8")

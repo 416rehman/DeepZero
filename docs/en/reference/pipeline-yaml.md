@@ -114,3 +114,23 @@ what was available instead, and the same check fails the run if it is reached. T
 matters because an unknown name would otherwise render as nothing: the model would be
 asked to judge an empty payload, and the verdict would come back confident and
 meaningless.
+
+### Review Marks
+
+A pipeline records what it concluded. Whether a person has actually checked that
+conclusion is a separate claim, and only the reader can make it, so the report
+carries marks they add while reading.
+
+On any result's page there are two: **confirmed**, and **outstanding** with a note
+saying what is still unproven. What counts as outstanding is left to the reader —
+reproducing a crash, proving a precondition, reading a diff — because from the
+report's side they are all the same shape of unfinished work.
+
+Marks appear against each row in the index and can be filtered on, including
+**Unreviewed**, which is the list of results nobody has looked at yet.
+
+The report is a file, so marks live in the browser. **Export marks** writes them out
+as `marks.json`; save that next to `index.html` and they become part of the report:
+rendered for anyone who opens it, and included in `inventory.csv` as `review` and
+`review_note`. Marks are keyed on the pipeline and target rather than on the file
+path, so re-running over the same corpus keeps them.

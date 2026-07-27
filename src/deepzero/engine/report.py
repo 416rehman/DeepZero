@@ -110,6 +110,37 @@ _BUCKET_RULE = {
 # keys worth promoting into the summary table when a pipeline declares no columns
 _INTERESTING_HINTS = ("count", "score", "severity", "total", "hits", "size", "stars", "rank")
 
+# What a pipeline concludes and what a person has checked are different claims.
+# A stage records the first; only the reader can record the second, so the report
+# carries marks they make while reading it. Deliberately generic: whether the
+# outstanding work is reproducing a crash, proving a precondition or reading a
+# diff is the pipeline's business, and this only needs somewhere to put it.
+MARK_CONFIRMED = "confirmed"
+MARK_OUTSTANDING = "outstanding"
+_MARK_LABELS = {MARK_CONFIRMED: "Confirmed", MARK_OUTSTANDING: "Outstanding"}
+_MARKS_FILE = "marks.json"
+
+
+def _load_marks(out_dir: Path) -> dict[str, dict[str, str]]:
+    """review marks saved back into the report directory, if there are any.
+
+    The report is a file, so marking happens in the browser and lives there.
+    Saving the export next to the report makes the marks durable: they then
+    render for anyone who opens it and appear in the csv alongside everything
+    else, rather than being stranded in one person's browser.
+    """
+    raw = _read_json(out_dir / _MARKS_FILE)
+    if not isinstance(raw, dict):
+        return {}
+    marks: dict[str, dict[str, str]] = {}
+    for sample_id, mark in raw.items():
+        if not isinstance(mark, dict):
+            continue
+        state = str(mark.get("state", ""))
+        if state in _MARK_LABELS:
+            marks[str(sample_id)] = {"state": state, "note": str(mark.get("note", ""))[:300]}
+    return marks
+
 
 @dataclass
 class ReportConfig:
@@ -710,6 +741,40 @@ td.sev .c{color:var(--positive);font-weight:700}
 td.sev .h{color:var(--positive)}
 td.sev .m{color:var(--warn)}
 
+/* review marks ------------------------------------------------------------ */
+/* what a stage concluded and what a person has checked are different claims,
+   so a mark never reuses an outcome colour: green is checked by a human. */
+td.rev{width:1%;white-space:nowrap;text-align:right}
+.mark{font:600 9.5px/1 var(--mono);letter-spacing:.13em;text-transform:uppercase;
+  color:var(--faint);white-space:nowrap}
+.mark.confirmed{color:var(--ok)}
+.mark.outstanding{color:var(--warn)}
+.mark .note{display:block;margin-top:var(--s1);font:400 11px/1.4 var(--mono);
+  letter-spacing:0;text-transform:none;color:var(--faint);max-width:34ch;
+  white-space:normal;text-align:right}
+
+/* the control on a result's own page, where the reader decides */
+.review{margin:var(--s5) 0 0;padding:var(--s4) 0 0;border-top:1px solid var(--rule)}
+.review .lbl{display:block;margin-bottom:var(--s3)}
+.review .opts{display:flex;gap:var(--s2);flex-wrap:wrap}
+.review button{
+  background:transparent;border:1px solid var(--rule);color:var(--faint);
+  padding:var(--s2) var(--s3);font:500 9.5px/1 var(--mono);letter-spacing:.13em;
+  text-transform:uppercase;cursor:pointer;transition:border-color .12s,color .12s
+}
+.review button:hover{border-color:var(--rule-hard);color:var(--body)}
+.review button[aria-pressed="true"]{border-color:currentColor;color:var(--ink)}
+.review button.confirmed[aria-pressed="true"]{color:var(--ok)}
+.review button.outstanding[aria-pressed="true"]{color:var(--warn)}
+.review textarea{
+  display:none;width:100%;margin-top:var(--s3);background:var(--plate);
+  border:1px solid var(--rule-hard);color:var(--ink);padding:var(--s3);
+  font:400 12.5px/1.5 var(--mono);resize:vertical;min-height:62px
+}
+.review textarea:focus{outline:0;border-color:var(--review);box-shadow:0 0 0 3px var(--review-wash)}
+.review.outstanding textarea{display:block}
+.review .saved{margin:var(--s3) 0 0;font:400 11.5px/1 var(--mono);color:var(--faint)}
+
 /* specimen fingerprint ---------------------------------------------------- */
 .strip{display:flex;gap:var(--s3);flex-wrap:wrap;margin-top:var(--s2)}
 .chip{font:400 11px/1.4 var(--mono);color:var(--body);white-space:nowrap}
@@ -789,11 +854,15 @@ _JS = """
   var spread=document.querySelector('.spread');
   function apply(){
     var v=q?q.value.toLowerCase():'';
-    var on=chips.filter(function(c){return c.getAttribute('aria-pressed')==='true'})
-                .map(function(c){return c.dataset.b});
+    var pressed=chips.filter(function(c){return c.getAttribute('aria-pressed')==='true'});
+    var on=pressed.filter(function(c){return c.dataset.b}).map(function(c){return c.dataset.b});
+    var wantMark=pressed.filter(function(c){return c.dataset.mark})
+                        .map(function(c){return c.dataset.mark});
     document.querySelectorAll('tbody tr').forEach(function(r){
       if(!r.dataset.k)return;
-      var hit=r.dataset.k.indexOf(v)>-1&&(!on.length||on.indexOf(r.dataset.b)>-1);
+      var hit=r.dataset.k.indexOf(v)>-1
+        &&(!on.length||on.indexOf(r.dataset.b)>-1)
+        &&(!wantMark.length||wantMark.indexOf(r.dataset.mark||'unmarked')>-1);
       r.style.display=hit?'':'none';
     });
     /* the corpus bar shows which slice of the run is on screen right now */
@@ -845,6 +914,89 @@ _JS = """
     if(!(age>300))setTimeout(function(){location.reload()},20000);
   }
 
+  /* review marks: what the reader has checked, which no stage can know.
+     Held in the browser because the report is a file, and exportable so they
+     can be saved next to it and stop being one person's private notes. */
+  var MK = 'dz:marks:' + (document.body.dataset.corpus || location.pathname);
+  function loadMarks(){
+    var baked = {};
+    try{ baked = JSON.parse(document.getElementById('baked-marks').textContent) }catch(e){}
+    try{
+      var mine = JSON.parse(window.localStorage.getItem(MK) || '{}');
+      for(var k in mine){ baked[k] = mine[k] }
+    }catch(e){}
+    return baked;
+  }
+  function saveMark(sid, mark){
+    try{
+      var all = JSON.parse(window.localStorage.getItem(MK) || '{}');
+      if(mark){ all[sid] = mark } else { delete all[sid] }
+      window.localStorage.setItem(MK, JSON.stringify(all));
+    }catch(e){}
+  }
+
+  var marks = loadMarks();
+
+  /* index: show each mark against its row, and let the list be narrowed to
+     whatever still needs looking at */
+  document.querySelectorAll('tr[data-sid]').forEach(function(row){
+    var m = marks[row.dataset.sid];
+    row.dataset.mark = m ? m.state : 'unmarked';
+    var cell = row.querySelector('.rev');
+    if(!cell || !m) return;
+    var note = m.note ? "<span class='note'>" + m.note.replace(/[<&]/g, function(c){
+      return c === '<' ? '&lt;' : '&amp;';
+    }) + "</span>" : '';
+    cell.innerHTML = "<span class='mark " + m.state + "'>" + m.state + note + "</span>";
+  });
+  // painted before any filter runs, so narrowing by mark sees them
+  apply();
+
+  /* the control on a result's own page */
+  var panel = document.querySelector('.review[data-sid]');
+  if(panel){
+    var sid = panel.dataset.sid;
+    var box = panel.querySelector('textarea');
+    var saved = panel.querySelector('.saved');
+    var current = marks[sid] || null;
+    function paint(){
+      panel.classList.toggle('outstanding', !!current && current.state === 'outstanding');
+      panel.querySelectorAll('button').forEach(function(b){
+        b.setAttribute('aria-pressed', String(!!current && current.state === b.dataset.state));
+      });
+      if(box && current) box.value = current.note || '';
+      saved.textContent = current
+        ? 'marked ' + current.state + (current.note ? ', with a note' : '')
+        : 'not reviewed yet';
+    }
+    panel.querySelectorAll('button').forEach(function(b){
+      b.addEventListener('click', function(){
+        var want = b.dataset.state;
+        current = (current && current.state === want)
+          ? null
+          : {state: want, note: (box && box.value) || ''};
+        saveMark(sid, current); paint();
+      });
+    });
+    if(box) box.addEventListener('input', function(){
+      if(!current) return;
+      current.note = box.value; saveMark(sid, current); paint();
+    });
+    paint();
+  }
+
+  /* marks are only durable once they leave the browser */
+  var dump = document.getElementById('export-marks');
+  if(dump) dump.addEventListener('click', function(e){
+    e.preventDefault();
+    var blob = new Blob([JSON.stringify(loadMarks(), null, 2)], {type:'application/json'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'marks.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
   /* a row opens its own page; the link inside keeps it keyboard reachable */
   document.querySelectorAll('tbody').forEach(function(body){
     body.addEventListener('click',function(e){
@@ -889,15 +1041,31 @@ _JS = """
 """
 
 
-def _page(title: str, body: str, *, live: bool = False) -> str:
+def _page(
+    title: str,
+    body: str,
+    *,
+    live: bool = False,
+    corpus: str = "",
+    marks: dict[str, dict[str, str]] | None = None,
+) -> str:
     # a live page reloads itself from script rather than a meta refresh, so it
     # can put the reader back where they were instead of at the top
     attrs = ' data-live="1"' if live else ""
+    # marks are keyed on the corpus rather than the page, so they survive a run
+    # rewriting the report and are still there when it is regenerated
+    if corpus:
+        attrs += f' data-corpus="{_esc(corpus)}"'
+    # script content is raw text: the parser does not decode entities there, so
+    # html-escaping this would hand the page a document json cannot read. Only
+    # "<" needs neutralising, which is what stops a note closing the tag early.
+    baked = json.dumps(marks or {}).replace("<", "\\u003c")
     return (
         '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"<title>{_esc(title)}</title><style>{_CSS}</style></head>"
         f'<body{attrs}><div class="shell">{body}</div>'
+        f'<script type="application/json" id="baked-marks">{baked}</script>'
         f"<script>{_JS}{_LIVENESS_JS}</script></body></html>"
     )
 
@@ -974,7 +1142,36 @@ def _severity(item: ItemReport) -> str:
     return " ".join(parts) or _DASH
 
 
-def render_item_page(item: ItemReport, out_dir: Path, cfg: ReportConfig, pipeline: str = "") -> str:
+def _review_panel(item: ItemReport, entity: str) -> str:
+    """where the reader records what they have actually checked.
+
+    The pipeline's verdict and a person's verification are separate claims, and
+    only one of them can be made here. What counts as outstanding is left open
+    on purpose: reproducing a crash, proving a precondition or reading a diff
+    are all the same shape of unfinished work from the report's point of view.
+    """
+    return f"""<div class="review" data-sid="{_esc(item.sample_id)}">
+  <span class="lbl">your review</span>
+  <div class="opts">
+    <button type="button" class="confirmed" data-state="confirmed" aria-pressed="false">
+      confirmed</button>
+    <button type="button" class="outstanding" data-state="outstanding" aria-pressed="false">
+      something outstanding</button>
+  </div>
+  <textarea placeholder="what is still unproven about this {_esc(entity)}?"
+    aria-label="what is still outstanding"></textarea>
+  <p class="saved"></p>
+</div>"""
+
+
+def render_item_page(
+    item: ItemReport,
+    out_dir: Path,
+    cfg: ReportConfig,
+    pipeline: str = "",
+    corpus: str = "",
+    marks: dict[str, dict[str, str]] | None = None,
+) -> str:
     res = _RES_CLASS.get(item.bucket, "non")
     evidence = []
     for f in sorted(item.findings, key=lambda x: _SEVERITY_ORDER.get(x["severity"], 9)):
@@ -1051,6 +1248,7 @@ def render_item_page(item: ItemReport, out_dir: Path, cfg: ReportConfig, pipelin
     <hr>
   </div>
   <div class="files">{"".join(files)}</div>
+  {_review_panel(item, cfg.entity)}
 </header>
 <dl class="plate">{plate}</dl>
 <p class="aside">{_esc(stages)}</p>
@@ -1064,7 +1262,7 @@ def render_item_page(item: ItemReport, out_dir: Path, cfg: ReportConfig, pipelin
   <div class="shead q"><h2>Recorded data</h2><span class="of">every value the pipeline stored</span></div>
   {"<table class='kv'><tbody>" + scalar + listy + "</tbody></table>" if (scalar or listy) else "<p class='empty'>Nothing recorded.</p>"}
 </section>"""
-    return _page(f"{item.name} - DeepZero", body)
+    return _page(f"{item.name} - DeepZero", body, corpus=corpus, marks=marks)
 
 
 _STATE_WORDING = {
@@ -1151,6 +1349,9 @@ _LIVENESS_JS = """
 def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 500) -> str:
     cfg: ReportConfig = payload["config"]
     run = payload.get("run") or {}
+    # marks belong to the corpus, not to one run over it, so a rerun keeps them
+    corpus = f"{run.get('pipeline', '')}:{run.get('target', '')}"
+    marks = _load_marks(out_dir)
     t = payload["totals"]
     buckets = payload["buckets"]
     items: list[ItemReport] = payload["items"]
@@ -1234,13 +1435,35 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
         f"{_esc(_BUCKET_LABELS[b])}<b>{n:,}</b></button>"
         for b, n in sorted(present.items(), key=lambda kv: _LIST_ORDER[kv[0]])
     )
+    review_chips = "".join(
+        f"<button type='button' class='chipf' data-mark='{state}' aria-pressed='false' "
+        f'title="{_esc(help_text)}">{label}</button>'
+        for state, label, help_text in (
+            (
+                MARK_CONFIRMED,
+                "Confirmed",
+                "you marked these as checked while reading the report",
+            ),
+            (
+                MARK_OUTSTANDING,
+                "Outstanding",
+                "you marked these as resting on something still unproven",
+            ),
+            (
+                "unmarked",
+                "Unreviewed",
+                "nobody has recorded a review of these yet",
+            ),
+        )
+    )
     body_rows = "".join(
-        "<tr class='{res}' data-k='{k}' data-b='{b}'>"
+        "<tr class='{res}' data-k='{k}' data-b='{b}' data-sid='{sid}'>"
         "<td class='spec'><a href='items/{sid}.html'>{name}</a>{strip}</td>"
         "<td class='r{muted}' data-v='{fc}'>{fc}</td>"
         "<td class='sev' data-v='{risk}'>{sev}</td>"
         # sorts in triage order, not alphabetically: vulnerable before errored
         "<td class='out' data-v='{ord}'><span class='res {res}' title=\"{rule}\">{label}</span></td>"
+        "<td class='rev'></td>"
         "</tr>".format(
             k=_esc(i.name.lower()),
             b=_esc(i.bucket),
@@ -1263,7 +1486,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
   {capped}
   <div class="scroll"><table data-sortable><thead><tr>
     <th>{_esc(entity)}</th><th class="r">findings</th>
-    <th class="r">severity</th><th>outcome</th>
+    <th class="r">severity</th><th>outcome</th><th class="r">review</th>
   </tr></thead><tbody>{body_rows}</tbody></table></div>
 </section>"""
         if shown
@@ -1360,16 +1583,17 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     <a href="inventory.csv">inventory.csv</a>
     <a href="findings.jsonl">findings.jsonl</a>
     <a href="report.json">report.json</a>
+    <a href="#" id="export-marks" title="save your review marks next to the report as marks.json, so they render for anyone who opens it">export marks</a>
   </div>
 </header>
 <div class="filter">
   <span class="field"><span class="glyph">&#9906;</span>
     <input type="search" id="q" placeholder="Filter by name" aria-label="Filter by name"></span>
-  {chips}
+  {chips}{review_chips}
   <span class="hint" id="hint"></span>
 </div>
 {sections}{rules_section}"""
-    return _page(title, body, live=running)
+    return _page(title, body, live=running, corpus=corpus, marks=marks)
 
 
 def write_report(
@@ -1387,6 +1611,14 @@ def write_report(
     (target / "items").mkdir(parents=True, exist_ok=True)
 
     rows = payload.pop("rows")
+    # a mark saved back into the report belongs in the spreadsheet too, so it
+    # can be sorted and counted with everything else rather than only viewed
+    saved_marks = _load_marks(target)
+    if saved_marks:
+        for r in rows:
+            mark = saved_marks.get(str(r.get("sample_id", "")))
+            r["review"] = mark["state"] if mark else ""
+            r["review_note"] = mark["note"] if mark else ""
     fieldnames: list[str] = []
     for r in rows:
         for k in r:
@@ -1415,10 +1647,14 @@ def write_report(
                     + "\n"
                 )
 
-    pipeline = (payload.get("run") or {}).get("pipeline", "")
+    run_info = payload.get("run") or {}
+    pipeline = run_info.get("pipeline", "")
+    corpus = f"{pipeline}:{run_info.get('target', '')}"
+    marks = _load_marks(target)
     for it in items:
         (target / "items" / f"{it.sample_id}.html").write_text(
-            render_item_page(it, target / "items", cfg, pipeline), encoding="utf-8"
+            render_item_page(it, target / "items", cfg, pipeline, corpus, marks),
+            encoding="utf-8",
         )
 
     index = target / "index.html"

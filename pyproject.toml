@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deepzero"
-version = "0.3.0"
+version = "0.4.0"
 description = "agentic pipeline for automated vulnerability research on kernel drivers"
 requires-python = ">=3.11"
 license = {text = "MIT"}

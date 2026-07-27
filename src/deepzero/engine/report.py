@@ -667,7 +667,7 @@ h1 .qty{color:var(--faint);font-weight:400;letter-spacing:-.02em}
 .filter.stuck{box-shadow:var(--lift)}
 .field{
   display:flex;align-items:center;gap:var(--s2);background:var(--plate);
-  border:1px solid var(--rule-hard);padding:0 var(--s3);min-width:250px;
+  border:1px solid var(--rule-hard);padding:0 var(--s3);min-width:210px;
   transition:border-color .12s,box-shadow .12s
 }
 .field:focus-within{border-color:var(--review);box-shadow:0 0 0 3px var(--review-wash)}
@@ -677,7 +677,7 @@ input[type=search]{
   padding:var(--s3) 0;font:400 13px/1 var(--mono)
 }
 input[type=search]::placeholder{color:var(--faint)}
-.hint{color:var(--faint);font-size:11.5px;margin-left:auto}
+.hint{color:var(--faint);font-size:11.5px;margin-left:var(--s2)}
 
 /* outcome toggles: narrowing to a single outcome is the move a triage pass
    makes over and over, so it travels with the search rather than sitting in
@@ -693,6 +693,25 @@ input[type=search]::placeholder{color:var(--faint)}
 .chipf[aria-pressed="true"]{border-color:currentColor;color:var(--ink)}
 .chipf.pos[aria-pressed="true"]{color:var(--positive);background:var(--positive-wash)}
 .chipf.rev[aria-pressed="true"]{color:var(--review);background:var(--review-wash)}
+
+/* Two axes share this bar: what the run concluded, and what a person recorded
+   about it. They narrow the list together rather than being alternatives, so
+   they are separated and named instead of running on as one set of seven.
+   The second axis is shaped differently rather than coloured differently -
+   colour already means outcome here, and a review is not an outcome. */
+.filter .axis{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}
+.filter .axis + .axis{
+  margin-left:var(--s3);padding-left:var(--s4);border-left:1px solid var(--rule)
+}
+.filter .axis .lbl{margin-right:var(--s1)}
+.chipf.mk{border-radius:999px;padding-left:var(--s2)}
+.chipf.mk i{width:6px;height:6px;border-radius:50%;background:var(--inert);flex:none}
+.chipf.mk.confirmed i{background:var(--ok)}
+.chipf.mk.refuted i{background:var(--positive)}
+.chipf.mk.outstanding i{background:var(--warn)}
+.chipf.mk[aria-pressed="true"]{
+  background:var(--plate);border-color:var(--rule-hard);color:var(--ink)
+}
 
 /* sections ---------------------------------------------------------------- */
 section{margin-top:var(--s6)}
@@ -841,7 +860,11 @@ pre{
   .shead{flex-wrap:wrap}
   .shead .of{margin-left:0;text-align:left;flex-basis:100%;max-width:none}
   .filter{position:static}
-  .hint{margin-left:0}
+  /* the axes stack here, so the rule between them turns with them */
+  .filter .axis + .axis{
+    flex-basis:100%;margin-left:0;padding-left:0;border-left:0;
+    padding-top:var(--s3);border-top:1px solid var(--rule)
+  }
   thead th{top:0}
 }
 @media (max-width:900px){
@@ -907,7 +930,12 @@ _JS = """
   function stick(){barEl.classList.toggle('stuck',barEl.getBoundingClientRect().top<=0)}
   if(barEl){
     fit();stick();
-    window.addEventListener('resize',fit);
+    // watch the bar itself rather than the window: it also changes height when
+    // its controls wrap onto another line, which a live run causes on its own
+    // as new outcomes appear and add chips. A stale height parks the table
+    // head in the wrong place.
+    if(window.ResizeObserver){ new ResizeObserver(fit).observe(barEl) }
+    else { window.addEventListener('resize',fit) }
     window.addEventListener('scroll',stick,{passive:true});
   }
 
@@ -1479,8 +1507,8 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
         for b, n in sorted(present.items(), key=lambda kv: _LIST_ORDER[kv[0]])
     )
     review_chips = "".join(
-        f"<button type='button' class='chipf' data-mark='{state}' aria-pressed='false' "
-        f'title="{_esc(help_text)}">{label}</button>'
+        f"<button type='button' class='chipf mk {state}' data-mark='{state}' "
+        f"aria-pressed='false' title=\"{_esc(help_text)}\"><i></i>{label}</button>"
         for state, label, help_text in (
             (
                 MARK_CONFIRMED,
@@ -1637,7 +1665,8 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
 <div class="filter">
   <span class="field"><span class="glyph">&#9906;</span>
     <input type="search" id="q" placeholder="Filter by name" aria-label="Filter by name"></span>
-  {chips}{review_chips}
+  <span class="axis">{chips}</span>
+  <span class="axis"><span class="lbl">reviewed</span>{review_chips}</span>
   <span class="hint" id="hint"></span>
 </div>
 {sections}{rules_section}"""

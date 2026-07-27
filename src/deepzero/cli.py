@@ -172,6 +172,18 @@ def main(ctx: click.Context):
     is_flag=True,
     help="verify the LLM backend is authenticated before running (makes one tiny call)",
 )
+@click.option(
+    "--retry-timeouts",
+    "retry_timeouts",
+    is_flag=True,
+    help="attempt the samples that ran out of time again, keeping every other result",
+)
+@click.option(
+    "--timeout-multiplier",
+    default=2.0,
+    show_default=True,
+    help="how much longer to allow when retrying a stage that ran out of time",
+)
 def run(
     target: str,
     pipeline: str,
@@ -180,6 +192,8 @@ def run(
     verbose: bool,
     clean: bool,
     preflight: bool,
+    retry_timeouts: bool,
+    timeout_multiplier: float,
 ):
     """run a pipeline against a target file or directory (resumes automatically)"""
     _setup_logging(verbose)
@@ -263,6 +277,25 @@ def run(
             )
             raise SystemExit(1)
         console.print("[green]\\[ok][/] LLM backend authenticated")
+
+    if retry_timeouts:
+        # only the stages that ran out of time are forgotten, so this costs the
+        # time those stages need and keeps everything else the run produced
+        retried = 0
+        for state in state_store.list_samples():
+            if state.clear_timed_out_stages():
+                state_store.save_sample(state)
+                retried += 1
+        if retried:
+            for spec in pipeline_def.stage_specs:
+                if spec.timeout > 0:
+                    spec.timeout = int(spec.timeout * timeout_multiplier)
+            console.print(
+                f"[yellow]![/] retrying {retried} sample(s) that ran out of time, "
+                f"with {timeout_multiplier:g}x the budget"
+            )
+        else:
+            console.print("[dim]nothing ran out of time in this run - nothing to retry[/]")
 
     if is_resume:
         run_state = existing_run

@@ -59,11 +59,13 @@ BUCKET_CLEAN = "clean"
 BUCKET_FILTERED = "filtered"
 BUCKET_FAILED = "failed"
 BUCKET_UNASSESSED = "unassessed"
+BUCKET_TIMED_OUT = "timed_out"
 
 _BUCKET_LABELS = {
     BUCKET_VULNERABLE: "Vulnerable",
     BUCKET_SUSPICIOUS: "Needs assessment",
     BUCKET_FAILED: "Errored",
+    BUCKET_TIMED_OUT: "Ran out of time",
     # these were assessed - what is missing is a verdict the pipeline recognises
     BUCKET_UNASSESSED: "Unclear verdict",
     BUCKET_FILTERED: "Filtered out",
@@ -73,6 +75,7 @@ _BUCKET_HELP = {
     BUCKET_VULNERABLE: "an assessment stage concluded these are vulnerable",
     BUCKET_SUSPICIOUS: "findings exist but no assessment confirmed them",
     BUCKET_FAILED: "a stage errored, so these were never fully analysed",
+    BUCKET_TIMED_OUT: "a stage hit its time budget, so these were never finished",
     BUCKET_UNASSESSED: "assessed but the verdict could not be classified",
     BUCKET_FILTERED: "a stage excluded these, so the later stages never saw them",
     BUCKET_CLEAN: "analysed all the way through and nothing was flagged",
@@ -92,6 +95,11 @@ _BUCKET_RULE = {
     BUCKET_FAILED: (
         "A stage recorded an error for these, so they never finished the "
         "pipeline. Their result says nothing about whether they are safe."
+    ),
+    BUCKET_TIMED_OUT: (
+        "A stage hit its time budget before finishing these. That is a statement "
+        "about the budget rather than about the item, and these tend to be the "
+        "largest ones. Rerun with --retry-timeouts to give them longer."
     ),
     BUCKET_UNASSESSED: (
         "An assessment ran and produced text, but its verdict did not match "
@@ -207,6 +215,8 @@ class ItemReport:
     rule_hits: dict[str, int] = field(default_factory=dict)
     sample_dir: str = ""
     filtered_at: str = ""
+    timed_out_at: str = ""
+    timeout_budget: int = 0
     _bucket: str = ""
 
     @property
@@ -232,7 +242,11 @@ class ItemReport:
 
     @property
     def interesting(self) -> bool:
-        return bool(self.findings or self.texts or self.errors or self.classification)
+        # a sample that ran out of time is worth a page of its own: deciding
+        # whether to give it longer is exactly what the reader is here for
+        return bool(
+            self.findings or self.texts or self.errors or self.classification or self.timed_out_at
+        )
 
 
 def _read_json(path: Path) -> Any | None:
@@ -315,13 +329,23 @@ def iter_items(work_dir: Path, cfg: ReportConfig) -> Iterator[ItemReport]:
             # is where the sample left the pipeline
             if not item.filtered_at and (status == "filtered" or verdict == "filter"):
                 item.filtered_at = stage_name
+            # running out of time is not an error: it is recorded with the
+            # budget it exceeded so the report can say what to give it instead
+            if status == "timed_out":
+                item.timed_out_at = stage_name
+                try:
+                    item.timeout_budget = int((output.data or {}).get("__timeout_budget", 0))
+                except (TypeError, ValueError):
+                    item.timeout_budget = 0
             # a skip reason is not a failure; older runs stored it in `error`
             if getattr(output, "skip_reason", ""):
                 item.skips[stage_name] = output.skip_reason
             if output.error:
                 if status == "failed":
                     item.errors[stage_name] = output.error
-                else:
+                elif status != "timed_out":
+                    # a timeout is carried by timed_out_at with its budget, and
+                    # is not work the pipeline chose to skip
                     item.skips.setdefault(stage_name, output.error)
 
             for key, val in (getattr(output, "data", None) or {}).items():
@@ -371,7 +395,9 @@ def iter_items(work_dir: Path, cfg: ReportConfig) -> Iterator[ItemReport]:
 
         bucket = _classify(item.classification, cfg)
         if not bucket:
-            if item.errors:
+            if item.timed_out_at:
+                bucket = BUCKET_TIMED_OUT
+            elif item.errors:
                 bucket = BUCKET_FAILED
             elif item.findings:
                 bucket = BUCKET_SUSPICIOUS
@@ -618,6 +644,7 @@ h1 .qty{color:var(--faint);font-weight:400;letter-spacing:-.02em}
 .spread i.rev{background:var(--review)}
 .spread i.err{background:var(--warn)}
 .spread i.una{background:var(--rule-hard)}
+.spread i.time{background:var(--warn)}
 .spread i.ok{background:var(--ok)}
 .spread i:hover{transform:scaleY(1.7)}
 .spread.narrowed i{opacity:.22}
@@ -629,6 +656,7 @@ h1 .qty{color:var(--faint);font-weight:400;letter-spacing:-.02em}
   margin-right:var(--s2)}
 .rest .err i{background:var(--warn)}
 .rest .una i{background:var(--rule-hard)}
+.rest .time i{background:var(--warn)}
 .rest .ok i{background:var(--ok)}
 .rest .confirmed i{background:var(--ok)}
 .rest .refuted i{background:var(--positive)}
@@ -1159,6 +1187,9 @@ def _strip(item: ItemReport, columns: list[str], limit: int = 3) -> str:
         chips.append(f"<span class='chip'><em>{_esc(_short(key))}</em> {_esc(shown)}</span>")
         if len(chips) >= limit:
             break
+    # the budget it exceeded is the one number a rerun needs, so it leads
+    if item.timeout_budget:
+        chips.insert(0, f"<span class='chip on'><em>budget</em> {item.timeout_budget}s</span>")
     for rule in sorted(item.rule_hits)[:2]:
         chips.append(f"<span class='chip on'>{_esc(rule)}</span>")
     if len(item.rule_hits) > 2:
@@ -1170,6 +1201,7 @@ _RES_CLASS = {
     BUCKET_VULNERABLE: "pos",
     BUCKET_SUSPICIOUS: "rev",
     BUCKET_FAILED: "non",
+    BUCKET_TIMED_OUT: "non",
     BUCKET_UNASSESSED: "non",
     BUCKET_CLEAN: "non",
 }
@@ -1179,7 +1211,8 @@ _LIST_ORDER = {
     BUCKET_VULNERABLE: 0,
     BUCKET_SUSPICIOUS: 1,
     BUCKET_FAILED: 2,
-    BUCKET_UNASSESSED: 3,
+    BUCKET_TIMED_OUT: 3,
+    BUCKET_UNASSESSED: 4,
 }
 
 # a pipeline names its own severities, so they are folded onto the four tiers
@@ -1433,9 +1466,10 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     n_pos = buckets.get(BUCKET_VULNERABLE, 0)
     n_rev = buckets.get(BUCKET_SUSPICIOUS, 0)
     n_err = buckets.get(BUCKET_FAILED, 0)
+    n_time = buckets.get(BUCKET_TIMED_OUT, 0)
     n_una = buckets.get(BUCKET_UNASSESSED, 0)
     n_set = buckets.get(BUCKET_FILTERED, 0)
-    n_ok = max(total - n_pos - n_rev - n_err - n_una - n_set, 0)
+    n_ok = max(total - n_pos - n_rev - n_err - n_time - n_una - n_set, 0)
 
     # the two outcomes somebody has to act on carry the headline; the rest are
     # acknowledged on one line, so the eye is not asked to triage five equals.
@@ -1445,6 +1479,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     )
     rest = (
         ("err", n_err, "errored", BUCKET_FAILED),
+        ("time", n_time, "ran out of time", BUCKET_TIMED_OUT),
         ("una", n_una, "unclear verdict", BUCKET_UNASSESSED),
         ("ok", n_ok, "clear", BUCKET_CLEAN),
         ("set", n_set, "filtered out", BUCKET_FILTERED),

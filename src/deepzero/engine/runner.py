@@ -566,6 +566,15 @@ class PipelineRunner:
                     artifacts=result.artifacts,
                     data=result.data,
                 )
+        elif result.status == StageStatus.TIMED_OUT:
+            budget = int((result.data or {}).get("__timeout_budget", spec.timeout) or 0)
+            state.mark_stage_timed_out(spec.name, budget)
+            log.warning(
+                "[%s] %s ran out of time after %ds - rerun with --retry-timeouts to give it longer",
+                spec.name,
+                state.filename,
+                budget,
+            )
         else:
             state.mark_stage_failed(spec.name, result.error or "processor returned failed status")
             if result.error:
@@ -637,6 +646,15 @@ class PipelineRunner:
                     return None
 
                 return result
+            except TimeoutError:
+                # TimeoutError is an OSError, so this has to come first or the
+                # handler below files running out of time as something breaking
+                if self._shutdown_event.is_set():
+                    return None
+                log.warning(
+                    "[%s] %s exceeded its %ds budget", spec.name, state.filename, spec.timeout
+                )
+                return ProcessorResult.timed_out(spec.timeout)
             except PROCESSOR_ERRORS as exc:
                 if self._shutdown_event.is_set():
                     return None

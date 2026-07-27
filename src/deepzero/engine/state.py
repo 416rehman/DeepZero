@@ -109,6 +109,50 @@ class SampleState:
         self.error = error
         self.verdict = SampleStatus.FAILED
 
+    def mark_stage_timed_out(self, stage_name: str, budget: int) -> None:
+        """the stage ran out of time rather than going wrong.
+
+        Recorded apart from a failure because it is a statement about the
+        budget, not about the sample. The samples that hit it are the largest
+        ones, which in a corpus of anything tend to be the most interesting, so
+        filing them with genuine errors quietly biases a run away from its best
+        targets. The budget is kept so a rerun can say what was already tried.
+        """
+        if stage_name not in self.history:
+            self.history[stage_name] = StageOutput()
+        stage = self.history[stage_name]
+        stage.status = StageStatus.TIMED_OUT
+        stage.error = f"timed out after {budget}s"
+        stage.data = {**stage.data, "__timeout_budget": budget}
+        stage.completed_at = _now()
+        self.error = stage.error
+        self.verdict = SampleStatus.TIMED_OUT
+
+    def timed_out_budget(self) -> int:
+        """the budget the stage that stopped this sample exceeded, if any."""
+        for output in self.history.values():
+            if output.status == StageStatus.TIMED_OUT:
+                try:
+                    return int(output.data.get("__timeout_budget", 0))
+                except (TypeError, ValueError):
+                    return 0
+        return 0
+
+    def clear_timed_out_stages(self) -> list[str]:
+        """forget the stages that ran out of time so they are attempted again.
+
+        Only those stages are dropped. Everything else the run produced for this
+        sample stays, so retrying costs the time those stages need and nothing
+        else - the rest of the run's results are never discarded to get them.
+        """
+        reset = [name for name, out in self.history.items() if out.status == StageStatus.TIMED_OUT]
+        for name in reset:
+            del self.history[name]
+        if reset:
+            self.error = None
+            self.verdict = SampleStatus.ACTIVE
+        return reset
+
     def mark_stage_cached(self, stage_name: str, reason: str = "") -> None:
         """work for this stage was already done (e.g. output already on disk).
 
@@ -144,6 +188,9 @@ class SampleState:
             StageStatus.COMPLETED,
             StageStatus.FILTERED,
             StageStatus.FAILED,
+            # a resumed run does not silently retry these: the budget that was
+            # too short last time is still too short. Retrying is asked for.
+            StageStatus.TIMED_OUT,
         )
 
     def is_active(self) -> bool:

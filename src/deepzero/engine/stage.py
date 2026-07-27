@@ -169,6 +169,16 @@ class ProcessorResult:
         # processing failed - sample is dead
         return cls(status=StageStatus.FAILED, error=error)
 
+    @classmethod
+    def timed_out(cls, budget: int) -> ProcessorResult:
+        # ran out of time rather than went wrong: the sample stops here, but a
+        # longer budget may well get through it, so it is worth offering again
+        return cls(
+            status=StageStatus.TIMED_OUT,
+            error=f"timed out after {budget}s",
+            data={"__timeout_budget": budget},
+        )
+
 
 @dataclass
 class StageSpec:

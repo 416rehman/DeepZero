@@ -12,6 +12,10 @@ class StageStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     FILTERED = "filtered"
+    # ran out of time rather than going wrong. Kept apart from a failure because
+    # it says nothing about the sample, and is the one outcome a longer budget
+    # can change - which makes it the one worth offering to run again.
+    TIMED_OUT = "timed_out"
 
 
 class SampleStatus(str, Enum):
@@ -20,6 +24,7 @@ class SampleStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     FILTERED = "filtered"
+    TIMED_OUT = "timed_out"
 
 
 class RunStatus(str, Enum):

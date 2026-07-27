@@ -121,13 +121,24 @@ A pipeline records what it concluded. Whether a person has actually checked that
 conclusion is a separate claim, and only the reader can make it, so the report
 carries marks they add while reading.
 
-On any result's page there are two: **confirmed**, and **outstanding** with a note
-saying what is still unproven. What counts as outstanding is left to the reader —
+On any result's page there are three:
+
+| Mark | Means |
+|------|-------|
+| **confirmed** | checked, and it holds |
+| **did not hold up** | checked, and it does not — a finished result with a definite answer |
+| **outstanding** | looked at, but something is still unproven |
+
+The last two open a note for what you ran, on what, and what happened, so someone
+else can repeat the attempt. What counts as outstanding is left to the reader —
 reproducing a crash, proving a precondition, reading a diff — because from the
 report's side they are all the same shape of unfinished work.
 
 Marks appear against each row in the index and can be filtered on, including
-**Unreviewed**, which is the list of results nobody has looked at yet.
+**Unreviewed**, which is the list of results nobody has looked at yet. The summary
+counts each of them, so a run can be read as what is actually known rather than only
+what was alleged: a result that did not hold up is never mistaken for one nobody has
+examined.
 
 The report is a file, so marks live in the browser. **Export marks** writes them out
 as `marks.json`; save that next to `index.html` and they become part of the report:

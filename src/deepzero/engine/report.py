@@ -116,8 +116,17 @@ _INTERESTING_HINTS = ("count", "score", "severity", "total", "hits", "size", "st
 # outstanding work is reproducing a crash, proving a precondition or reading a
 # diff is the pipeline's business, and this only needs somewhere to put it.
 MARK_CONFIRMED = "confirmed"
+MARK_REFUTED = "refuted"
 MARK_OUTSTANDING = "outstanding"
-_MARK_LABELS = {MARK_CONFIRMED: "Confirmed", MARK_OUTSTANDING: "Outstanding"}
+# checked and it holds, checked and it does not, and looked at but not settled.
+# Refuted is worth its own state rather than being folded into outstanding: it
+# is a finished piece of work with a definite answer, and a result that did not
+# hold up should never look like one nobody has examined.
+_MARK_LABELS = {
+    MARK_CONFIRMED: "Confirmed",
+    MARK_REFUTED: "Refuted",
+    MARK_OUTSTANDING: "Outstanding",
+}
 _MARKS_FILE = "marks.json"
 
 
@@ -621,6 +630,11 @@ h1 .qty{color:var(--faint);font-weight:400;letter-spacing:-.02em}
 .rest .err i{background:var(--warn)}
 .rest .una i{background:var(--rule-hard)}
 .rest .ok i{background:var(--ok)}
+.rest .confirmed i{background:var(--ok)}
+.rest .refuted i{background:var(--positive)}
+.rest .outstanding i{background:var(--warn)}
+.rest .unmarked i{background:var(--inert)}
+.rest:empty{display:none}
 .rest b{color:var(--body);font-weight:600;margin-right:.38em}
 
 /* statements -------------------------------------------------------------- */
@@ -748,6 +762,7 @@ td.rev{width:1%;white-space:nowrap;text-align:right}
 .mark{font:600 9.5px/1 var(--mono);letter-spacing:.13em;text-transform:uppercase;
   color:var(--faint);white-space:nowrap}
 .mark.confirmed{color:var(--ok)}
+.mark.refuted{color:var(--positive)}
 .mark.outstanding{color:var(--warn)}
 .mark .note{display:block;margin-top:var(--s1);font:400 11px/1.4 var(--mono);
   letter-spacing:0;text-transform:none;color:var(--faint);max-width:34ch;
@@ -765,6 +780,7 @@ td.rev{width:1%;white-space:nowrap;text-align:right}
 .review button:hover{border-color:var(--rule-hard);color:var(--body)}
 .review button[aria-pressed="true"]{border-color:currentColor;color:var(--ink)}
 .review button.confirmed[aria-pressed="true"]{color:var(--ok)}
+.review button.refuted[aria-pressed="true"]{color:var(--positive)}
 .review button.outstanding[aria-pressed="true"]{color:var(--warn)}
 .review textarea{
   display:none;width:100%;margin-top:var(--s3);background:var(--plate);
@@ -772,7 +788,7 @@ td.rev{width:1%;white-space:nowrap;text-align:right}
   font:400 12.5px/1.5 var(--mono);resize:vertical;min-height:62px
 }
 .review textarea:focus{outline:0;border-color:var(--review);box-shadow:0 0 0 3px var(--review-wash)}
-.review.outstanding textarea{display:block}
+.review.outstanding textarea,.review.refuted textarea{display:block}
 .review .saved{margin:var(--s3) 0 0;font:400 11.5px/1 var(--mono);color:var(--faint)}
 
 /* specimen fingerprint ---------------------------------------------------- */
@@ -949,6 +965,25 @@ _JS = """
     }) + "</span>" : '';
     cell.innerHTML = "<span class='mark " + m.state + "'>" + m.state + note + "</span>";
   });
+  /* what has actually been checked, counted here rather than at generation
+     time because marks made in this browser have not been saved back yet */
+  var tally = document.getElementById('review-tally');
+  if(tally){
+    var rows = document.querySelectorAll('tr[data-sid]');
+    if(rows.length){
+      var n = {confirmed:0, refuted:0, outstanding:0, unmarked:0};
+      [].forEach.call(rows, function(r){ n[r.dataset.mark] = (n[r.dataset.mark]||0) + 1 });
+      var parts = [];
+      [['confirmed','confirmed'],['refuted','did not hold up'],
+       ['outstanding','outstanding'],['unmarked','not yet reviewed']]
+        .forEach(function(pair){
+          if(n[pair[0]]) parts.push("<span class='" + pair[0] + "'><i></i><b>" +
+            n[pair[0]] + "</b>" + pair[1] + "</span>");
+        });
+      tally.innerHTML = parts.join('');
+    }
+  }
+
   // painted before any filter runs, so narrowing by mark sees them
   apply();
 
@@ -960,7 +995,11 @@ _JS = """
     var saved = panel.querySelector('.saved');
     var current = marks[sid] || null;
     function paint(){
-      panel.classList.toggle('outstanding', !!current && current.state === 'outstanding');
+      // a result that did not hold up needs its detail as much as an open one,
+      // so both states open the note field
+      var st = current ? current.state : '';
+      panel.classList.toggle('outstanding', st === 'outstanding');
+      panel.classList.toggle('refuted', st === 'refuted');
       panel.querySelectorAll('button').forEach(function(b){
         b.setAttribute('aria-pressed', String(!!current && current.state === b.dataset.state));
       });
@@ -1155,11 +1194,14 @@ def _review_panel(item: ItemReport, entity: str) -> str:
   <div class="opts">
     <button type="button" class="confirmed" data-state="confirmed" aria-pressed="false">
       confirmed</button>
+    <button type="button" class="refuted" data-state="refuted" aria-pressed="false">
+      did not hold up</button>
     <button type="button" class="outstanding" data-state="outstanding" aria-pressed="false">
       something outstanding</button>
   </div>
-  <textarea placeholder="what is still unproven about this {_esc(entity)}?"
-    aria-label="what is still outstanding"></textarea>
+  <textarea placeholder="what did you run, on what, and what happened? enough for
+someone to repeat it on this {_esc(entity)}"
+    aria-label="what you checked and what happened"></textarea>
   <p class="saved"></p>
 </div>"""
 
@@ -1407,6 +1449,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             else ""
         )
         + (f"<p class='rest'>{trailing}</p>" if trailing else "")
+        + "<p class='rest' id='review-tally'></p>"
         + "</div>"
     )
 
@@ -1443,6 +1486,11 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
                 MARK_CONFIRMED,
                 "Confirmed",
                 "you marked these as checked while reading the report",
+            ),
+            (
+                MARK_REFUTED,
+                "Refuted",
+                "you checked these and they did not hold up",
             ),
             (
                 MARK_OUTSTANDING,

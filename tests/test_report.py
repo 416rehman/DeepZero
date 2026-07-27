@@ -473,3 +473,44 @@ class TestTheReaderCanRecordWhatTheyChecked:
     def test_the_marks_can_be_taken_out_of_the_browser(self, tmp_path):
         index, _ = write_report(_seed(tmp_path))
         assert 'id="export-marks"' in index.read_text(encoding="utf-8")
+
+
+class TestAResultThatDidNotHoldUpIsItsOwnOutcome:
+    """checked-and-it-failed is a finished piece of work with a definite answer.
+    Folding it in with unreviewed loses the most expensive result there is."""
+
+    def test_the_control_offers_all_three(self, tmp_path):
+        index, _ = write_report(_seed(tmp_path))
+        page = (index.parent / "items" / "aaa1.html").read_text(encoding="utf-8")
+        for state in ("confirmed", "refuted", "outstanding"):
+            assert f'data-state="{state}"' in page
+
+    def test_a_refuted_result_is_rendered_and_filterable(self, tmp_path):
+        work = _seed(tmp_path)
+        index, _ = write_report(work)
+        (index.parent / "marks.json").write_text(
+            json.dumps({"aaa1": {"state": "refuted", "note": "guard held under verifier"}}),
+            encoding="utf-8",
+        )
+        index, _ = write_report(work)
+        text = index.read_text(encoding="utf-8")
+        assert '"state": "refuted"' in text
+        assert "data-mark='refuted'" in text
+
+    def test_a_refuted_result_reaches_the_spreadsheet(self, tmp_path):
+        work = _seed(tmp_path)
+        index, _ = write_report(work)
+        (index.parent / "marks.json").write_text(
+            json.dumps({"aaa1": {"state": "refuted", "note": "did not reproduce"}}),
+            encoding="utf-8",
+        )
+        index, _ = write_report(work)
+        rows = list(csv.DictReader((index.parent / "inventory.csv").open(encoding="utf-8")))
+        risky = next(r for r in rows if r["sample_id"] == "aaa1")
+        assert risky["review"] == "refuted"
+        assert risky["review_note"] == "did not reproduce"
+
+    def test_the_summary_has_somewhere_to_count_reviews(self, tmp_path):
+        # filled in by the browser, because marks made there are not saved yet
+        index, _ = write_report(_seed(tmp_path))
+        assert "id='review-tally'" in index.read_text(encoding="utf-8")

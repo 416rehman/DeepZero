@@ -194,6 +194,68 @@ def find_dispatch_assignment(decomp, driver_entry=None):
     return None
 
 
+def classify_device_creation(entry_name, creating_functions, load_path_names):
+    """where the device object is created, and whether that is on the load path.
+
+    A driver that only creates its device from a PnP add-device or start-device
+    callback has no device at all on a machine without the hardware, so nothing
+    it exposes can be exercised there. One that creates it in DriverEntry, or in
+    something DriverEntry calls, can be reached anywhere the driver will load.
+
+    Kept free of Ghidra so the decision can be checked on its own: it takes the
+    names of the functions that call IoCreateDevice and the names reachable from
+    DriverEntry, and returns (where, on_load_path).
+    """
+    if not creating_functions:
+        return "", False
+    for name in creating_functions:
+        if name == entry_name:
+            return name, True
+    for name in creating_functions:
+        if name in load_path_names:
+            return name, True
+    return creating_functions[0], False
+
+
+def _functions_calling(api_name):
+    """names of functions that reference an imported api, via the symbol table.
+
+    Cheaper and steadier than decompiling everything and matching text: a call
+    that Ghidra renders differently in C is still a reference here.
+    """
+    fm = currentProgram.getFunctionManager()
+    found = []
+    try:
+        for sym in currentProgram.getSymbolTable().getSymbols(api_name):
+            for ref in sym.getReferences():
+                func = fm.getFunctionContaining(ref.getFromAddress())
+                if func is not None and func.getName() not in found:
+                    found.append(func.getName())
+    except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
+        print("ghidra warning: failed to resolve callers of", api_name, ":", str(exc))
+    return found
+
+
+def _load_path_names(driver_entry, depth=2):
+    """names reachable from DriverEntry, to the depth the dispatch search uses."""
+    names = []
+    if driver_entry is None:
+        return names
+    frontier = [driver_entry]
+    for _ in range(depth):
+        nxt = []
+        for func in frontier:
+            try:
+                for called in func.getCalledFunctions(getMonitor()):
+                    if called.getName() not in names:
+                        names.append(called.getName())
+                        nxt.append(called)
+            except (RuntimeError, ValueError, TypeError, AttributeError):
+                continue
+        frontier = nxt
+    return names
+
+
 def decode_ioctl_code(code):
     """what a single IOCTL code decodes to.
 
@@ -256,6 +318,8 @@ def main():
         "dispatch_c": "",
         "device_name": "",
         "symbolic_link": "",
+        "device_created_in": "",
+        "device_on_load_path": False,
         "ioctl_handlers": [],
         "function_count": 0,
     }
@@ -293,6 +357,16 @@ def main():
         except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
             print("ghidra warning: failed to read data entry:", str(exc))
             continue
+
+    # whether the device object exists on a machine without the hardware: a
+    # driver that only creates it from a PnP callback exposes nothing there,
+    # so a finding against it cannot be exercised on an ordinary test system
+    creators = _functions_calling("IoCreateDevice")
+    where, on_load_path = classify_device_creation(
+        driver_entry.getName(), creators, _load_path_names(driver_entry)
+    )
+    result["device_created_in"] = where
+    result["device_on_load_path"] = on_load_path
 
     # find dispatch handler
     dispatch_func = find_dispatch_assignment(decomp, driver_entry)

@@ -16,6 +16,31 @@ A reference BYOVD (Bring Your Own Vulnerable Driver) pipeline is maintained in `
 6. **pick_top_10:** Heuristic reduction to top candidate tier.
 7. **assess:** LLM prompt injection and logical assessment.
 
+### Whether a finding can be exercised without the hardware
+
+Many drivers create their device object only once their hardware is enumerated. On a
+machine or VM without that device, `\.\<name>` never opens, so nothing the driver
+exposes can be reached — and from the report alone that is indistinguishable from the
+driver not being vulnerable.
+
+The `decompile` stage records where the device object is created:
+
+| Value | Meaning |
+|-------|---------|
+| `device_created_in` | the function that calls `IoCreateDevice` |
+| `device_on_load_path` | whether that function is `DriverEntry`, or something it calls |
+
+`device_on_load_path: true` means the device appears on any machine that will load the
+driver, so a finding against it can be confirmed today. `false` means it is created
+somewhere else — typically a PnP add-device or start-device callback — and confirming
+anything needs the physical device. Neither is recorded when `IoCreateDevice` is not
+found at all, rather than guessing.
+
+The bundled pipeline lists `decompile.device_on_load_path` under `report.columns`, so
+it shows against each driver. That is all it takes: the value is declared in the
+processor's `provides` and named by the pipeline, and the report stays unaware of what
+a device object is.
+
 ### What decompilation writes per driver
 
 The `decompile` stage writes into each sample's `decompiled/` directory:

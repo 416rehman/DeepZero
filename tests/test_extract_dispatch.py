@@ -35,6 +35,7 @@ builtins.getState = lambda: type("MockState", (), {"getCurrentProgram": lambda: 
 builtins.monitor = None
 
 from processors.ghidra_decompile.scripts.extract_dispatch import (  # noqa: E402
+    classify_device_creation,
     decode_ioctl_code,
     extract_ioctl_codes,
 )
@@ -74,3 +75,37 @@ class TestAnIoctlEntryRecordsTheCodeNotTheRoutine:
         # METHOD_NEITHER hands the driver a raw user pointer, so the low bits
         # deciding it are worth a case of their own
         assert decode_ioctl_code(0x00222003)["method"] == 3
+
+
+class TestWhetherTheDeviceExistsWithoutTheHardware:
+    """a driver that only creates its device from a PnP callback exposes nothing
+    on a machine without the device, so a finding against it cannot be tried
+    there. That is a different thing from the finding being wrong."""
+
+    def test_created_in_driver_entry_is_reachable_anywhere(self):
+        where, on_load = classify_device_creation("DriverEntry", ["DriverEntry"], [])
+        assert (where, on_load) == ("DriverEntry", True)
+
+    def test_created_by_something_driver_entry_calls_still_counts(self):
+        where, on_load = classify_device_creation(
+            "DriverEntry", ["InitDevice"], ["InitDevice", "SetupDispatch"]
+        )
+        assert (where, on_load) == ("InitDevice", True)
+
+    def test_created_only_off_the_load_path_needs_the_hardware(self):
+        where, on_load = classify_device_creation("DriverEntry", ["AddDevice"], ["InitDispatch"])
+        assert (where, on_load) == ("AddDevice", False)
+
+    def test_driver_entry_wins_when_it_is_created_in_both(self):
+        # if the load path creates one at all, the driver can be exercised
+        where, on_load = classify_device_creation("DriverEntry", ["AddDevice", "DriverEntry"], [])
+        assert (where, on_load) == ("DriverEntry", True)
+
+    def test_never_created_is_not_reported_as_either(self):
+        # absence of evidence: say nothing rather than claim it needs hardware
+        assert classify_device_creation("DriverEntry", [], []) == ("", False)
+
+    def test_a_renamed_entry_point_is_honoured(self):
+        # ghidra falls back to GsDriverEntry or the raw entry point
+        where, on_load = classify_device_creation("GsDriverEntry", ["GsDriverEntry"], [])
+        assert (where, on_load) == ("GsDriverEntry", True)

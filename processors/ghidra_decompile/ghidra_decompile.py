@@ -89,6 +89,10 @@ class GhidraDecompile(MapProcessor):
     provides = (
         "device_name",
         "symbolic_link",
+        # whether the device object exists without the hardware present: a driver
+        # that only creates it from a PnP callback exposes nothing to test against
+        "device_created_in",
+        "device_on_load_path",
         "dispatch_name",
         "function_count",
         "ioctl_codes",
@@ -175,7 +179,14 @@ class GhidraDecompile(MapProcessor):
             return ProcessorResult.fail(result.get("error", "ghidra analysis failed"))
 
         data: dict[str, Any] = {}
-        for key in ("device_name", "symbolic_link", "dispatch_name", "function_count"):
+        for key in (
+            "device_name",
+            "symbolic_link",
+            "dispatch_name",
+            "function_count",
+            "device_created_in",
+            "device_on_load_path",
+        ):
             if key in result:
                 data[key] = result[key]
 

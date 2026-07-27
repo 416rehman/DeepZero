@@ -25,6 +25,9 @@ report:
   safe_when: [safe]
   columns:
     - semgrep_scanner.finding_count
+    # whether the device can be opened on a machine without the hardware, which
+    # decides whether a finding here can be exercised today or needs the device
+    - decompile.device_on_load_path
     - discover.priority_score
     - decompile.function_count
     - discover.dangerous_imports

@@ -194,6 +194,24 @@ def find_dispatch_assignment(decomp, driver_entry=None):
     return None
 
 
+def decode_ioctl_code(code):
+    """what a single IOCTL code decodes to.
+
+    The routine handling it is the same for every code in a driver, and is
+    recorded once as dispatch_c. An entry therefore carries only the code and
+    its decoded fields: storing the routine per code grew one driver's result
+    to 52 MB, nearly all of it the same text repeated.
+    """
+    return {
+        "code": code,
+        "hex": "0x%08X" % code,
+        "device_type": (code >> 16) & 0xFFFF,
+        "function": (code >> 2) & 0xFFF,
+        "method": code & 0x3,
+        "access": (code >> 14) & 0x3,
+    }
+
+
 def extract_ioctl_codes(decompiled_c):
     """extract IOCTL code constants from a decompiled dispatch function"""
     codes = []
@@ -349,15 +367,7 @@ def main():
         # every code is handled by the same dispatch routine, which is recorded
         # once as result["dispatch_c"] and written to dispatch_ioctl.c. repeating
         # it per code made this file grow to tens of megabytes for one driver.
-        handler_info = {
-            "code": code,
-            "hex": "0x%08X" % code,
-            "device_type": (code >> 16) & 0xFFFF,
-            "function": (code >> 2) & 0xFFF,
-            "method": code & 0x3,
-            "access": (code >> 14) & 0x3,
-        }
-        result["ioctl_handlers"].append(handler_info)
+        result["ioctl_handlers"].append(decode_ioctl_code(code))
 
         # one file per code recording what the code decodes to. the routine that
         # handles it is the same for every code and is written once to

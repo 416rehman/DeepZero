@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -15,6 +16,11 @@ from rich.table import Table
 
 from deepzero.engine.types import RunStatus
 
+_RUN_JSON = "run.json"
+_DEEPZERO_PREFIX = "deepzero."
+_ERROR_PREFIX = "[bold red]X ERROR[/]: "
+_DIM_PLACEHOLDER = "[dim white]·[/]"
+
 
 def _ensure_utf8_streams() -> None:
     # deepzero prints unicode status glyphs (checkmarks, arrows, box drawing).
@@ -22,11 +28,8 @@ def _ensure_utf8_streams() -> None:
     # default cp1252 encoding raises UnicodeEncodeError and crashes the run.
     # force utf-8 with a non-fatal error handler before any Console is built.
     for stream in (sys.stdout, sys.stderr):
-        try:
+        with suppress(AttributeError, ValueError):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
-        except (AttributeError, ValueError):
-            # stream is not a reconfigurable TextIOWrapper (e.g. already wrapped)
-            pass
 
 
 _ensure_utf8_streams()
@@ -61,14 +64,14 @@ class _ShortNameFormatter(logging.Formatter):
         short = _LOG_PREFIX_MAP.get(name)
         if short is None:
             if name.startswith("deepzero.processor."):
-                short = name[len("deepzero.processor.") :]
-            elif name.startswith("deepzero."):
-                short = name[len("deepzero.") :]
+                short = name.removeprefix("deepzero.processor.")
+            elif name.startswith(_DEEPZERO_PREFIX):
+                short = name.removeprefix(_DEEPZERO_PREFIX)
             else:
                 short = name
 
         # force silence third-party stacktraces completely
-        if not name.startswith("deepzero."):
+        if not name.startswith(_DEEPZERO_PREFIX):
             record.exc_info = None
             record.exc_text = None
 
@@ -93,10 +96,10 @@ def _latest_run_dir(base: Path) -> Path | None:
     """
     if not base.exists():
         return None
-    runs = [d for d in base.iterdir() if d.is_dir() and (d / "run.json").exists()]
+    runs = [d for d in base.iterdir() if d.is_dir() and (d / _RUN_JSON).exists()]
     if runs:
-        return max(runs, key=lambda d: (d / "run.json").stat().st_mtime)
-    return base if (base / "run.json").exists() else None
+        return max(runs, key=lambda d: (d / _RUN_JSON).stat().st_mtime)
+    return base if (base / _RUN_JSON).exists() else None
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -212,7 +215,7 @@ def run(
     try:
         pipeline_def = load_pipeline(pipeline, model_override=model, work_dir_override=work_dir)
     except ValueError as e:
-        console.print(f"[bold red]X ERROR[/]: {e}")
+        console.print(f"{_ERROR_PREFIX}{e}")
         raise SystemExit(1)
 
     # scope the run to this corpus so different targets through the same pipeline
@@ -273,7 +276,7 @@ def run(
         problem = llm.check_auth()
         if problem:
             console.print(
-                f"[bold red]X ERROR[/]: LLM backend '{pipeline_def.model}' is not ready: {problem}"
+                f"{_ERROR_PREFIX}LLM backend '{pipeline_def.model}' is not ready: {problem}"
             )
             raise SystemExit(1)
         console.print("[green]\\[ok][/] LLM backend authenticated")
@@ -370,19 +373,19 @@ def report(
         try:
             pipeline_def = load_pipeline(pipeline)
         except ValueError as e:
-            console.print(f"[bold red]X ERROR[/]: {e}")
+            console.print(f"{_ERROR_PREFIX}{e}")
             raise SystemExit(1)
         work_path = _latest_run_dir(pipeline_def.base_work_dir)
         if work_path is None:
-            console.print(f"[bold red]X ERROR[/]: no runs found under {pipeline_def.base_work_dir}")
+            console.print(f"{_ERROR_PREFIX}no runs found under {pipeline_def.base_work_dir}")
             raise SystemExit(1)
         report_cfg = pipeline_def.report
     else:
-        console.print("[bold red]X ERROR[/]: pass --pipeline or --work-dir")
+        console.print(f"{_ERROR_PREFIX}pass --pipeline or --work-dir")
         raise SystemExit(1)
 
     if not work_path.exists():
-        console.print(f"[bold red]X ERROR[/]: work directory does not exist: {work_path}")
+        console.print(f"{_ERROR_PREFIX}work directory does not exist: {work_path}")
         raise SystemExit(1)
 
     html_path, json_path = write_report(work_path, Path(out) if out else None, config=report_cfg)
@@ -414,7 +417,7 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
         try:
             pipeline_def = load_pipeline(pipeline)
         except ValueError as e:
-            console.print(f"[bold red]X ERROR[/]: {e}")
+            console.print(f"{_ERROR_PREFIX}{e}")
             raise SystemExit(1)
 
         work_path = _latest_run_dir(pipeline_def.base_work_dir)
@@ -666,9 +669,9 @@ def _print_stats(run_state, manifest: list[dict[str, Any]] | None = None) -> Non
             discovered = run_state.stats.get("discovered", 0)
             table.add_row(
                 stage_name,
-                str(discovered) if discovered else "[dim white]·[/]",
-                "[dim white]·[/]",
-                "[dim white]·[/]",
+                str(discovered) if discovered else _DIM_PLACEHOLDER,
+                _DIM_PLACEHOLDER,
+                _DIM_PLACEHOLDER,
             )
         else:
             counts = per_stage.get(stage_name, {})
@@ -676,9 +679,9 @@ def _print_stats(run_state, manifest: list[dict[str, Any]] | None = None) -> Non
                 # stage completely unstarted (force dim white to strip column colors)
                 table.add_row(
                     f"[dim white]◦ {stage_name}[/]",
-                    "[dim white]·[/]",
-                    "[dim white]·[/]",
-                    "[dim white]·[/]",
+                    _DIM_PLACEHOLDER,
+                    _DIM_PLACEHOLDER,
+                    _DIM_PLACEHOLDER,
                 )
             else:
                 p = counts.get("completed", 0)
@@ -686,9 +689,9 @@ def _print_stats(run_state, manifest: list[dict[str, Any]] | None = None) -> Non
                 err = counts.get("failed", 0)
                 table.add_row(
                     stage_name,
-                    str(p) if p else "[dim white]·[/]",
-                    str(f) if f else "[dim white]·[/]",
-                    str(err) if err else "[dim white]·[/]",
+                    str(p) if p else _DIM_PLACEHOLDER,
+                    str(f) if f else _DIM_PLACEHOLDER,
+                    str(err) if err else _DIM_PLACEHOLDER,
                 )
 
     console.print(table)

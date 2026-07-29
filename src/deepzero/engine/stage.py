@@ -25,7 +25,7 @@ class _NullProgressReporter:
     def update(
         self, amount: int = 0, total: int | None = None, description: str | None = None
     ) -> None:
-        pass
+        return
 
 
 @runtime_checkable
@@ -311,11 +311,11 @@ class Processor(ABC):
 
     def setup(self, global_config: dict[str, Any]) -> None:
         # called once before pipeline execution begins
-        pass
+        return
 
     def teardown(self) -> None:
         # called once after pipeline execution completes
-        pass
+        return
 
 
 class IngestProcessor(Processor):

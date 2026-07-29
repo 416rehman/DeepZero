@@ -209,7 +209,7 @@ def _resolve_processors(pipeline: PipelineDefinition) -> None:
             if isinstance(instance, IngestProcessor):
                 raise ValueError(
                     f"stage '{spec.name}' at position {i} is an IngestProcessor. "
-                    f"only the first stage can be an ingest processor."
+                    "only the first stage can be an ingest processor."
                 )
             if not isinstance(instance, (MapProcessor, ReduceProcessor, BulkMapProcessor)):
                 raise ValueError(

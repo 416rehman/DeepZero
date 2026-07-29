@@ -7,6 +7,7 @@ more specific backend lands here ("openai/gpt-4o", "gemini/...", "gpt-4o", ...).
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from typing import Any, ClassVar
 
 from deepzero.engine.backends.base import LLMBackend, _NeverRaised
@@ -14,21 +15,19 @@ from deepzero.engine.backends.base import LLMBackend, _NeverRaised
 log = logging.getLogger("deepzero.llm.litellm")
 
 
-def _resolve_exc(obj: Any, name: str) -> type[BaseException]:
-    cls = getattr(obj, name, None)
-    try:
-        if isinstance(cls, type) and issubclass(cls, BaseException):
-            return cls
-    except TypeError:
-        pass
-    return _NeverRaised
-
-
 class LiteLLMBackend(LLMBackend):
     display_name: ClassVar[str] = "litellm"
     # litellm surfaces auth problems as APIError subclasses that are also in the
     # retryable set, so there is no distinct fail-fast class to declare
     non_retryable_errors: ClassVar[tuple[type[BaseException], ...]] = (_NeverRaised,)
+
+    @staticmethod
+    def _resolve_exc(obj: Any, name: str) -> type[BaseException]:
+        cls = getattr(obj, name, None)
+        with suppress(TypeError):
+            if isinstance(cls, type) and issubclass(cls, BaseException):
+                return cls
+        return _NeverRaised
 
     def __init__(self, model: str, **kwargs: Any):
         super().__init__(model, **kwargs)
@@ -46,10 +45,10 @@ class LiteLLMBackend(LLMBackend):
 
         # instance-level overrides of the class retry roles, with safe fallbacks
         # for test mocks that lack the real exception classes
-        self.rate_limit_error = _resolve_exc(litellm, "RateLimitError")
-        self.context_window_error = _resolve_exc(litellm, "ContextWindowExceededError")
+        self.rate_limit_error = self._resolve_exc(litellm, "RateLimitError")
+        self.context_window_error = self._resolve_exc(litellm, "ContextWindowExceededError")
         api_errors = tuple(
-            _resolve_exc(litellm, name) for name in ("APIConnectionError", "APIError")
+            self._resolve_exc(litellm, name) for name in ("APIConnectionError", "APIError")
         )
         self.retryable_errors = api_errors + (OSError, ValueError, RuntimeError)
 

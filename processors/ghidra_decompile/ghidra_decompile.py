@@ -63,25 +63,25 @@ def _total_ram_gb() -> float | None:
     return None
 
 
-def _auto_ghidra_workers(cpu: int | None = None, ram_gb: float | None = None) -> int:
-    """a memory-safe default worker count for ghidra headless.
-
-    bounded by cpu count, available RAM (~4 GiB/worker), and a hard cap. falls
-    back to a conservative cpu-only bound when RAM can't be measured.
-    """
-    cpu = cpu or os.cpu_count() or 4
-    ram = ram_gb if ram_gb is not None else _total_ram_gb()
-    if ram is None:
-        return max(1, min(cpu, 4))
-    by_ram = max(1, int(ram // _GHIDRA_GB_PER_WORKER))
-    return max(1, min(cpu, by_ram, _GHIDRA_MAX_AUTO_WORKERS))
-
-
 class GhidraDecompile(MapProcessor):
     description = (
         "decompiles binaries using ghidra headless analysis with a configurable post-script"
     )
     version = "2.0"
+
+    @staticmethod
+    def _auto_ghidra_workers(cpu: int | None = None, ram_gb: float | None = None) -> int:
+        """a memory-safe default worker count for ghidra headless.
+
+        bounded by cpu count, available RAM (~4 GiB/worker), and a hard cap. falls
+        back to a conservative cpu-only bound when RAM can't be measured.
+        """
+        cpu = cpu or os.cpu_count() or 4
+        ram = ram_gb if ram_gb is not None else _total_ram_gb()
+        if ram is None:
+            return max(1, min(cpu, 4))
+        by_ram = max(1, int(ram // _GHIDRA_GB_PER_WORKER))
+        return max(1, min(cpu, by_ram, _GHIDRA_MAX_AUTO_WORKERS))
 
     # device_name, symbolic_link and dispatch_name are only recorded when the
     # post-script found them, and the ioctl pair only when the dispatch routine
@@ -117,7 +117,7 @@ class GhidraDecompile(MapProcessor):
     def max_parallelism(self) -> int | None:
         if self.config.max_parallel and self.config.max_parallel > 0:
             return self.config.max_parallel
-        return _auto_ghidra_workers()
+        return self._auto_ghidra_workers()
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         if not self.config.ghidra_install_dir:
@@ -364,3 +364,6 @@ class GhidraDecompile(MapProcessor):
         raise FileNotFoundError(
             f"analyzeHeadless not found in {ghidra_dir}/support/ - verify ghidra install directory"
         )
+
+
+_auto_ghidra_workers = GhidraDecompile._auto_ghidra_workers

@@ -81,7 +81,7 @@ def _resolve_from_processors_dir(processor_ref: str) -> type[Any]:
 
     raise FileNotFoundError(
         f"'{processor_ref}' resolved to '{abs_path}' which is not a .py file. "
-        f"use '<dir>/<file>.py' format, e.g. 'ghidra_decompile/ghidra_decompile.py'"
+        "use '<dir>/<file>.py' format, e.g. 'ghidra_decompile/ghidra_decompile.py'"
     )
 
 

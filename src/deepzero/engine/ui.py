@@ -23,6 +23,7 @@ _GLYPH_DONE = "✓"
 _GLYPH_FAILED = "✗"
 _GLYPH_SKIPPED = "–"
 _ARROW = " → "
+_DIM_DOT = "[dim]·[/]"
 
 
 class StageState:
@@ -246,6 +247,22 @@ class PipelineDashboard:
 
         return Group(*parts)
 
+    @staticmethod
+    def _zero_or_val(count: int, is_ingest: bool) -> str:
+        if is_ingest:
+            return _DIM_DOT
+        return str(count) if count > 0 else _DIM_DOT
+
+    @staticmethod
+    def _format_elapsed(seconds: float) -> str:
+        if seconds < 0.1:
+            return "—"
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        minutes = int(seconds // 60)
+        secs = seconds % 60
+        return f"{minutes}m{secs:04.1f}s"
+
     def _build_table(self) -> Table | None:
 
         table = Table(
@@ -264,47 +281,49 @@ class PipelineDashboard:
             if info.state == StageState.PENDING:
                 table.add_row(
                     f"[dim]{_GLYPH_PENDING} {info.name}[/]",
-                    "[dim]·[/]",
-                    "[dim]·[/]",
-                    "[dim]·[/]",
-                    "[dim]·[/]",
-                    "[dim]·[/]",
+                    _DIM_DOT,
+                    _DIM_DOT,
+                    _DIM_DOT,
+                    _DIM_DOT,
+                    _DIM_DOT,
                 )
             elif info.state == StageState.RUNNING:
                 # still running, show live counts!
-                in_str = "[dim]·[/]" if info.is_ingest else f"{info.input_count:,}"
+                in_str = _DIM_DOT if info.is_ingest else f"{info.input_count:,}"
                 table.add_row(
                     f"[bold cyan]{_GLYPH_RUNNING} {info.name}[/]",
                     in_str,
                     f"{info.passed:,}",
-                    _zero_or_val(info.filtered, info.is_ingest),
-                    _zero_or_val(info.failed, info.is_ingest),
+                    self._zero_or_val(info.filtered, info.is_ingest),
+                    self._zero_or_val(info.failed, info.is_ingest),
                     "[dim]…[/]",
                 )
             elif info.state == StageState.SKIPPED:
                 table.add_row(
                     f"[dim]{_GLYPH_SKIPPED} {info.name}[/]",
-                    "[dim]·[/]",
-                    "[dim]·[/]",
-                    "[dim]·[/]",
-                    "[dim]·[/]",
-                    "[dim]·[/]",
+                    _DIM_DOT,
+                    _DIM_DOT,
+                    _DIM_DOT,
+                    _DIM_DOT,
+                    _DIM_DOT,
                 )
             elif info.state == StageState.FAILED:
-                in_str = "[dim]·[/]" if info.is_ingest else f"{info.input_count:,}"
-                time_str = _format_elapsed(info.elapsed_s)
+                in_str = _DIM_DOT if info.is_ingest else f"{info.input_count:,}"
+                time_str = self._format_elapsed(info.elapsed_s)
                 table.add_row(
                     f"[red]{_GLYPH_FAILED} {info.name}[/]",
                     in_str,
                     f"{info.passed:,}",
-                    _zero_or_val(info.filtered, info.is_ingest),
-                    _zero_or_val(info.failed, info.is_ingest),
+                    self._zero_or_val(info.filtered, info.is_ingest),
+                    self._zero_or_val(info.failed, info.is_ingest),
                     time_str,
                 )
             elif info.state == StageState.DONE:
-                in_str = "[dim]·[/]" if info.is_ingest else f"{info.input_count:,}"
+                in_str = _DIM_DOT if info.is_ingest else f"{info.input_count:,}"
                 time_str = (
-                    "[dim]cached[/]" if info.is_fully_cached else _format_elapsed(info.elapsed_s)
+                    "[dim]cached[/]"
+                    if info.is_fully_cached
+                    else self._format_elapsed(info.elapsed_s)
                 )
                 glyph = "↻" if info.is_fully_cached else _GLYPH_DONE
                 style = "dim blue" if info.is_fully_cached else "green"
@@ -312,25 +331,9 @@ class PipelineDashboard:
                     f"[{style}]{glyph} {info.name}[/]",
                     in_str,
                     f"{info.passed:,}",
-                    _zero_or_val(info.filtered, info.is_ingest),
-                    _zero_or_val(info.failed, info.is_ingest),
+                    self._zero_or_val(info.filtered, info.is_ingest),
+                    self._zero_or_val(info.failed, info.is_ingest),
                     time_str,
                 )
 
         return table
-
-
-def _zero_or_val(count: int, is_ingest: bool) -> str:
-    if is_ingest:
-        return "[dim]·[/]"
-    return str(count) if count > 0 else "[dim]·[/]"
-
-
-def _format_elapsed(seconds: float) -> str:
-    if seconds < 0.1:
-        return "—"
-    if seconds < 60:
-        return f"{seconds:.1f}s"
-    minutes = int(seconds // 60)
-    secs = seconds % 60
-    return f"{minutes}m{secs:04.1f}s"

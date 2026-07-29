@@ -15,6 +15,7 @@ log = logging.getLogger("deepzero.state")
 
 # enforced on load - reject incompatible state from v1 runs
 STATE_VERSION = 2
+_STATE_JSON = "state.json"
 
 
 class SafeJSONEncoder(json.JSONEncoder):
@@ -288,11 +289,11 @@ class StateStore:
 
     def save_sample(self, state: SampleState) -> None:
         d = self.sample_dir(state.sample_id)
-        path = d / "state.json"
+        path = d / _STATE_JSON
         self._atomic_write(path, self._dumps(sample_to_dict(state)))
 
     def load_sample(self, sample_id: str) -> SampleState | None:
-        path = self.sample_dir(sample_id) / "state.json"
+        path = self.sample_dir(sample_id) / _STATE_JSON
         if not path.exists():
             return None
         try:
@@ -316,7 +317,7 @@ class StateStore:
         if not self._samples_dir.exists():
             return results
         for d in self._samples_dir.iterdir():
-            if d.is_dir() and (d / "state.json").exists():
+            if d.is_dir() and (d / _STATE_JSON).exists():
                 state = self.load_sample(d.name)
                 if state is not None:
                     results.append(state)

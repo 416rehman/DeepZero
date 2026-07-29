@@ -18,6 +18,7 @@ from deepzero.engine.stage import (
 
 class SemgrepScanner(BulkMapProcessor):
     description = "runs semgrep batch scan against decompiled source across all active samples"
+    _FINDINGS_JSON = "findings.json"
 
     # findings_json is the parsed report; `findings` holds its filename, which is
     # why a prompt wanting the findings themselves has to name findings_json
@@ -75,7 +76,7 @@ class SemgrepScanner(BulkMapProcessor):
         uncached_entries: list[tuple[int, ProcessorEntry]] = []
 
         for i, entry in enumerate(entries):
-            findings_path = entry.sample_dir / "findings.json"
+            findings_path = entry.sample_dir / self._FINDINGS_JSON
             if findings_path.exists():
                 try:
                     findings = json.loads(findings_path.read_text(encoding="utf-8"))
@@ -330,7 +331,7 @@ class SemgrepScanner(BulkMapProcessor):
 
         for idx, entry in uncached_entries:
             findings = per_sample_findings.get(idx, [])
-            findings_path = entry.sample_dir / "findings.json"
+            findings_path = entry.sample_dir / self._FINDINGS_JSON
             fd, tmp = tempfile.mkstemp(dir=str(entry.sample_dir), suffix=".json")
             try:
                 os.write(fd, json.dumps(findings, indent=2).encode("utf-8"))
@@ -370,11 +371,11 @@ class SemgrepScanner(BulkMapProcessor):
         if min_findings > 0 and len(findings) < min_findings:
             return ProcessorResult.filter(
                 f"{len(findings)} findings < min {min_findings}",
-                data={**data, "findings": "findings.json"},
+                data={**data, "findings": self._FINDINGS_JSON},
             )
 
         return ProcessorResult.ok(
-            artifacts={"findings": "findings.json"},
+            artifacts={"findings": self._FINDINGS_JSON},
             data=data,
         )
 

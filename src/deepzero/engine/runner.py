@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import traceback as tb_module
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -867,11 +868,9 @@ class PipelineRunner:
             context_file = sample_dir / "context.md"
 
             if context_file.exists() and state_file.exists():
-                try:
+                with suppress(OSError):
                     if context_file.stat().st_mtime >= state_file.stat().st_mtime:
                         return
-                except OSError:
-                    pass
 
             try:
                 generate_context(sample_dir, state)
@@ -917,7 +916,7 @@ class PipelineRunner:
         ):
             signal.signal(signal.SIGINT, self._original_sigint)
 
-    def _handle_signal(self, signum, frame) -> None:
+    def _handle_signal(self, signum, _frame) -> None:
         if self._shutdown_event.is_set():
             log.warning("forced shutdown")
             if hasattr(self, "_active_run_state") and getattr(self, "_active_run_state", None):

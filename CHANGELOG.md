@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.4.0](https://github.com/416rehman/DeepZero/compare/deepzero-v0.3.0...deepzero-v0.4.0) (2026-07-27)
+
+
+### Features
+
+* **decompile:** record whether a device exists without the hardware ([6030ae1](https://github.com/416rehman/DeepZero/commit/6030ae113c3a4f5a3556e4e062c77fe7ca05a73f)), closes [#20](https://github.com/416rehman/DeepZero/issues/20)
+* **engine:** tell running out of time apart from going wrong ([696a46b](https://github.com/416rehman/DeepZero/commit/696a46b0e1552a2cc01807a659df84cf09fac132)), closes [#19](https://github.com/416rehman/DeepZero/issues/19)
+* **pipeline:** catch a prompt asking for values no stage produces ([1c937fa](https://github.com/416rehman/DeepZero/commit/1c937fa36e7a70b664490dccc46e7588e7a38ebd)), closes [#23](https://github.com/416rehman/DeepZero/issues/23)
+* **report:** let the reader record what they have actually checked ([523ed1a](https://github.com/416rehman/DeepZero/commit/523ed1a7385a0b5e5c6ded7002ff8195b57899c9)), closes [#24](https://github.com/416rehman/DeepZero/issues/24)
+* **report:** rank results in one list and rebuild the palette ([9aafd6a](https://github.com/416rehman/DeepZero/commit/9aafd6a79c2bdd313be0b8f70d379220cecf4b30))
+* **report:** record a result that was checked and did not hold up ([3fd55ac](https://github.com/416rehman/DeepZero/commit/3fd55acc43e617b7d9545a13ccb2e3aefd60ebcb)), closes [#25](https://github.com/416rehman/DeepZero/issues/25)
+
+
+### Bug Fixes
+
+* **report:** tell the two kinds of filter apart ([6aa9320](https://github.com/416rehman/DeepZero/commit/6aa9320eb2aa057018d1c8c574208362aa039d00))
+* **scan:** stop one bad batch from discarding a whole corpus of results ([6a6badf](https://github.com/416rehman/DeepZero/commit/6a6badf81b905ba151c283aed2b9c7af3ba542f2)), closes [#21](https://github.com/416rehman/DeepZero/issues/21)
+* **test:** check the bundled prompt without needing a full environment ([5c0fbda](https://github.com/416rehman/DeepZero/commit/5c0fbda75fffac185d867d48d8fb73e9a65d23a7))
+
+
+### Refactors
+
+* **report:** name the two assessment outcomes for what they are ([93619be](https://github.com/416rehman/DeepZero/commit/93619be980f8f3ff575b06c0a604e220d2ee1118))
+
+
+### Documentation
+
+* **decompile:** record what decompilation writes and guard its shape ([ccca456](https://github.com/416rehman/DeepZero/commit/ccca45633155df95e492bd4cd0b136bb2b9ffcbe)), closes [#22](https://github.com/416rehman/DeepZero/issues/22)
+
 ## [0.3.0](https://github.com/416rehman/DeepZero/compare/deepzero-v0.2.0...deepzero-v0.3.0) (2026-07-26)
 
 

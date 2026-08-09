@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 
 from deepzero.engine.report import (
     BUCKET_CLEAN,
@@ -572,3 +573,79 @@ class TestAResultThatDidNotHoldUpIsItsOwnOutcome:
         # filled in by the browser, because marks made there are not saved yet
         index, _ = write_report(_seed(tmp_path))
         assert "id='review-tally'" in index.read_text(encoding="utf-8")
+
+
+class TestTheReportSpeaksThePipelineSLanguage:
+    """the outcomes every pipeline has are structural, but the words for them
+    belong to the pipeline. A licence audit that reports "Vulnerable" over its
+    results is telling the reader something false about what was checked."""
+
+    def _audit_run(self, tmp_path):
+        work = tmp_path / "work" / "licences"
+        store = StateStore(work)
+        store.save_run(
+            RunState(
+                run_id="run_l",
+                pipeline="licences",
+                target="acme/monorepo",
+                model="claude-code/opus",
+                status=RunStatus.COMPLETED,
+            )
+        )
+        bad = SampleState(sample_id="p1", filename="left-pad", source_path="npm/left-pad")
+        bad.mark_stage_completed("resolve", data={"licence": "AGPL-3.0"})
+        bad.mark_stage_completed("check", data={"finding_count": 1})
+        bad.mark_stage_completed("judge", data={"classification": "incompatible"})
+        store.save_sample(bad)
+        return work
+
+    def _cfg(self, **over):
+        base = {
+            "entity": "package",
+            "target_label": "workspace",
+            "vulnerable_when": ["incompatible"],
+            "safe_when": ["compatible"],
+            "lexicon": {
+                "discipline": "licence audit",
+                "positive": "Incompatible",
+                "positive_help": "a review concluded these licences cannot be shipped",
+                "positive_phrase": "found to be incompatible",
+                "nothing_positive": "No incompatible licences were found",
+                "unconfirmed": "Needs review",
+                "negative": "Compatible",
+            },
+        }
+        base.update(over)
+        return ReportConfig.from_dict(base)
+
+    def test_no_vulnerability_wording_survives_a_declared_lexicon(self, tmp_path):
+        index, _ = write_report(self._audit_run(tmp_path), config=self._cfg())
+        text = index.read_text(encoding="utf-8")
+        assert "Incompatible" in text
+        assert "licence audit" in text
+        assert "found to be incompatible" in text
+        # only what a reader sees: internal bucket keys stay stable so saved
+        # marks and report.json consumers keep working across a rename
+        visible = re.sub(r"<[^>]+>", " ", text[text.index("<header") :]).lower()
+        assert "vulnerable" not in visible
+        assert "vulnerability research" not in visible
+
+    def test_the_defaults_still_read_as_vulnerability_research(self, tmp_path):
+        """a pipeline that declares no lexicon must render exactly as before,
+        because every existing pipeline relies on it."""
+        index, _ = write_report(_seed(tmp_path))
+        text = index.read_text(encoding="utf-8")
+        assert "vulnerability research" in text
+        assert "Vulnerable" in text
+        assert "assessed as vulnerable" in text
+
+    def test_a_partial_lexicon_keeps_the_defaults_for_the_rest(self, tmp_path):
+        """declaring one word must not blank out the others."""
+        cfg = ReportConfig.from_dict({"lexicon": {"positive": "Exploitable"}})
+        assert cfg.lexicon.positive == "Exploitable"
+        assert cfg.lexicon.negative == "Clear"
+        assert cfg.lexicon.discipline == "vulnerability research"
+
+    def test_an_unknown_lexicon_key_is_ignored_rather_than_crashing(self, tmp_path):
+        cfg = ReportConfig.from_dict({"lexicon": {"positive": "Bad", "nonsense": "x"}})
+        assert cfg.lexicon.positive == "Bad"

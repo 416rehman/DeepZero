@@ -47,7 +47,7 @@ import html
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -67,31 +67,82 @@ BUCKET_FAILED = "failed"
 BUCKET_UNASSESSED = "unassessed"
 BUCKET_TIMED_OUT = "timed_out"
 
-_BUCKET_LABELS = {
-    BUCKET_VULNERABLE: "Vulnerable",
-    BUCKET_SUSPICIOUS: "Needs assessment",
-    BUCKET_FAILED: "Errored",
-    BUCKET_TIMED_OUT: "Ran out of time",
-    # these were assessed - what is missing is a verdict the pipeline recognises
-    BUCKET_UNASSESSED: "Unclear verdict",
-    BUCKET_FILTERED: "Filtered out",
-    BUCKET_CLEAN: "Clear",
-}
-_BUCKET_HELP = {
-    BUCKET_VULNERABLE: "an assessment stage concluded these are vulnerable",
-    BUCKET_SUSPICIOUS: "findings exist but no assessment confirmed them",
-    BUCKET_FAILED: "a stage errored, so these were never fully analysed",
-    BUCKET_TIMED_OUT: "a stage hit its time budget, so these were never finished",
-    BUCKET_UNASSESSED: "assessed but the verdict could not be classified",
-    BUCKET_FILTERED: "a stage excluded these, so the later stages never saw them",
-    BUCKET_CLEAN: "analysed all the way through and nothing was flagged",
-}
+
+@dataclass(frozen=True)
+class Lexicon:
+    """the words one pipeline uses for the outcomes every pipeline has.
+
+    The buckets below are structural: an assessment concluded something, or
+    findings exist that nothing has confirmed, or a stage errored. That shape
+    holds whether the run is hunting driver vulnerabilities, auditing licences
+    or grading code quality. Only the vocabulary changes, so only the vocabulary
+    is declared here, and the defaults keep a vulnerability pipeline reading
+    exactly as it always has.
+    """
+
+    # the kind of work, shown beside the product name in the header
+    discipline: str = "vulnerability research"
+    # what an assessment confirming the thing you are looking for is called
+    positive: str = "Vulnerable"
+    positive_help: str = "an assessment stage concluded these are vulnerable"
+    # completes "12 repositories <positive_phrase>."
+    positive_phrase: str = "assessed as vulnerable"
+    # the headline when the run found nothing to act on
+    nothing_positive: str = "Nothing was confirmed vulnerable"
+    # findings exist, no assessment has ruled on them
+    unconfirmed: str = "Needs assessment"
+    # analysed all the way through, nothing flagged
+    negative: str = "Clear"
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> Lexicon:
+        raw = raw or {}
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: str(v) for k, v in raw.items() if k in known and v})
+
+
+def bucket_labels(lex: Lexicon) -> dict[str, str]:
+    return {
+        BUCKET_VULNERABLE: lex.positive,
+        BUCKET_SUSPICIOUS: lex.unconfirmed,
+        BUCKET_FAILED: "Errored",
+        BUCKET_TIMED_OUT: "Ran out of time",
+        # these were assessed - what is missing is a verdict the pipeline recognises
+        BUCKET_UNASSESSED: "Unclear verdict",
+        BUCKET_FILTERED: "Filtered out",
+        BUCKET_CLEAN: lex.negative,
+    }
+
+
+def bucket_help(lex: Lexicon) -> dict[str, str]:
+    return {
+        BUCKET_VULNERABLE: lex.positive_help,
+        BUCKET_SUSPICIOUS: "findings exist but no assessment confirmed them",
+        BUCKET_FAILED: "a stage errored, so these were never fully analysed",
+        BUCKET_TIMED_OUT: "a stage hit its time budget, so these were never finished",
+        BUCKET_UNASSESSED: "assessed but the verdict could not be classified",
+        BUCKET_FILTERED: "a stage excluded these, so the later stages never saw them",
+        BUCKET_CLEAN: "analysed all the way through and nothing was flagged",
+    }
+
 
 # how each outcome is decided, shown when the label is hovered
+def bucket_rule(lex: Lexicon) -> dict[str, str]:
+    return dict(
+        _BUCKET_RULE,
+        **{
+            BUCKET_VULNERABLE: (
+                f"An assessment stage recorded a verdict this pipeline counts as "
+                f"{lex.positive.lower()}. Work through these first."
+            ),
+        },
+    )
+
+
 _BUCKET_RULE = {
     BUCKET_VULNERABLE: (
-        "An assessment stage recorded a verdict matching one of this pipeline's "
-        "vulnerable_when values. Work through these first."
+        "An assessment stage recorded a verdict this pipeline counts as a "
+        "positive result. Work through these first."
     ),
     BUCKET_SUSPICIOUS: (
         "A scan produced findings, but no assessment stage has confirmed or "
@@ -108,8 +159,8 @@ _BUCKET_RULE = {
         "largest ones. Rerun with --retry-timeouts to give them longer."
     ),
     BUCKET_UNASSESSED: (
-        "An assessment ran and produced text, but its verdict did not match "
-        "either the vulnerable_when or safe_when values this pipeline declares."
+        "An assessment ran and produced text, but its verdict matched neither "
+        "the positive nor the negative values this pipeline declares."
     ),
     BUCKET_FILTERED: (
         "A stage excluded these before the analysis finished, so the later "
@@ -165,6 +216,12 @@ def _load_marks(out_dir: Path) -> dict[str, dict[str, str]]:
     return marks
 
 
+# the default wording, kept as module constants so anything reading them without
+# a config in hand still sees what an undeclared pipeline renders
+_BUCKET_LABELS = bucket_labels(Lexicon())
+_BUCKET_HELP = bucket_help(Lexicon())
+
+
 @dataclass
 class ReportConfig:
     """optional per-pipeline presentation, all defaulted."""
@@ -176,6 +233,7 @@ class ReportConfig:
     # what the run was pointed at. "corpus" suits a directory of files; a web
     # assessment wants "scope", a repository sweep wants "organisation".
     target_label: str = "corpus"
+    lexicon: Lexicon = field(default_factory=Lexicon)
     classification_key: str = "classification"
     vulnerable_when: tuple[str, ...] = ("vulnerab", "exploitab", "confirmed")
     safe_when: tuple[str, ...] = ("safe", "not vulnerab", "benign", "clean")
@@ -199,9 +257,14 @@ class ReportConfig:
             entity=str(raw.get("entity", "sample") or "sample"),
             entity_plural=str(raw.get("entity_plural", "") or ""),
             target_label=str(raw.get("target_label", "corpus") or "corpus"),
+            lexicon=Lexicon.from_dict(raw.get("lexicon")),
             classification_key=str(raw.get("classification_key", "classification")),
-            vulnerable_when=tuple(s.lower() for s in tup("vulnerable_when", cls.vulnerable_when)),
-            safe_when=tuple(s.lower() for s in tup("safe_when", cls.safe_when)),
+            vulnerable_when=tuple(
+                s.lower() for s in tup("positive_when", tup("vulnerable_when", cls.vulnerable_when))
+            ),
+            safe_when=tuple(
+                s.lower() for s in tup("negative_when", tup("safe_when", cls.safe_when))
+            ),
             columns=tup("columns", ()),
             findings_files=tup("findings_files", cls.findings_files),
         )
@@ -1364,7 +1427,7 @@ def render_item_page(
     <span class="lbl">{_esc(cfg.entity)}</span></div>
   <h1>{_esc(item.name)}</h1>
   <div class="verdict {res}">
-    <span class="res {res}">{_esc(_BUCKET_LABELS.get(item.bucket, item.bucket))}</span>
+    <span class="res {res}">{_esc(bucket_labels(cfg.lexicon).get(item.bucket, item.bucket))}</span>
     <span class="tally">{_esc(tally)}</span>
     <hr>
   </div>
@@ -1480,6 +1543,10 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     running = str(run.get("state", "")).lower() == "running"
     entity = cfg.entity
     plural = cfg.plural
+    lex = cfg.lexicon
+    labels = bucket_labels(lex)
+    helps = bucket_help(lex)
+    rules = bucket_rule(lex)
 
     total = t["samples"]
     n_pos = buckets.get(BUCKET_VULNERABLE, 0)
@@ -1493,24 +1560,23 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     # the two outcomes somebody has to act on carry the headline; the rest are
     # acknowledged on one line, so the eye is not asked to triage five equals.
     lead = (
-        ("pos", n_pos, "vulnerable", BUCKET_VULNERABLE),
-        ("rev", n_rev, "needs assessment", BUCKET_SUSPICIOUS),
+        ("pos", n_pos, lex.positive.lower(), BUCKET_VULNERABLE),
+        ("rev", n_rev, lex.unconfirmed.lower(), BUCKET_SUSPICIOUS),
     )
     rest = (
         ("err", n_err, "errored", BUCKET_FAILED),
         ("time", n_time, "ran out of time", BUCKET_TIMED_OUT),
         ("una", n_una, "unclear verdict", BUCKET_UNASSESSED),
-        ("ok", n_ok, "clear", BUCKET_CLEAN),
+        ("ok", n_ok, lex.negative.lower(), BUCKET_CLEAN),
         ("set", n_set, "filtered out", BUCKET_FILTERED),
     )
     ticks = "".join(
-        f"<div class='tick {cls}{'' if n else ' zero'}' title=\"{_esc(_BUCKET_RULE[bucket])}\">"
+        f"<div class='tick {cls}{'' if n else ' zero'}' title=\"{_esc(rules[bucket])}\">"
         f"<b>{n:,}</b><span class='lbl'>{label}</span></div>"
         for cls, n, label, bucket in lead
     )
     trailing = "".join(
-        f"<span class='{cls}' title=\"{_esc(_BUCKET_RULE[bucket])}\"><i></i>"
-        f"<b>{n:,}</b>{label}</span>"
+        f"<span class='{cls}' title=\"{_esc(rules[bucket])}\"><i></i><b>{n:,}</b>{label}</span>"
         for cls, n, label, bucket in rest
         if n
     )
@@ -1556,8 +1622,8 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     # was applied to, which is where somebody stops to question a label
     chips = "".join(
         f"<button type='button' class='chipf {_RES_CLASS.get(b, 'non')}' data-b='{b}' "
-        f"aria-pressed='false' title=\"{_esc(_BUCKET_HELP[b])}\">"
-        f"{_esc(_BUCKET_LABELS[b])}<b>{n:,}</b></button>"
+        f"aria-pressed='false' title=\"{_esc(helps[b])}\">"
+        f"{_esc(labels[b])}<b>{n:,}</b></button>"
         for b, n in sorted(present.items(), key=lambda kv: _LIST_ORDER[kv[0]])
     )
     review_chips = "".join(
@@ -1606,8 +1672,8 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             risk=i.risk,
             sev=_severity(i),
             res=_RES_CLASS.get(i.bucket, "non"),
-            rule=_esc(_BUCKET_RULE[i.bucket]),
-            label=_esc(_BUCKET_LABELS[i.bucket]),
+            rule=_esc(rules[i.bucket]),
+            label=_esc(labels[i.bucket]),
         )
         for i in shown
     )
@@ -1633,10 +1699,10 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             f"{n:,} at {_esc(k)}" for k, n in sorted(by_stage.items(), key=lambda kv: -kv[1])
         )
         sections += (
-            f"<section><div class='shead q' title=\"{_esc(_BUCKET_RULE[BUCKET_FILTERED])}\">"
+            f"<section><div class='shead q' title=\"{_esc(rules[BUCKET_FILTERED])}\">"
             f"<h2>Filtered out</h2>"
             f"<span class='n'>{n_set:,}</span>"
-            f"<span class='of'>{_esc(_BUCKET_HELP[BUCKET_FILTERED])}</span></div>"
+            f"<span class='of'>{_esc(helps[BUCKET_FILTERED])}</span></div>"
             f"<p class='aside'>These were excluded before the analysis finished, so they are "
             f"not a judgement about the {_esc(entity)}"
             + (f": {where}." if where else ".")
@@ -1670,13 +1736,13 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     if n_pos:
         note = (
             f"<p class='finding-note'><b>{n_pos:,} {_esc(entity)}"
-            f"{'s' if n_pos != 1 else ''} assessed as vulnerable.</b> "
+            f"{'s' if n_pos != 1 else ''} {_esc(lex.positive_phrase)}.</b> "
             f"They lead the list below, ordered by the severity of what was "
             f"found {_DASH} start at the top.</p>"
         )
     elif n_rev:
         note = (
-            f"<p class='finding-note rev'><b>Nothing was confirmed vulnerable.</b> "
+            f"<p class='finding-note rev'><b>{_esc(lex.nothing_positive)}.</b> "
             f"{n_rev:,} {_esc(entity)}{'s' if n_rev != 1 else ''} produced findings "
             f"that no assessment has confirmed or dismissed {_DASH} those are the "
             f"ones worth reading.</p>"
@@ -1703,7 +1769,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
 
     body = f"""<header class="mast">
   <div class="kicker"><span class="mark">DEEPZERO</span>
-    <span class="lbl">vulnerability research</span>
+    <span class="lbl">{_esc(lex.discipline)}</span>
     <span class="id">{_esc(run.get("run_id", "") or "")}</span></div>
   <h1>{_esc(title)} <span class="qty">{t["samples"]:,} {_esc(plural)}</span></h1>
   <dl class="plate">{plate}</dl>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import time
@@ -97,6 +98,35 @@ def _latest_run_dir(base: Path) -> Path | None:
     if runs:
         return max(runs, key=lambda d: (d / "run.json").stat().st_mtime)
     return base if (base / "run.json").exists() else None
+
+
+def _report_config_for_run(work_path: Path) -> dict:
+    """recover a run's report block from the work directory alone.
+
+    The report block decides the vocabulary the page is written in, and it lives
+    in the pipeline rather than in the run. Pointing --work-dir at a driver run
+    without it produced a page calling drivers samples and the target a corpus,
+    which is the default wording rather than the one the pipeline asked for. The
+    run records which pipeline produced it, so the block can be recovered.
+    """
+    run_json = work_path / "run.json"
+    if not run_json.exists():
+        return {}
+    try:
+        name = str(json.loads(run_json.read_text(encoding="utf-8")).get("pipeline", ""))
+    except (OSError, ValueError):
+        return {}
+    if not name:
+        return {}
+    try:
+        import deepzero.stages  # noqa: F401
+        from deepzero.engine.pipeline import load_pipeline
+
+        return load_pipeline(name).report
+    except (ImportError, OSError, ValueError):
+        # a run can outlive the pipeline that made it, and a report with default
+        # wording is far better than no report
+        return {}
 
 
 def _announce_corpus(base: Path, chosen: Path) -> None:
@@ -379,6 +409,7 @@ def report(
     report_cfg: dict = {}
     if work_dir:
         work_path = Path(work_dir)
+        report_cfg = _report_config_for_run(work_path)
     elif pipeline:
         import deepzero.stages  # noqa: F401
         from deepzero.engine.pipeline import load_pipeline
@@ -615,6 +646,27 @@ def interactive(model: str, work_dir: str, verbose: bool):
                 _print_stats(run_state)
             else:
                 console.print("  [dim]no run data found[/]")
+            continue
+
+        if user_input.startswith("/findings"):
+            from deepzero.engine.report import collect
+
+            needle = user_input[len("/findings") :].strip().lower()
+            shown = 0
+            for item in collect(Path(work_dir))["items"]:
+                for finding in item.findings:
+                    line = (
+                        f"  {item.name}  {finding.get('severity', '')}  "
+                        f"{finding.get('rule_id', '')}  {finding.get('message', '')}"
+                    )
+                    if needle and needle not in line.lower():
+                        continue
+                    console.print(line)
+                    shown += 1
+            if not shown:
+                console.print(
+                    "  [dim]no findings matched[/]" if needle else "  [dim]no findings[/]"
+                )
             continue
 
         if user_input == "/clear":

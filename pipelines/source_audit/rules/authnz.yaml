@@ -1,0 +1,449 @@
+# who the request is, and whether it was allowed to ask.
+#
+# these are mostly not taint rules. a signature check that was turned off, a
+# credential written into the source and a route with nothing guarding it are
+# all visible at one place in the code, and taint has nowhere to start from.
+#
+# there is no rule here for "this handler does not check ownership of the
+# object it just loaded". that is the most common authorization bug in real
+# applications and it has no shape a pattern can match, so it is left to the
+# reading stage rather than guessed at here.
+
+rules:
+  # --------------------------------------------------------------- jwt -------
+
+  - id: python-jwt-verification-disabled
+    languages: [python]
+    severity: ERROR
+    message: >
+      The JWT signature is not checked. An attacker edits the claims in their
+      own token, changes the user id or the role to an administrator's, and the
+      application accepts it, because nothing here distinguishes a token the
+      service issued from one the attacker wrote.
+    metadata:
+      vuln_class: "Broken Authentication"
+      cwe: "CWE-347"
+      exploitability: "CRITICAL"
+      confidence: "high: each of these disables verification explicitly, and decoding without verification is never correct for a token that carries identity"
+    patterns:
+      - pattern-either:
+          - pattern: jwt.decode(..., verify=False, ...)
+          - pattern: 'jwt.decode(..., options={..., "verify_signature": False, ...}, ...)'
+          - pattern: jwt.decode(..., algorithms=[..., "none", ...], ...)
+          - pattern: jwt.decode(..., algorithms=[..., "None", ...], ...)
+          - pattern: jwt.get_unverified_claims(...)
+
+  - id: javascript-jwt-none-algorithm
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      The token verifier accepts the "none" algorithm, which means an unsigned
+      token passes. An attacker writes their own claims, drops the signature,
+      and is whoever the claims say they are.
+    metadata:
+      vuln_class: "Broken Authentication"
+      cwe: "CWE-347"
+      exploitability: "CRITICAL"
+      confidence: "high: the algorithm list is explicit at the call site"
+    patterns:
+      - pattern-either:
+          - pattern: '$JWT.verify(..., {..., algorithms: [..., "none", ...], ...}, ...)'
+          - pattern: '$JWT.sign(..., {..., algorithm: "none", ...}, ...)'
+
+  - id: javascript-jwt-decoded-without-verify
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >
+      jwt.decode reads the claims without checking the signature. Wherever the
+      result is used to decide who the caller is, an attacker supplies a token
+      they wrote themselves and becomes any user they name.
+    metadata:
+      vuln_class: "Broken Authentication"
+      cwe: "CWE-347"
+      confidence: "medium: decoding is legitimate for reading a claim before verifying elsewhere, so what the result is used for decides this one"
+    patterns:
+      - pattern: $JWT.decode(...)
+      # named, so this does not match TextDecoder and every other decoder
+      - metavariable-regex:
+          metavariable: $JWT
+          regex: (?i).*jwt.*
+
+  - id: go-jwt-parsed-unverified
+    languages: [go]
+    severity: ERROR
+    message: >
+      The token is parsed without checking its signature. An attacker writes
+      their own claims and the application trusts them, so any identity or role
+      in the token is theirs to choose.
+    metadata:
+      vuln_class: "Broken Authentication"
+      cwe: "CWE-347"
+      exploitability: "CRITICAL"
+      confidence: "high: ParseUnverified is documented as not verifying and has no correct use on an identity token"
+    pattern-either:
+      - pattern: $P.ParseUnverified(...)
+      - pattern: jwt.ParseUnverified(...)
+
+  - id: go-jwt-keyfunc-ignores-algorithm
+    languages: [go]
+    severity: WARNING
+    message: >
+      The key function returns a key without checking which algorithm the token
+      claims. Where that key is an RSA public key, an attacker re-signs the
+      token with HMAC using the public key as the secret and the library
+      accepts it, so they mint tokens for any user.
+    metadata:
+      vuln_class: "Broken Authentication"
+      cwe: "CWE-347"
+      confidence: "medium: only exploitable with an asymmetric key, and a service using a symmetric secret throughout is not affected"
+    patterns:
+      - pattern: |
+          jwt.Parse($TOKEN, func($T *jwt.Token) (interface{}, error) {
+            return $KEY, nil
+          })
+
+  - id: java-jwt-decoded-without-verify
+    languages: [java]
+    severity: WARNING
+    message: >
+      JWT.decode reads the claims without checking the signature; only
+      verify() does that. Wherever the result decides who the caller is, an
+      attacker supplies a token they wrote and becomes any user they name.
+    metadata:
+      vuln_class: "Broken Authentication"
+      cwe: "CWE-347"
+      confidence: "medium: decoding is legitimate for reading a claim before verifying elsewhere, so what the result is used for decides this one"
+    pattern: JWT.decode(...)
+
+  - id: ruby-jwt-verification-disabled
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      The JWT signature is not checked: the third argument to JWT.decode is
+      false. An attacker edits the claims in their own token and the
+      application accepts whatever identity they put there.
+    metadata:
+      vuln_class: "Broken Authentication"
+      cwe: "CWE-347"
+      exploitability: "CRITICAL"
+      confidence: "high: the verify flag is a literal false at the call site"
+    pattern-either:
+      - pattern: JWT.decode($TOKEN, $KEY, false, ...)
+      - pattern: JWT.decode($TOKEN, nil, false, ...)
+
+  - id: csharp-jwt-signature-validation-disabled
+    languages: [csharp]
+    severity: ERROR
+    message: >
+      Token validation is configured not to check the signature. An attacker
+      writes their own token with any claims they like, including role claims,
+      and the middleware admits it.
+    metadata:
+      vuln_class: "Broken Authentication"
+      cwe: "CWE-347"
+      exploitability: "CRITICAL"
+      confidence: "high: both settings have to be turned off deliberately, and neither has a use outside a test harness"
+    patterns:
+      - pattern-either:
+          - pattern: $X.ValidateIssuerSigningKey = false
+          - pattern: $X.RequireSignedTokens = false
+          - pattern: "new TokenValidationParameters { ..., ValidateIssuerSigningKey = false, ... }"
+          - pattern: "new TokenValidationParameters { ..., RequireSignedTokens = false, ... }"
+
+  # --------------------------------------------- credentials in the source ---
+
+  - id: python-hardcoded-secret-comparison
+    languages: [python]
+    severity: ERROR
+    message: >
+      A secret is compared against a literal in the source. Everyone with read
+      access to the repository holds the credential, it is in every build
+      artefact and every fork, and rotating it takes a deploy. The comparison
+      is also not constant time, so it leaks the value one character at a time
+      to anyone who can measure the response.
+    metadata:
+      vuln_class: "Hardcoded Credentials"
+      cwe: "CWE-798"
+      exploitability: "HIGH"
+      confidence: "high: a credential-shaped name on one side and a literal of at least six characters on the other; hmac.compare_digest would be the fix for the timing half"
+    patterns:
+      - pattern-either:
+          - pattern: $SECRET == $LIT
+          - pattern: $LIT == $SECRET
+          - pattern: $SECRET != $LIT
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: (?i).*(passwd|password|secret|api[-_]?key|auth[-_]?token|access[-_]?token|credential|signature).*
+      - metavariable-regex:
+          metavariable: $LIT
+          regex: ^["'][^"']{6,}["']$
+      # a test asserting that a credential round-trips is the one place this
+      # comparison is not an authentication decision
+      - pattern-not-inside: assert ...
+
+  - id: javascript-hardcoded-secret-comparison
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      A secret is compared against a literal in the source. Everyone with read
+      access to the repository holds the credential, it ships in every build,
+      and rotating it takes a deploy. The comparison is also not constant time,
+      which leaks the value to anyone who can measure the response.
+    metadata:
+      vuln_class: "Hardcoded Credentials"
+      cwe: "CWE-798"
+      exploitability: "HIGH"
+      confidence: "high: a credential-shaped name on one side and a literal of at least six characters on the other; crypto.timingSafeEqual would be the fix for the timing half"
+    patterns:
+      - pattern-either:
+          - pattern: $SECRET === $LIT
+          - pattern: $LIT === $SECRET
+          - pattern: $SECRET == $LIT
+          - pattern: $SECRET !== $LIT
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: (?i).*(passwd|password|secret|api[-_]?key|auth[-_]?token|access[-_]?token|credential|signature).*
+      - metavariable-regex:
+          metavariable: $LIT
+          regex: ^["'`][^"'`]{6,}["'`]$
+
+  - id: go-hardcoded-secret-comparison
+    languages: [go]
+    severity: ERROR
+    message: >
+      A secret is compared against a literal in the source. Everyone with read
+      access to the repository holds the credential and it is recoverable from
+      the compiled binary with strings. The comparison is also not constant
+      time, which leaks the value to anyone who can measure the response.
+    metadata:
+      vuln_class: "Hardcoded Credentials"
+      cwe: "CWE-798"
+      exploitability: "HIGH"
+      confidence: "high: a credential-shaped name on one side and a literal of at least six characters on the other; subtle.ConstantTimeCompare would be the fix for the timing half"
+    patterns:
+      - pattern-either:
+          - pattern: $SECRET == $LIT
+          - pattern: $LIT == $SECRET
+          - pattern: $SECRET != $LIT
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: (?i).*(passwd|password|secret|api[-_]?key|auth[-_]?token|access[-_]?token|credential|signature).*
+      - metavariable-regex:
+          metavariable: $LIT
+          regex: ^["`][^"`]{6,}["`]$
+
+  - id: java-hardcoded-secret-comparison
+    languages: [java]
+    severity: ERROR
+    message: >
+      A secret is compared against a literal in the source. Everyone with read
+      access to the repository holds the credential and it is readable in the
+      shipped class file. String.equals is also not constant time, which leaks
+      the value to anyone who can measure the response.
+    metadata:
+      vuln_class: "Hardcoded Credentials"
+      cwe: "CWE-798"
+      exploitability: "HIGH"
+      confidence: "high: a credential-shaped name on one side and a literal of at least six characters on the other; MessageDigest.isEqual would be the fix for the timing half"
+    patterns:
+      - pattern-either:
+          - pattern: $SECRET.equals($LIT)
+          - pattern: $LIT.equals($SECRET)
+          - pattern: $SECRET.equalsIgnoreCase($LIT)
+          - pattern: $SECRET == $LIT
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: (?i).*(passwd|password|secret|api[-_]?key|auth[-_]?token|access[-_]?token|credential|signature).*
+      - metavariable-regex:
+          metavariable: $LIT
+          regex: ^"[^"]{6,}"$
+
+  - id: ruby-hardcoded-secret-comparison
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      A secret is compared against a literal in the source. Everyone with read
+      access to the repository holds the credential and rotating it takes a
+      deploy. The comparison is also not constant time, which leaks the value
+      to anyone who can measure the response.
+    metadata:
+      vuln_class: "Hardcoded Credentials"
+      cwe: "CWE-798"
+      exploitability: "HIGH"
+      confidence: "high: a credential-shaped name on one side and a literal of at least six characters on the other; ActiveSupport::SecurityUtils.secure_compare would be the fix for the timing half"
+    patterns:
+      - pattern-either:
+          - pattern: $SECRET == $LIT
+          - pattern: $LIT == $SECRET
+          - pattern: $SECRET != $LIT
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: (?i).*(passwd|password|secret|api[-_]?key|auth[-_]?token|access[-_]?token|credential|signature).*
+      - metavariable-regex:
+          metavariable: $LIT
+          regex: ^["'][^"']{6,}["']$
+
+  - id: php-hardcoded-secret-comparison
+    languages: [php]
+    severity: ERROR
+    message: >
+      A secret is compared against a literal in the source. Everyone with read
+      access to the repository holds the credential, and == on two strings that
+      both look numeric compares them as numbers, so tokens like "0e123" and
+      "0e456" match each other. hash_equals compares them as strings and in
+      constant time.
+    metadata:
+      vuln_class: "Hardcoded Credentials"
+      cwe: "CWE-798"
+      exploitability: "HIGH"
+      confidence: "high: a credential-shaped name on one side and a literal of at least six characters on the other"
+    patterns:
+      - pattern-either:
+          - pattern: $SECRET == $LIT
+          - pattern: $LIT == $SECRET
+          - pattern: $SECRET === $LIT
+          - pattern: $SECRET != $LIT
+          - pattern: strcmp($SECRET, $LIT)
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: (?i).*(passwd|password|secret|api[-_]?key|auth[-_]?token|access[-_]?token|credential|signature).*
+      - metavariable-regex:
+          metavariable: $LIT
+          regex: ^["'][^"']{6,}["']$
+
+  - id: csharp-hardcoded-secret-comparison
+    languages: [csharp]
+    severity: ERROR
+    message: >
+      A secret is compared against a literal in the source. Everyone with read
+      access to the repository holds the credential and it is recoverable from
+      the assembly with any decompiler. The comparison is also not constant
+      time, which leaks the value to anyone who can measure the response.
+    metadata:
+      vuln_class: "Hardcoded Credentials"
+      cwe: "CWE-798"
+      exploitability: "HIGH"
+      confidence: "high: a credential-shaped name on one side and a literal of at least six characters on the other; CryptographicOperations.FixedTimeEquals would be the fix for the timing half"
+    patterns:
+      - pattern-either:
+          - pattern: $SECRET == $LIT
+          - pattern: $LIT == $SECRET
+          - pattern: $SECRET != $LIT
+          - pattern: $SECRET.Equals($LIT)
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: (?i).*(passwd|password|secret|api[-_]?key|auth[-_]?token|access[-_]?token|credential|signature).*
+      - metavariable-regex:
+          metavariable: $LIT
+          regex: ^"[^"]{6,}"$
+
+  # --------------------------------------------------- nothing guards this ---
+
+  - id: python-flask-state-changing-route-without-auth
+    languages: [python]
+    severity: INFO
+    message: >
+      A route that changes state has no authentication decorator on it. If the
+      check is not somewhere else, anyone who can reach the service can invoke
+      this, without an account.
+    metadata:
+      vuln_class: "Missing Authorization"
+      cwe: "CWE-862"
+      confidence: "low: only decorators are examined, so an application that authenticates in before_request or inside the handler reads as unguarded here"
+    patterns:
+      - pattern: |
+          @$APP.route($PATH, ..., methods=$METHODS, ...)
+          def $F(...):
+              ...
+      - metavariable-regex:
+          metavariable: $METHODS
+          regex: .*(POST|PUT|DELETE|PATCH).*
+      - pattern-not:
+          patterns:
+            - pattern: |
+                @$AUTH
+                @$APP.route(...)
+                def $F(...):
+                    ...
+            - metavariable-regex:
+                metavariable: $AUTH
+                regex: (?i).*(login|jwt|auth|permission|role|token|admin).*
+      - pattern-not:
+          patterns:
+            - pattern: |
+                @$APP.route(...)
+                @$AUTH
+                def $F(...):
+                    ...
+            - metavariable-regex:
+                metavariable: $AUTH
+                regex: (?i).*(login|jwt|auth|permission|role|token|admin).*
+
+  - id: python-django-csrf-exempt
+    languages: [python]
+    severity: WARNING
+    message: >
+      CSRF protection is switched off for this view. Any page an authenticated
+      user visits can submit to it in their name, so a state-changing view here
+      can be driven by a third-party site.
+    metadata:
+      vuln_class: "Cross-Site Request Forgery"
+      cwe: "CWE-352"
+      confidence: "high on the fact; whether it matters depends on the view being state changing and on the session cookie's SameSite setting"
+    pattern-either:
+      - pattern: |
+          @csrf_exempt
+          def $F(...):
+              ...
+      - pattern: |
+          @django.views.decorators.csrf.csrf_exempt
+          def $F(...):
+              ...
+
+  - id: java-spring-csrf-disabled
+    languages: [java]
+    severity: WARNING
+    message: >
+      CSRF protection is disabled for the whole application. Any site a logged
+      in user visits can submit state-changing requests in their name, unless
+      every endpoint authenticates from a header rather than a cookie.
+    metadata:
+      vuln_class: "Cross-Site Request Forgery"
+      cwe: "CWE-352"
+      confidence: "high on the fact; a stateless API that only accepts a bearer token is the one case where this is deliberate and safe"
+    pattern-either:
+      - pattern: $H.csrf().disable()
+      - pattern: $H.csrf($C -> $C.disable())
+      - pattern: $H.csrf(AbstractHttpConfigurer::disable)
+
+  - id: java-spring-endpoints-permit-all
+    languages: [java]
+    severity: WARNING
+    message: >
+      Every request is permitted without authentication. Whatever the
+      controllers expose, including administrative endpoints, is reachable by
+      anyone who can open a socket to the service.
+    metadata:
+      vuln_class: "Missing Authorization"
+      cwe: "CWE-862"
+      confidence: "high on the fact; a service that is genuinely public, or that authenticates in a filter ahead of this, is the false positive to expect"
+    pattern-either:
+      - pattern: $H.anyRequest().permitAll()
+      - pattern: $H.antMatchers("/**").permitAll()
+      - pattern: $H.requestMatchers("/**").permitAll()
+
+  - id: ruby-csrf-protection-skipped
+    languages: [ruby]
+    severity: WARNING
+    message: >
+      The forgery check is skipped for these actions. Any site a logged in user
+      visits can submit to them in their name; with :null_session the request
+      still runs, just without the session.
+    metadata:
+      vuln_class: "Cross-Site Request Forgery"
+      cwe: "CWE-352"
+      confidence: "high on the fact; an API controller authenticated by a token header rather than a cookie is the deliberate case"
+    pattern-either:
+      - pattern: skip_before_action :verify_authenticity_token, ...
+      - pattern: skip_before_filter :verify_authenticity_token, ...
+      - pattern: "protect_from_forgery with: :null_session, ..."

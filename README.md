@@ -79,6 +79,7 @@ src/deepzero/
 
 processors/              # external processors (shipped as examples)
 ├── ghidra_decompile/    # ghidra headless decompiler (MapProcessor)
+├── git_ingest/          # git repository discovery and cloning (IngestProcessor)
 ├── loldrivers_filter/   # loldrivers.io hash exclusion filter (MapProcessor)
 ├── pe_ingest/           # PE header parser and driver metadata extractor (IngestProcessor)
 └── semgrep_scanner/     # semgrep batch scanner (BulkMapProcessor)

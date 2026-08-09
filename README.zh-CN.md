@@ -78,6 +78,7 @@ src/deepzero/
 
 processors/              # 外部处理器 (作为示例提供)
 ├── ghidra_decompile/    # ghidra 无头反编译器 (MapProcessor)
+├── git_ingest/          # git 仓库发现与克隆 (IngestProcessor)
 ├── loldrivers_filter/   # loldrivers.io 哈希排除过滤器 (MapProcessor)
 ├── pe_ingest/           # PE 头部解析及驱动程序元数据提取器 (IngestProcessor)
 └── semgrep_scanner/     # semgrep 批量扫描器 (BulkMapProcessor)

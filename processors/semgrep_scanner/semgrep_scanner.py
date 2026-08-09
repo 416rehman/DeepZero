@@ -17,7 +17,15 @@ from deepzero.engine.stage import (
 
 
 class SemgrepScanner(BulkMapProcessor):
-    description = "runs semgrep batch scan against decompiled source across all active samples"
+    description = "runs semgrep batch scan across all active samples"
+
+    # what a sample's scannable files are called on disk. The default suits a
+    # pipeline that decompiles first and writes C beside each sample; a pipeline
+    # whose samples are already source (a repository checkout, say) sets
+    # target_dir to "" so the sample's own path is scanned, and widens
+    # extensions to whatever it actually ingests.
+    DEFAULT_TARGET_DIR = "decompiled"
+    DEFAULT_EXTENSIONS = (".c", ".h", ".cpp", ".py")
 
     # findings_json is the parsed report; `findings` holds its filename, which is
     # why a prompt wanting the findings themselves has to name findings_json
@@ -67,7 +75,7 @@ class SemgrepScanner(BulkMapProcessor):
             reason = f"semgrep rules_dir not found: {self.config.get('rules_dir') or '(unset)'}"
             return [ProcessorResult.fail(reason) for _ in entries]
 
-        target_subdir = self.config.get("target_dir", "decompiled")
+        target_subdir = self.config.get("target_dir", self.DEFAULT_TARGET_DIR)
         timeout = self.config.get("timeout", 300)
         min_findings = self.config.get("min_findings", 0)
 
@@ -84,10 +92,10 @@ class SemgrepScanner(BulkMapProcessor):
                 except (json.JSONDecodeError, OSError) as exc:
                     self.log.debug("cache read failed for %s, rescanning: %s", entry.sample_id, exc)
 
-            scan_dir = entry.sample_dir / target_subdir
+            scan_dir = self._scan_dir(entry, target_subdir)
             if not scan_dir.exists():
                 results[i] = ProcessorResult.fail(
-                    f"scan target '{target_subdir}' missing - does a decompile processor run before this?"
+                    f"scan target '{scan_dir}' missing - does the stage that produces it run before this?"
                 )
                 continue
 
@@ -137,6 +145,19 @@ class SemgrepScanner(BulkMapProcessor):
 
         return [r for r in results if r is not None]
 
+    def _scan_dir(self, entry: ProcessorEntry, target_subdir: str) -> Path:
+        # an empty target_dir means the sample IS the tree to scan, which is the
+        # case when ingest produced a checkout rather than a file to decompile
+        if not target_subdir:
+            return Path(entry.source_path)
+        return entry.sample_dir / target_subdir
+
+    def _scan_extensions(self) -> tuple[str, ...]:
+        raw = self.config.get("extensions") or self.DEFAULT_EXTENSIONS
+        if isinstance(raw, str):
+            raw = [raw]
+        return tuple(e if e.startswith(".") else f".{e}" for e in raw)
+
     def _build_bulk_dir(
         self,
         uncached_entries: list[tuple[int, ProcessorEntry]],
@@ -147,15 +168,19 @@ class SemgrepScanner(BulkMapProcessor):
             shutil.rmtree(bulk_dir, ignore_errors=True)
         bulk_dir.mkdir(parents=True, exist_ok=True)
 
+        extensions = self._scan_extensions()
         file_to_sample: dict[str, int] = {}
         for idx, entry in uncached_entries:
-            scan_dir = entry.sample_dir / target_subdir
+            scan_dir = self._scan_dir(entry, target_subdir)
             for src_file in scan_dir.rglob("*"):
                 if not src_file.is_file():
                     continue
-                if src_file.suffix not in (".c", ".h", ".cpp", ".py"):
+                if src_file.suffix not in extensions:
                     continue
-                dest_name = f"{entry.sample_id}_{src_file.name}"
+                # a checkout has many files sharing a basename, so key on the
+                # path within the sample to keep them apart in one flat bulk dir
+                rel = src_file.relative_to(scan_dir).as_posix().replace("/", "__")
+                dest_name = f"{entry.sample_id}_{rel}"
                 dest = bulk_dir / dest_name
                 try:
                     os.link(src_file, dest)

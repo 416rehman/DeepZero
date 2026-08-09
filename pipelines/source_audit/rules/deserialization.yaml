@@ -1,0 +1,354 @@
+# turning attacker bytes back into objects, and the XML parser settings that do
+# the same thing by another route.
+#
+# the taint rules here start from web request data, which is where a reviewer
+# can act on the result. a serialized blob also arrives from a cookie, a queue
+# or a cache, and taint mode will not see those: the rules that carry no source
+# at all cover the sinks that are wrong however the bytes got there.
+#
+# go has no rule in this file. encoding/gob and encoding/json decode into a
+# type the program named, so neither reconstructs an attacker-chosen type, and
+# a rule matching them would report every decoder in the tree.
+
+x-shared:
+  python-request-sources: &python-request-sources
+    - pattern-either:
+        - pattern: flask.request.args
+        - pattern: flask.request.form
+        - pattern: flask.request.values
+        - pattern: flask.request.json
+        - pattern: flask.request.data
+        - pattern: flask.request.files
+        - pattern: flask.request.cookies
+        - pattern: flask.request.headers
+        - pattern: flask.request.get_json(...)
+        - pattern: flask.request.get_data(...)
+    - patterns:
+        - pattern-inside: |
+            def $VIEW(..., $REQ, ...):
+                ...
+        - metavariable-regex:
+            metavariable: $REQ
+            regex: ^(request|req)$
+        - pattern-either:
+            - pattern: $REQ.GET
+            - pattern: $REQ.POST
+            - pattern: $REQ.body
+            - pattern: $REQ.data
+            - pattern: $REQ.query_params
+            - pattern: $REQ.COOKIES
+            - pattern: $REQ.headers
+            - pattern: $REQ.FILES
+
+  javascript-request-sources: &javascript-request-sources
+    - patterns:
+        - pattern-either:
+            - pattern: $REQ.query
+            - pattern: $REQ.body
+            - pattern: $REQ.params
+            - pattern: $REQ.cookies
+            - pattern: $REQ.headers
+            - pattern: $REQ.get(...)
+        - metavariable-regex:
+            metavariable: $REQ
+            regex: ^(req|request|ctx|ctx\.request|context\.request)$
+
+  java-request-sources: &java-request-sources
+    - pattern-either:
+        - pattern: $REQ.getParameter(...)
+        - pattern: $REQ.getParameterValues(...)
+        - pattern: $REQ.getParameterMap()
+        - pattern: $REQ.getHeader(...)
+        - pattern: $REQ.getQueryString()
+        - pattern: $REQ.getCookies()
+        - pattern: $REQ.getInputStream()
+        - pattern: $REQ.getReader()
+        - pattern: $REQ.getPathInfo()
+    - patterns:
+        - pattern-either:
+            - pattern-inside: |
+                $RET $HANDLER(..., @$ANN(...) $TYPE $P, ...) { ... }
+            - pattern-inside: |
+                $RET $HANDLER(..., @$ANN $TYPE $P, ...) { ... }
+        - metavariable-regex:
+            metavariable: $ANN
+            regex: ^(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|ModelAttribute|RequestPart)$
+        - pattern: $P
+
+  ruby-request-sources: &ruby-request-sources
+    - pattern-either:
+        - pattern: params
+        - pattern: request.params
+        - pattern: request.query_parameters
+        - pattern: request.request_parameters
+        - pattern: request.body
+        - pattern: request.headers[...]
+        - pattern: cookies
+
+  php-request-sources: &php-request-sources
+    - pattern-either:
+        - pattern: $_GET
+        - pattern: $_POST
+        - pattern: $_REQUEST
+        - pattern: $_COOKIE
+        - pattern: $_FILES
+        - pattern: file_get_contents("php://input")
+
+rules:
+  # -------------------------------------------------- object deserialization -
+
+  - id: python-unsafe-deserialization
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is deserialized by a format that reconstructs arbitrary
+      objects. pickle and the unsafe YAML loaders call into the process while
+      parsing, so an attacker who controls these bytes runs code, without
+      needing any gadget in the application.
+    metadata:
+      vuln_class: "Insecure Deserialization"
+      cwe: "CWE-502"
+      exploitability: "CRITICAL"
+      confidence: "high: none of these loaders can be made safe by validating afterwards; json.loads, yaml.safe_load and yaml.load with a safe loader named at the call site are all excluded"
+    pattern-sources: *python-request-sources
+    pattern-sinks:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: cPickle.loads(...)
+      - pattern: cPickle.load(...)
+      - pattern: dill.loads(...)
+      - pattern: dill.load(...)
+      - pattern: marshal.loads(...)
+      - pattern: shelve.open(...)
+      - pattern: jsonpickle.decode(...)
+      - pattern: joblib.load(...)
+      - pattern: yaml.unsafe_load(...)
+      # yaml.load defaults to a loader that builds arbitrary objects, so it is
+      # a sink; naming a safe loader at the call site is the documented way to
+      # parse untrusted YAML and reporting it would flag the fix. FullLoader is
+      # still a sink: it has had escapes of its own.
+      - patterns:
+          - pattern: yaml.load(...)
+          - pattern-not: yaml.load(..., Loader=yaml.SafeLoader, ...)
+          - pattern-not: yaml.load(..., Loader=yaml.CSafeLoader, ...)
+          - pattern-not: yaml.load(..., yaml.SafeLoader, ...)
+          - pattern-not: yaml.load(..., yaml.CSafeLoader, ...)
+
+  - id: python-yaml-unsafe-loader
+    languages: [python]
+    severity: WARNING
+    message: >
+      YAML is parsed with a loader that instantiates arbitrary Python objects.
+      Whoever can write this document, whether over the network or by dropping
+      a file the service reads, executes code in the process. yaml.safe_load
+      parses the same documents without that.
+    metadata:
+      vuln_class: "Insecure Deserialization"
+      cwe: "CWE-502"
+      confidence: "high: only the loaders that construct arbitrary objects are matched; SafeLoader and FullLoader are not"
+    patterns:
+      - pattern-either:
+          - pattern: yaml.unsafe_load(...)
+          - pattern: yaml.load($X, Loader=yaml.Loader, ...)
+          - pattern: yaml.load($X, Loader=yaml.UnsafeLoader, ...)
+          - pattern: yaml.load($X, yaml.Loader, ...)
+          - pattern: yaml.load($X, yaml.UnsafeLoader, ...)
+
+  - id: javascript-unsafe-deserialization
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is passed to a deserializer that rebuilds functions from the
+      serialized form. The payload is evaluated as it is parsed, so an attacker
+      who controls these bytes runs arbitrary code in the node process.
+    metadata:
+      vuln_class: "Insecure Deserialization"
+      cwe: "CWE-502"
+      exploitability: "CRITICAL"
+      confidence: "high: these libraries eval by design, so a match is the vulnerability rather than a lead"
+    pattern-sources: *javascript-request-sources
+    pattern-sinks:
+      - pattern: $S.unserialize(...)
+      - pattern: nodeSerialize.unserialize(...)
+      - pattern: funcster.deepDeserialize(...)
+      - pattern: cryo.parse(...)
+
+  - id: java-unsafe-deserialization
+    languages: [java]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is deserialized into arbitrary object types. With any
+      gadget-bearing library on the classpath, and commons-collections,
+      spring-beans and groovy all qualify, this is remote code execution as the
+      application server account.
+    metadata:
+      vuln_class: "Insecure Deserialization"
+      cwe: "CWE-502"
+      exploitability: "CRITICAL"
+      confidence: "high: readObject and fromXML reconstruct whatever type the stream names, and no filtering is visible at the call site"
+    pattern-sources: *java-request-sources
+    pattern-sinks:
+      - pattern: $OIS.readObject()
+      - pattern: $OIS.readUnshared()
+      - pattern: $XSTREAM.fromXML(...)
+      - pattern: SerializationUtils.deserialize(...)
+      # named rather than matching every .load(), which would catch
+      # Properties.load and every other loader that builds nothing
+      - patterns:
+          - pattern: $YAML.load(...)
+          - metavariable-regex:
+              metavariable: $YAML
+              regex: (?i).*yaml.*
+
+  - id: java-jackson-polymorphic-typing
+    languages: [java]
+    severity: ERROR
+    message: >
+      Jackson is configured to read the concrete class name out of the JSON
+      document. Any JSON this mapper parses can then name a gadget class on the
+      classpath and reach code execution through its constructor or setters.
+    metadata:
+      vuln_class: "Insecure Deserialization"
+      cwe: "CWE-502"
+      exploitability: "HIGH"
+      confidence: "high: default typing has to be turned on deliberately and is exploitable wherever the mapper reads untrusted JSON"
+    patterns:
+      - pattern-either:
+          - pattern: $MAPPER.enableDefaultTyping(...)
+          - pattern: $MAPPER.activateDefaultTyping(...)
+          - pattern: $MAPPER.enableDefaultTypingAsProperty(...)
+
+  - id: ruby-unsafe-deserialization
+    languages: [ruby]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is deserialized by a format that reconstructs arbitrary
+      objects. Marshal and the unsafe YAML and Oj modes instantiate whatever
+      class the payload names, which reaches code execution through the gadgets
+      in Rails itself.
+    metadata:
+      vuln_class: "Insecure Deserialization"
+      cwe: "CWE-502"
+      exploitability: "CRITICAL"
+      confidence: "high for Marshal; YAML.load is safe by default only on psych 4 and later, so the runtime version decides that one"
+    pattern-sources: *ruby-request-sources
+    pattern-sinks:
+      - pattern: Marshal.load(...)
+      - pattern: Marshal.restore(...)
+      - pattern: YAML.load(...)
+      - pattern: YAML.load_stream(...)
+      - pattern: Psych.load(...)
+      - pattern: Oj.load(...)
+      - pattern: JSON.load(...)
+
+  - id: php-unsafe-deserialization
+    languages: [php]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is passed to unserialize. An attacker who controls these
+      bytes instantiates any class the application can autoload and drives it
+      through __wakeup and __destruct, which reaches code execution in most
+      frameworks.
+    metadata:
+      vuln_class: "Insecure Deserialization"
+      cwe: "CWE-502"
+      exploitability: "CRITICAL"
+      confidence: "high: the allowed_classes option is the only defence and is absent here; json_decode is not a sink"
+    pattern-sources: *php-request-sources
+    pattern-sinks:
+      - pattern: unserialize(...)
+
+  - id: csharp-unsafe-deserialization
+    languages: [csharp]
+    severity: ERROR
+    message: >
+      A .NET formatter that reconstructs arbitrary types is in use. Whoever
+      supplies the serialized blob, over the network or through a cookie or
+      view state, chooses the type that gets built and reaches code execution
+      through its constructor. BinaryFormatter in particular cannot be secured
+      by configuration.
+    metadata:
+      vuln_class: "Insecure Deserialization"
+      cwe: "CWE-502"
+      exploitability: "CRITICAL"
+      confidence: "high: these formatters have no safe mode, so the only question left for review is where the bytes come from"
+    patterns:
+      - pattern-either:
+          - pattern: new BinaryFormatter(...)
+          - pattern: new NetDataContractSerializer(...)
+          - pattern: new SoapFormatter(...)
+          - pattern: new LosFormatter(...)
+          - pattern: new ObjectStateFormatter(...)
+          - pattern: new JavaScriptSerializer(new SimpleTypeResolver(...))
+          - pattern: TypeNameHandling.All
+          - pattern: TypeNameHandling.Objects
+          - pattern: TypeNameHandling.Arrays
+          - pattern: TypeNameHandling.Auto
+
+  # ------------------------------------------------------------- xml entities -
+
+  - id: java-xxe-dtd-enabled
+    languages: [java]
+    severity: ERROR
+    message: >
+      XML parsing is configured to process document type declarations or
+      external entities. An attacker who supplies XML then reads any file the
+      process can open and makes the server issue requests to internal hosts.
+    metadata:
+      vuln_class: "XML External Entity"
+      cwe: "CWE-611"
+      exploitability: "HIGH"
+      confidence: "high: only explicit re-enabling is matched, so a parser left at its defaults is not reported and this rule never guesses at library versions"
+    patterns:
+      - pattern-either:
+          - pattern: $F.setFeature("http://apache.org/xml/features/disallow-doctype-decl", false)
+          - pattern: $F.setFeature("http://xml.org/sax/features/external-general-entities", true)
+          - pattern: $F.setFeature("http://xml.org/sax/features/external-parameter-entities", true)
+          - pattern: $F.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, false)
+          - pattern: $F.setProperty(javax.xml.stream.XMLInputFactory.SUPPORT_DTD, true)
+          - pattern: $F.setProperty(javax.xml.stream.XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, true)
+          - pattern: $F.setExpandEntityReferences(true)
+
+  - id: csharp-xxe-resolver-enabled
+    languages: [csharp]
+    severity: ERROR
+    message: >
+      The XML reader is given a resolver, or told to process DTDs, so entity
+      references in the document are fetched. An attacker who supplies XML then
+      reads local files and reaches hosts only the server can see.
+    metadata:
+      vuln_class: "XML External Entity"
+      cwe: "CWE-611"
+      exploitability: "HIGH"
+      confidence: "high: modern .NET disables both by default, so each of these is a deliberate step back"
+    patterns:
+      - pattern-either:
+          - pattern: $X.XmlResolver = new XmlUrlResolver(...)
+          - pattern: $X.DtdProcessing = DtdProcessing.Parse
+          - pattern: $X.ProhibitDtd = false
+          - pattern: new XmlTextReader(...).DtdProcessing = DtdProcessing.Parse
+
+  - id: php-xxe-entity-substitution
+    languages: [php]
+    severity: ERROR
+    message: >
+      XML is parsed with entity substitution enabled. An attacker who supplies
+      the document reads any file the web server can open and makes it issue
+      requests to internal hosts.
+    metadata:
+      vuln_class: "XML External Entity"
+      cwe: "CWE-611"
+      exploitability: "HIGH"
+      confidence: "high: LIBXML_NOENT and re-enabling the entity loader are both explicit choices"
+    patterns:
+      - pattern-either:
+          - pattern: simplexml_load_string(..., LIBXML_NOENT, ...)
+          - pattern: simplexml_load_file(..., LIBXML_NOENT, ...)
+          - pattern: $DOC->loadXML(..., LIBXML_NOENT, ...)
+          - pattern: $DOC->load(..., LIBXML_NOENT, ...)
+          - pattern: libxml_disable_entity_loader(false)

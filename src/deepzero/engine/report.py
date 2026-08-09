@@ -1732,18 +1732,23 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
         else ""
     )
 
+    # one of these reads "1 repository", the other "6 repositories", and a
+    # declared plural is the whole point of asking for one
+    def _count(n: int) -> str:
+        return f"{n:,} {_esc(entity if n == 1 else plural)}"
+
     # say what to do next, not only what happened
     if n_pos:
         note = (
-            f"<p class='finding-note'><b>{n_pos:,} {_esc(entity)}"
-            f"{'s' if n_pos != 1 else ''} {_esc(lex.positive_phrase)}.</b> "
+            f"<p class='finding-note'><b>{_count(n_pos)} "
+            f"{_esc(lex.positive_phrase)}.</b> "
             f"They lead the list below, ordered by the severity of what was "
             f"found {_DASH} start at the top.</p>"
         )
     elif n_rev:
         note = (
             f"<p class='finding-note rev'><b>{_esc(lex.nothing_positive)}.</b> "
-            f"{n_rev:,} {_esc(entity)}{'s' if n_rev != 1 else ''} produced findings "
+            f"{_count(n_rev)} produced findings "
             f"that no assessment has confirmed or dismissed {_DASH} those are the "
             f"ones worth reading.</p>"
         )

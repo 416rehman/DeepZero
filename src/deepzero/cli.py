@@ -99,6 +99,23 @@ def _latest_run_dir(base: Path) -> Path | None:
     return base if (base / "run.json").exists() else None
 
 
+def _announce_corpus(base: Path, chosen: Path) -> None:
+    """say which corpus these results are when a pipeline has seen more than one.
+
+    Work directories are namespaced per corpus, so resolving by pipeline name
+    alone silently picks the most recent. That is the right default and the wrong
+    thing to leave unsaid: the newest run is not always the one being asked about.
+    """
+    if not base.exists():
+        return
+    runs = [d for d in base.iterdir() if d.is_dir() and (d / "run.json").exists()]
+    if len(runs) < 2:
+        return
+    others = sorted(d.name for d in runs if d.resolve() != chosen.resolve())
+    console.print(f"      corpus: [bold]{chosen.name}[/] (most recent of {len(runs)})")
+    console.print(f"      others: {', '.join(others)} - pass --work-dir to pick one")
+
+
 def _setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     handler = RichHandler(
@@ -376,6 +393,7 @@ def report(
         if work_path is None:
             console.print(f"[bold red]X ERROR[/]: no runs found under {pipeline_def.base_work_dir}")
             raise SystemExit(1)
+        _announce_corpus(pipeline_def.base_work_dir, work_path)
         report_cfg = pipeline_def.report
     else:
         console.print("[bold red]X ERROR[/]: pass --pipeline or --work-dir")

@@ -54,3 +54,4 @@ _site/
 
 # local research artifacts: run logs, generated reports, scratch previews
 research/
+.demo/

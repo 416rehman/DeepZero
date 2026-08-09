@@ -373,6 +373,27 @@ class TestPipelineAgnostic:
         assert "repositories" in text
         assert "repositorys" not in text
 
+    def test_the_plural_reaches_the_prose_not_only_the_headline_count(self, tmp_path):
+        """the sentence under the counts says how many were flagged, and it read
+        "2 repositorys" long after the headline was fixed, because the two were
+        pluralised in different places."""
+        work = self._github_run(tmp_path)
+        index, _ = write_report(
+            work,
+            config=ReportConfig.from_dict(
+                {
+                    "entity": "repository",
+                    "entity_plural": "repositories",
+                    "classification_key": "verdict",
+                    "vulnerable_when": ["exploitable"],
+                }
+            ),
+        )
+        text = index.read_text(encoding="utf-8")
+        assert "repositorys" not in text
+        # one flagged repository must read as singular, not "1 repositories"
+        assert "1 repository " in text
+
     def test_the_plural_falls_back_to_adding_an_s(self, tmp_path):
         work = self._github_run(tmp_path)
         index, _ = write_report(work, config=ReportConfig.from_dict({"entity": "driver"}))

@@ -169,9 +169,14 @@ class TestPromptsAreCheckedBeforeARun:
         assert any("llm_output_file" in e for e in errors)
 
 
-def test_the_bundled_pipeline_prompt_resolves():
-    """the shipped pipeline is the one users run first, so its prompt has to
-    reference only values its own stages record.
+def test_every_bundled_pipeline_prompt_resolves():
+    """the shipped pipelines are the ones users run first, so their prompts have
+    to reference only values the stages before them record. A name nothing
+    provides renders as nothing, and the model is asked to judge a repository it
+    was never told anything about.
+
+    Every pipeline in the directory is checked rather than one by name, so
+    adding a pipeline cannot quietly skip this.
 
     Checked against the stages' declarations rather than through
     validate_pipeline, because that also demands a Ghidra install and a signed-in
@@ -186,17 +191,33 @@ def test_the_bundled_pipeline_prompt_resolves():
     from deepzero.engine.pipeline import resolve_processor_class
     from deepzero.engine.stage import ALWAYS_PROVIDED
 
-    bundled = Path(__file__).resolve().parent.parent / "pipelines" / "loldrivers"
-    if not (bundled / "pipeline.yaml").exists():
-        pytest.skip("bundled pipeline not present in this checkout")
+    root = Path(__file__).resolve().parent.parent
+    bundled = sorted((root / "pipelines").glob("*/pipeline.yaml"))
+    if not bundled:
+        pytest.skip("no bundled pipelines in this checkout")
 
-    spec = _yaml.safe_load((bundled / "pipeline.yaml").read_text(encoding="utf-8"))
-    available = set(ALWAYS_PROVIDED)
-    for stage in spec["stages"]:
-        available |= set(getattr(resolve_processor_class(stage["processor"]), "provides", ()))
+    checked = 0
+    for pipeline_file in bundled:
+        spec = _yaml.safe_load(pipeline_file.read_text(encoding="utf-8"))
+        available = set(ALWAYS_PROVIDED)
+        for stage in spec.get("stages", []):
+            prompt = (stage.get("config") or {}).get("prompt", "")
+            # a value becomes available to the stages after the one recording
+            # it, so a stage's own output is not read before its provides are
+            # added to the pool
+            if prompt:
+                template_path = root / prompt
+                if not template_path.exists():
+                    template_path = pipeline_file.parent / prompt
+                assert template_path.exists(), f"{pipeline_file}: prompt {prompt} does not exist"
+                used = meta.find_undeclared_variables(
+                    jinja2.Environment(autoescape=jinja2.select_autoescape()).parse(
+                        template_path.read_text(encoding="utf-8")
+                    )
+                )
+                missing = sorted(used - available)
+                assert missing == [], f"{pipeline_file} stage {stage['name']} wants {missing}"
+                checked += 1
+            available |= set(getattr(resolve_processor_class(stage["processor"]), "provides", ()))
 
-    template = (bundled / "assessment.j2").read_text(encoding="utf-8")
-    used = meta.find_undeclared_variables(
-        jinja2.Environment(autoescape=jinja2.select_autoescape()).parse(template)
-    )
-    assert sorted(used - available) == []
+    assert checked, "no bundled pipeline names a prompt, so nothing was checked"

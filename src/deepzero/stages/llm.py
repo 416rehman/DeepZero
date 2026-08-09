@@ -110,11 +110,17 @@ class GenericLLM(MapProcessor):
 
             # a prompt that names a value the pipeline never produced would
             # otherwise render as empty and the model would be asked to judge
-            # nothing, so an unknown name is an error naming what is available
+            # nothing, so an unknown name is an error naming what is available.
+            #
+            # a prompt is plain text, never a web page: escaping is off because
+            # the values interpolated here are source code and decompiler output,
+            # and html-escaping them sends the model `hdr-&gt;len` where the file
+            # says `hdr->len`. select_autoescape() escapes string templates by
+            # default, which is why this has to be said explicitly.
             env = jinja2.Environment(
                 loader=jinja2.FileSystemLoader(str(template_path.parent)),
                 undefined=jinja2.StrictUndefined,
-                autoescape=jinja2.select_autoescape(),
+                autoescape=False,
             )
             template = env.from_string(raw)
             try:

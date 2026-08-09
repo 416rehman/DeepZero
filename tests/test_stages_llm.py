@@ -261,33 +261,38 @@ class TestArtifactContextBudget:
         assert len(vars_["big_c"]) < 5000
 
 
+def _render(tmp_path, template_text, vars_present=None):
+    """render a prompt exactly as the stage does, from a template on disk."""
+    from deepzero.engine.stage import ProcessorContext, ProcessorEntry, StageSpec
+    from deepzero.stages.llm import GenericLLM
+
+    tpl = tmp_path / "prompt.j2"
+    tpl.write_text(template_text, encoding="utf-8")
+    sample_dir = tmp_path / "s1"
+    sample_dir.mkdir(parents=True, exist_ok=True)
+    for name, body in (vars_present or {}).items():
+        (sample_dir / name).write_text(body, encoding="utf-8")
+
+    stage = GenericLLM(
+        StageSpec(name="assess", processor="generic_llm", config={"prompt": str(tpl)})
+    )
+    ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=None)
+    entry = ProcessorEntry(
+        sample_id="s1",
+        source_path=tmp_path / "s1.sys",
+        filename="s1.sys",
+        sample_dir=sample_dir,
+    )
+    entry._history = {}
+    return stage._render_prompt(str(tpl), ctx, entry)
+
+
 class TestPromptCompleteness:
     """a prompt that silently renders empty asks the model to judge nothing, so
     a name the pipeline does not produce has to be an error."""
 
     def _render(self, tmp_path, template_text, vars_present=None):
-        from deepzero.engine.stage import ProcessorContext, ProcessorEntry, StageSpec
-        from deepzero.stages.llm import GenericLLM
-
-        tpl = tmp_path / "prompt.j2"
-        tpl.write_text(template_text, encoding="utf-8")
-        sample_dir = tmp_path / "s1"
-        sample_dir.mkdir(parents=True, exist_ok=True)
-        for name, body in (vars_present or {}).items():
-            (sample_dir / name).write_text(body, encoding="utf-8")
-
-        stage = GenericLLM(
-            StageSpec(name="assess", processor="generic_llm", config={"prompt": str(tpl)})
-        )
-        ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=None)
-        entry = ProcessorEntry(
-            sample_id="s1",
-            source_path=tmp_path / "s1.sys",
-            filename="s1.sys",
-            sample_dir=sample_dir,
-        )
-        entry._history = {}
-        return stage._render_prompt(str(tpl), ctx, entry)
+        return _render(tmp_path, template_text, vars_present)
 
     def test_unknown_value_is_reported_with_what_is_available(self, tmp_path):
         import pytest
@@ -310,3 +315,24 @@ class TestPromptCompleteness:
             "{% if missing_thing is defined %}{{ missing_thing }}{% else %}none{% endif %}",
         )
         assert "none" in out
+
+
+class TestAPromptIsPlainTextNotAWebPage:
+    """every value a prompt interpolates is code: decompiler output, a semgrep
+    snippet, a file read off disk. Escaping it for html rewrites the evidence on
+    the way to the model, which then reasons about `hdr-&gt;len` and reports on
+    a line the file does not contain."""
+
+    def test_an_interpolated_value_keeps_its_punctuation(self, tmp_path):
+        code = 'if (hdr->len & 0xFF) { memcpy(dst, "a<b", n); }'
+        out = _render(tmp_path, "Payload:\n{{ decompiled_c }}", {"decompiled.c": code})
+        assert code in out
+
+    def test_no_html_entity_reaches_the_model(self, tmp_path):
+        out = _render(
+            tmp_path,
+            "Payload:\n{{ decompiled_c }}",
+            {"decompiled.c": "a && b > c || d < e, s = \"x\", t = 'y'"},
+        )
+        for entity in ("&amp;", "&gt;", "&lt;", "&#34;", "&#39;", "&quot;"):
+            assert entity not in out

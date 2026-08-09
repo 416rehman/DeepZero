@@ -12,11 +12,17 @@ What a pipeline can optionally declare in its yaml to shape the output:
     report:
       title: GitHub source bug hunt
       entity: repository          # what one sample is called in the ui
+      entity_plural: repositories # only needed when adding an s is wrong
+      target_label: organisation  # what the thing being researched is called
       classification_key: verdict # stage data key holding the conclusion
       vulnerable_when: [vulnerable, exploitable]
       safe_when: [safe, clean]
       columns: [scan.finding_count, discover.stars]
       findings_files: [findings.json, sast.json]
+
+`target_label` matters because the default, "corpus", assumes a pile of files on
+disk. A pipeline scanning a live web application wants "scope", one walking a
+git history wants "repository", and calling either a corpus reads as a mistake.
 
 Everything has a default, so a pipeline that declares nothing still gets a
 useful report.
@@ -165,6 +171,11 @@ class ReportConfig:
 
     title: str = ""
     entity: str = "sample"
+    # only needed where appending an s is wrong, e.g. repository -> repositories
+    entity_plural: str = ""
+    # what the run was pointed at. "corpus" suits a directory of files; a web
+    # assessment wants "scope", a repository sweep wants "organisation".
+    target_label: str = "corpus"
     classification_key: str = "classification"
     vulnerable_when: tuple[str, ...] = ("vulnerab", "exploitab", "confirmed")
     safe_when: tuple[str, ...] = ("safe", "not vulnerab", "benign", "clean")
@@ -186,12 +197,19 @@ class ReportConfig:
         return cls(
             title=str(raw.get("title", "") or ""),
             entity=str(raw.get("entity", "sample") or "sample"),
+            entity_plural=str(raw.get("entity_plural", "") or ""),
+            target_label=str(raw.get("target_label", "corpus") or "corpus"),
             classification_key=str(raw.get("classification_key", "classification")),
             vulnerable_when=tuple(s.lower() for s in tup("vulnerable_when", cls.vulnerable_when)),
             safe_when=tuple(s.lower() for s in tup("safe_when", cls.safe_when)),
             columns=tup("columns", ()),
             findings_files=tup("findings_files", cls.findings_files),
         )
+
+    @property
+    def plural(self) -> str:
+        """what many samples are called, for counts like "851 drivers"."""
+        return self.entity_plural or f"{self.entity}s"
 
 
 @dataclass
@@ -1461,6 +1479,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     columns: list[str] = payload["columns"]
     running = str(run.get("state", "")).lower() == "running"
     entity = cfg.entity
+    plural = cfg.plural
 
     total = t["samples"]
     n_pos = buckets.get(BUCKET_VULNERABLE, 0)
@@ -1506,7 +1525,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     readout = (
         f"<div class='readout'><div class='ticks'>{ticks}</div>"
         + (
-            f"<div class='spread' role='img' aria-label='{total:,} {_esc(entity)}s by "
+            f"<div class='spread' role='img' aria-label='{total:,} {_esc(plural)} by "
             f"outcome'>{spread}</div>"
             if total
             else ""
@@ -1677,7 +1696,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     plate = "".join(
         f"<div><div class='lbl'>{lbl}</div><dd>{_esc(val)}</dd></div>"
         for lbl, val in (
-            ("corpus", run.get("target", "-")),
+            (cfg.target_label, run.get("target", "-")),
             ("assessed by", run.get("model", "-")),
         )
     ) + _run_state_cell(run, str(payload.get("generated_at", "")))
@@ -1686,7 +1705,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
   <div class="kicker"><span class="mark">DEEPZERO</span>
     <span class="lbl">vulnerability research</span>
     <span class="id">{_esc(run.get("run_id", "") or "")}</span></div>
-  <h1>{_esc(title)} <span class="qty">{t["samples"]:,} {_esc(entity)}s</span></h1>
+  <h1>{_esc(title)} <span class="qty">{t["samples"]:,} {_esc(plural)}</span></h1>
   <dl class="plate">{plate}</dl>
   {readout}
   {note}{trunc}
@@ -1774,7 +1793,11 @@ def write_report(
 
     summary = {k: v for k, v in payload.items() if k not in ("items", "config")}
     summary["item_pages"] = len(items)
+    # consumers of report.json render their own headings, so they need the same
+    # vocabulary the html was built with rather than having to guess a plural
     summary["entity"] = cfg.entity
+    summary["entity_plural"] = cfg.plural
+    summary["target_label"] = cfg.target_label
     json_path = target / "report.json"
     json_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
 

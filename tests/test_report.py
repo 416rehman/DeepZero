@@ -338,6 +338,64 @@ class TestPipelineAgnostic:
         # no verdict key configured, so nothing can confirm it either way
         assert "Needs assessment" in text
 
+    def test_the_target_is_named_in_the_pipeline_s_own_terms(self, tmp_path):
+        """the header labels whatever the run was pointed at. Calling a GitHub
+        organisation or a web application a "corpus" reads as a mistake, so the
+        label is declared rather than assumed."""
+        work = self._github_run(tmp_path)
+        index, _ = write_report(
+            work,
+            config=ReportConfig.from_dict({"entity": "repository", "target_label": "organisation"}),
+        )
+        text = index.read_text(encoding="utf-8")
+        # the label as it renders, so a passing stylesheet comment cannot satisfy this
+        assert "<div class='lbl'>organisation</div>" in text
+        assert "<div class='lbl'>corpus</div>" not in text
+
+    def test_the_target_label_defaults_to_corpus(self, tmp_path):
+        """a pipeline over a directory of files declares nothing and still reads
+        correctly, so this stays invisible until a pipeline needs it."""
+        work = self._github_run(tmp_path)
+        index, _ = write_report(work)
+        assert "<div class='lbl'>corpus</div>" in index.read_text(encoding="utf-8")
+
+    def test_a_plural_that_an_s_cannot_make(self, tmp_path):
+        """ "851 repositorys" would undermine every number beside it."""
+        work = self._github_run(tmp_path)
+        index, _ = write_report(
+            work,
+            config=ReportConfig.from_dict(
+                {"entity": "repository", "entity_plural": "repositories"}
+            ),
+        )
+        text = index.read_text(encoding="utf-8")
+        assert "repositories" in text
+        assert "repositorys" not in text
+
+    def test_the_plural_falls_back_to_adding_an_s(self, tmp_path):
+        work = self._github_run(tmp_path)
+        index, _ = write_report(work, config=ReportConfig.from_dict({"entity": "driver"}))
+        assert "drivers" in index.read_text(encoding="utf-8")
+
+    def test_report_json_carries_the_vocabulary(self, tmp_path):
+        """anything rendering its own headings from report.json needs the same
+        words the html used, rather than guessing a plural."""
+        work = self._github_run(tmp_path)
+        write_report(
+            work,
+            config=ReportConfig.from_dict(
+                {
+                    "entity": "repository",
+                    "entity_plural": "repositories",
+                    "target_label": "organisation",
+                }
+            ),
+        )
+        summary = json.loads((work / "report" / "report.json").read_text(encoding="utf-8"))
+        assert summary["entity"] == "repository"
+        assert summary["entity_plural"] == "repositories"
+        assert summary["target_label"] == "organisation"
+
     def test_alien_finding_shape_is_normalized(self, tmp_path):
         work = self._github_run(tmp_path)
         payload = collect(work, config=ReportConfig.from_dict({"findings_files": ["sast.json"]}))

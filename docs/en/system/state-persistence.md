@@ -66,10 +66,11 @@ All state objects are tagged with an internal `STATE_VERSION`. If the engine enc
 ### Workspace Hierarchy
 
 ```text
-work/<pipeline_name>/
+work/<pipeline_name>/<corpus_key>/
 ├── run.json             # Serialized `RunState`: Execution metrics and pipeline metadata
 ├── pipeline.yaml        # Immutable snapshot of the pipeline YAML config during initialization
 ├── run_manifest.json    # Aggregated macro-overview of all samples (used by Starlette API)
+├── report/              # Browsable HTML report, rebuilt as results land
 └── samples/
     └── <sample_id>/     # Isolated sandbox
         ├── state.json   # Serialized `SampleState`: Complete ledger of `StageOutput` maps
@@ -77,8 +78,25 @@ work/<pipeline_name>/
         └── ...          # Processor-specific artifacts
 ```
 
+### Corpus Scoping
+
+The `<corpus_key>` segment is what keeps two targets through one pipeline apart. It is
+derived from the run target: its basename, plus a short digest of the resolved absolute
+path, so it is both readable and unambiguous. On Windows the path is case-folded first,
+because `C:\Drivers` and `c:\drivers` are the same corpus.
+
+Without that segment, pointing the same pipeline at a second corpus would resume into
+the first one's sample store: samples that no longer correspond to anything on disk
+would be treated as already analysed, and the run would report results for a corpus it
+was never given. With it, each corpus has its own state, its own manifest and its own
+report, and each resumes independently.
+
+The same resolved path always maps to the same key, so a rerun lands back where it left
+off. Everything under this directory is derived: `report/` in particular holds nothing
+the run state does not, and deleting it costs a rebuild rather than a run.
+
 ### The `history` Ledger
 
-The `SampleState.history` dictionary strictly maps processor stage names to instances of `StageOutput`. Output data structures are strictly isolated and namespaced. A downstream processor extracting metrics from an upstream map will query: `history["upstream_processor"].data.get("metric")` (see [Building Custom Processors]({{ '/extensibility/building-custom.html' | relative_url }})).
+The `SampleState.history` dictionary strictly maps processor stage names to instances of `StageOutput`. Output data structures are strictly isolated and namespaced. A downstream processor extracting metrics from an upstream map will query: `history["upstream_processor"].data.get("metric")` (see [Building Custom Processors]({{ '/en/extensibility/building-custom.html' | relative_url }})).
 
 This namespacing permanently prevents field collision across divergent heuristic analysis techniques.

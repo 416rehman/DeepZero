@@ -1,20 +1,51 @@
 ---
 layout: default
-title: LOLDrivers Pipeline
+title: Included Pipelines
 order: 3
 ---
 
-## LOLDrivers Pipeline Reference
+## Included Pipelines
 
-A reference BYOVD (Bring Your Own Vulnerable Driver) pipeline is maintained in `pipelines/loldrivers/`.
+Two complete pipelines ship with DeepZero. They exist to be run, and to be read as
+worked examples of what a pipeline definition looks like when it is doing something
+real.
 
-1. **discover:** PE ingestion and LIEF header parsing.
-2. **kernel_filter:** Constraints processing to kernel-mode drivers exposing IOCTL surfaces.
-3. **loldrivers_filter:** Excludes known entities cataloged via loldrivers.io.
-4. **decompile:** Executes Ghidra headless decompilation.
-5. **semgrep_scanner:** Bulk static analysis against exported C source.
-6. **pick_top_10:** Heuristic reduction to top candidate tier.
-7. **assess:** LLM prompt injection and logical assessment.
+| Pipeline | Corpus | What it looks for |
+|----------|--------|-------------------|
+| `pipelines/loldrivers` | Windows kernel drivers on disk | BYOVD candidates: IOCTL surfaces reachable without the hardware |
+| `pipelines/source_audit` | Git repositories | Source-level vulnerabilities reachable from untrusted input |
+
+Both declare `model: claude-code/claude-opus-5`, so they run against a Claude Code
+subscription with no API key. Override with `-m` for any LiteLLM model. See
+[Choosing a Model]({{ '/en/reference/pipeline-yaml.html' | relative_url }}).
+
+---
+
+## LOLDrivers Pipeline
+
+A reference BYOVD (Bring Your Own Vulnerable Driver) pipeline is maintained in
+`pipelines/loldrivers/`.
+
+| Stage | Processor | What it does |
+|-------|-----------|--------------|
+| `discover` | `pe_ingest/pe_ingest.py` | PE ingestion and LIEF header parsing |
+| `kernel_filter` | `metadata_filter` | Constrains to kernel-mode drivers exposing IOCTL surfaces, and deduplicates on hash |
+| `loldrivers_filter` | `loldrivers_filter/loldrivers_filter.py` | Excludes known entities cataloged via loldrivers.io |
+| `decompile` | `ghidra_decompile/ghidra_decompile.py` | Executes Ghidra headless decompilation |
+| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | Bulk static analysis against the exported C source |
+| `rank_by_findings` | `top_k` | Orders every surviving driver by finding count, worst first |
+| `assess` | `generic_llm` | Renders `assessment.j2` per driver and records the verdict |
+
+The ranking stage keeps everything (`keep_top: 0`) and only changes the order. That is
+deliberate: dropping all but a top tier saves assessment calls but decides which drivers
+are worth reading using a finding count, which is exactly the judgement the assessment
+stage exists to make. Ordering worst-first gets the same drivers looked at first
+without throwing the rest away, and a run stopped early has still spent its time on the
+noisiest drivers.
+
+The exclusions run before decompilation for the same reason in reverse: Ghidra is by far
+the most expensive stage, so every driver removed by a cheap header check or a hash
+lookup is minutes not spent.
 
 ### Whether a finding can be exercised without the hardware
 
@@ -64,3 +95,107 @@ repeating the routine, and the assessment stage will then parse that document pe
 driver when building its prompt.
 
 `tests/test_extract_dispatch.py` guards the entry shape directly.
+
+### Prerequisites
+
+- Ghidra, with `GHIDRA_INSTALL_DIR` set. `JAVA_HOME` is read if present.
+- `semgrep` on PATH: `pip install semgrep`.
+
+---
+
+## Source Audit Pipeline
+
+A source-code audit over git repositories, in `pipelines/source_audit/`. Each
+repository is taken at one revision, scanned with semgrep, then read by a model whose
+job is to separate a real vulnerability from a rule matching a shape in the code.
+
+| Stage | Processor | What it does |
+|-------|-----------|--------------|
+| `discover` | `git_ingest/git_ingest.py` | Clones each repository at depth 1, or reads a checkout already on disk, and records the revision everything downstream is judging |
+| `size_filter` | `metadata_filter` | Drops checkouts with no source in them and trees too large to be worth scanning; a commit reached under two names is scanned once |
+| `scan` | `semgrep_scanner/semgrep_scanner.py` | Runs `rules/` over each checkout. A repository with nothing flagged stops here |
+| `rank` | `top_k` | Orders every surviving repository by finding count, worst first, dropping none |
+| `assess` | `generic_llm` | Renders `assessment.j2` per repository and records the verdict |
+
+The two halves matter in that order. Semgrep is cheap and finds every place worth
+looking; almost all of those places are fine. The assessment stage is where a finding
+either gains a path from attacker input to the sink or is written off, by name, as
+unreachable.
+
+### What to point it at
+
+`deepzero run` takes one target, and the ingest stage reads either shape:
+
+- **A directory**, where every immediate subdirectory is one checkout. Nothing is
+  fetched, so private code never has to leave the machine it is already on. A directory
+  that is itself a checkout is read as a single repository, and a plain source drop with
+  no `.git` is still read; it simply has no revision or origin to report.
+- **A file**, read as a manifest of repositories to clone. Plain text, one per line,
+  with `#` comments, or YAML as a list or a mapping with a `repos:` key whose entries
+  may pin a ref.
+
+```bash
+# audit the repositories listed in a manifest
+deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
+
+# or a directory of checkouts already on disk
+deepzero run C:\code\vendor -p pipelines/source_audit/pipeline.yaml
+```
+
+Clones live in the ingest stage's own cache directory rather than in the work
+directory, so a rerun costs no network and `--clean` does not throw them away.
+
+### Rules and languages
+
+`rules/` holds 136 semgrep rules covering Python, JavaScript, TypeScript, Go, Java,
+Ruby, PHP and C#, grouped by what they look for: injection, path traversal and SSRF,
+authentication and authorisation, crypto and secrets, deserialisation, and XSS and
+response headers.
+
+Three places have to agree: the rules, the `extensions` list on `discover`, and the
+identical list on `scan`. They fail in opposite directions. An extension the lists miss
+is neither counted nor scanned, so the repository comes out looking smaller and cleaner
+than it is. An extension the lists carry that no rule covers is walked, counted and
+staged for a scan that can never match it. Adding a language means all three, and
+`tests/test_source_audit_pipeline.py` fails if they drift apart.
+
+A repository written in a language `rules/` does not cover therefore counts zero source
+files and is dropped by `size_filter`. That reads as "no source" when it means "nothing
+here this pipeline can audit", and it is still the outcome worth having: the tree is
+dropped one stage after the clone rather than staged for a scan whose rules could never
+fire.
+
+### Reading its report
+
+The pipeline declares its own vocabulary, because a repository is not a file on disk:
+
+```yaml
+report:
+  title: Source repository audit
+  entity: repository
+  entity_plural: repositories
+  target_label: organisation
+  vulnerable_when: [vulnerable]
+  safe_when: [not exploitable]
+```
+
+`vulnerable_when` is narrowed for a reason worth knowing about. The assessment answers
+`[VULNERABLE]` or `[NOT EXPLOITABLE]`, and the default positive list includes
+`exploitab`, which the negative verdict contains. See
+[How a Verdict is Matched]({{ '/en/reference/pipeline-yaml.html' | relative_url }}).
+
+Its `columns` put finding count, files scanned, source file count, primary language and
+revision against each repository. Files scanned earns its place: a repository with no
+findings and a repository whose files semgrep never opened both show zero findings, and
+only one of those is a result.
+
+### Prerequisites
+
+- `git` on PATH, for the `discover` stage.
+- `semgrep` on PATH: `pip install semgrep`.
+
+Check all of it, for either pipeline, before committing to a long run:
+
+```bash
+deepzero validate pipelines/source_audit/pipeline.yaml
+```

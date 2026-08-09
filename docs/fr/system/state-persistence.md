@@ -66,16 +66,25 @@ Tous les objets d'état sont marqués avec une `STATE_VERSION` interne. Si le mo
 ### Hiérarchie de l'Espace de Travail
 
 ```text
-work/<pipeline_name>/
+work/<pipeline_name>/<corpus_key>/
 ├── run.json             # `RunState` sérialisé : Métriques d'exécution et métadonnées du pipeline
 ├── pipeline.yaml        # Instantané immuable de la configuration YAML du pipeline lors de l'initialisation
 ├── run_manifest.json    # Vue d'ensemble macro agrégée de tous les échantillons (utilisé par l'API Starlette)
+├── report/              # Rapport HTML consultable, reconstruit à mesure que les résultats arrivent
 └── samples/
     └── <sample_id>/     # Bac à sable isolé (sandbox)
         ├── state.json   # `SampleState` sérialisé : Registre complet des cartes `StageOutput`
         ├── context.md   # Contexte LLM synthétisé, généré via `engine/context.py`
         └── ...          # Artefacts spécifiques au processeur
 ```
+
+### Cloisonnement par Corpus
+
+Le segment `<corpus_key>` est ce qui sépare deux cibles traitées par un même pipeline. Il est dérivé de la cible de l'exécution : son nom de base, augmenté d'une courte empreinte du chemin absolu résolu, de sorte qu'il soit à la fois lisible et sans ambiguïté. Sous Windows, la casse du chemin est d'abord normalisée, car `C:\Drivers` et `c:\drivers` désignent le même corpus.
+
+Sans ce segment, pointer le même pipeline vers un second corpus reviendrait à reprendre dans le magasin d'échantillons du premier : des échantillons ne correspondant plus à rien sur le disque seraient considérés comme déjà analysés, et l'exécution rapporterait des résultats pour un corpus qui ne lui a jamais été soumis. Avec lui, chaque corpus dispose de son propre état, de son propre manifeste et de son propre rapport, et chacun reprend indépendamment.
+
+Un même chemin résolu produit toujours la même clé : une nouvelle exécution retombe donc là où elle s'était arrêtée. Tout ce que contient ce répertoire est dérivé. `report/` en particulier ne contient rien que l'état de l'exécution ne contienne déjà, et le supprimer coûte une reconstruction, pas une exécution.
 
 ### Le Registre `history`
 

@@ -6,7 +6,7 @@ order: 1
 
 ## Quickstart
 
-DeepZero requires a target corpus of files to analyze and a [pipeline configuration]({{ '/reference/pipeline-yaml.html' | relative_url }}) detailing how to process them. We provide a [complete example pipeline]({{ '/reference/included-pipeline.html' | relative_url }}) designed to hunt for new BYOVD (Bring Your Own Vulnerable Driver) candidates across raw binary datasets (e.g., the Snappy Driver Installer corpus) by explicitly filtering out known hashes using the [LOLDrivers project](https://www.loldrivers.io/).
+DeepZero requires a target corpus to analyze and a [pipeline configuration]({{ '/en/reference/pipeline-yaml.html' | relative_url }}) detailing how to process it. Two [complete pipelines]({{ '/en/reference/included-pipeline.html' | relative_url }}) ship with it: one hunting for new BYOVD (Bring Your Own Vulnerable Driver) candidates across raw binary datasets (e.g., the Snappy Driver Installer corpus) while explicitly filtering out known hashes using the [LOLDrivers project](https://www.loldrivers.io/), and one auditing source code across git repositories.
 
 ### 1. Installation
 
@@ -26,7 +26,25 @@ If integrating AI analysis stages, configure API keys by creating a `.env` file:
 cp .env.example .env
 ```
 
-### 3. Pipeline Execution
+Both bundled pipelines declare a `claude-code` model, which drives the Claude Code CLI
+you are already signed in to and needs no API key at all. Any [LiteLLM model]({{ '/en/reference/pipeline-yaml.html' | relative_url }}) works instead, via the pipeline's `model` field or `-m` on the command line, and that is what the API keys above are for.
+
+### 3. Check Before You Commit to a Run
+
+These runs are long. Both of these are cheap, and both fail in seconds rather than
+hours:
+
+```bash
+# resolves every processor, checks its prerequisites, and checks every prompt
+deepzero validate pipelines/loldrivers/pipeline.yaml
+```
+
+```bash
+# one tiny call, to confirm the LLM backend is actually signed in
+deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
+```
+
+### 4. Pipeline Execution
 
 Execute the included LOLDrivers pipeline against a target path:
 
@@ -34,6 +52,29 @@ Execute the included LOLDrivers pipeline against a target path:
 deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
 ```
 
+Or the source audit, against a manifest of repositories or a directory of checkouts:
+
+```bash
+deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
+```
+
 <div class="callout">
-    <p><strong>Note:</strong> DeepZero safely <a href="{{ '/en/overview/architecture.html' | relative_url }}">parallelizes execution</a> and caches intermediate outputs. To halt gracefully, send SIGINT (<code>Ctrl+C</code>). Subsequent executions with identical parameters will instantly resume from <a href="{{ '/system/state-persistence.html' | relative_url }}">persistent disk state</a>.</p>
+    <p><strong>Note:</strong> DeepZero safely <a href="{{ '/en/overview/architecture.html' | relative_url }}">parallelizes execution</a> and caches intermediate outputs. To halt gracefully, send SIGINT (<code>Ctrl+C</code>). Subsequent executions with identical parameters will instantly resume from <a href="{{ '/en/system/state-persistence.html' | relative_url }}">persistent disk state</a>.</p>
 </div>
+
+Each corpus gets its own work directory, so pointing the same pipeline at a second
+target starts a second run rather than resuming into the first one's results. Both
+remain resumable.
+
+### 5. Reading the Results
+
+A run prints a report URL before its first stage and keeps that report up to date as
+results land, so it can be opened and watched while the run is going. To build it again
+at any time, including against a run still in progress:
+
+```bash
+deepzero report -p loldrivers --open
+```
+
+The report is derived entirely from run state, so it can be deleted and rebuilt, and
+what it calls the things it found is [declared by the pipeline]({{ '/en/reference/pipeline-yaml.html' | relative_url }}).

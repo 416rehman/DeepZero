@@ -12,9 +12,11 @@ order: 2
 
 注入到每个生命周期钩子中的 `ctx` 对象，提供了系统级的上下文和实用工具：
 - `ctx.pipeline_dir`: 所调用流水线的根目录，对于解析本地模板或规则集十分有用。
-- `ctx.global_config`: `TypedDict` 字典，包含流水线级别的 `settings` (设置), `knowledge` (知识), 和已配置的 `model`。
-- `ctx.llm`: 一个通用代理实例 (实现了 `LLMProtocol` 并绑定至 [LiteLLM](https://github.com/BerriAI/litellm))，对带有原生补偿/重试 (backoff/retry) 机制的提供商 API 进行了抽象。
+- `ctx.global_config`: `TypedDict` 字典，包含流水线级别的 `settings` (设置), `knowledge` (知识), 和已配置的 `model`。`ctx.get_setting(key)` 和 `ctx.get_knowledge(key)` 是读取它的简便写法。
+- `ctx.llm`: 一个通用代理实例 (实现了 `LLMProtocol`)，自带原生补偿/重试 (backoff/retry) 机制；当流水线没有配置模型时为 `None`。它驱动哪个后端，由流水线的 `model` 字符串解析决定，因此处理器调用 `ctx.llm.complete()` 时，面对 API 密钥和面对本地 agent CLI 的写法完全一样。参阅 [选择模型]({{ '/zh-CN/reference/pipeline-yaml.html' | relative_url }})。
 - `ctx.log`: 已预先配置、带命名空间的 `logging.Logger`。
+- `ctx.progress`: 进度上报钩子，`update(amount=, total=, description=)`，这样长时间运行的摄取阶段或批量阶段会在仪表盘上显示出进展，而不是看起来像卡住了。
+- `ctx.shutdown_event`: 一个 `threading.Event`，在运行被中断时被置位。执行长时间工作的处理器应当检查它并提前返回，而不是在写入过程中被杀掉。
 
 ### 执行钩子
 
@@ -66,9 +68,24 @@ Map/BulkMap 处理器必须返回有着严格格式的 `ProcessorResult`：
 - **`.filter(reason="...", data={...})`**: 静默终止样本处理。`SampleState.verdict` 状态更变为 `FILTERED`。
 - **`.fail(error="...")`**: 由于发生了致命的意外错误而终止处理。`SampleState.verdict` 更变为 `FAILED`。
 
+### 声明后续阶段可以使用的内容
+
+处理器的 `data` 键和产物，会成为它之后运行的那些阶段的提示词可用的内容。请在 `provides` 中声明这些名称，这样 `deepzero validate` 就能在运行之前检查提示词，而不是任由一个未知的名称渲染成空：
+
+```python
+class Decompiler(MapProcessor):
+    description = "Static heuristics extraction"
+    provides = (
+        "device_name",                    # 本处理器放进 data 的一个键
+        "decompiled_dispatch_ioctl_c",    # 产物 decompiled/dispatch_ioctl.c
+    )
+```
+
+产物的名称由它的路径把分隔符和扩展名一并折进去而得；`engine/stage.py` 中的 `template_key_for_artifact` 是渲染和验证共同使用的唯一规则。只是偶尔才会记录的名称也请列出来，提示词应当容忍它们缺席。关于提示词会收到什么，参阅 [提示词可用的取值]({{ '/zh-CN/reference/pipeline-yaml.html' | relative_url }})。
+
 ### 访问上游数据
 
-处理器本质上依赖于前辈处理器所生成的工件和数据。`ProcessorEntry` 门面暴露了一些带有惰性加载的助手方法，可无缝获取这些数据：
+处理器本质上依赖于前辈处理器所生成的产物和数据。`ProcessorEntry` 门面暴露了一些带有惰性加载的助手方法，可无缝获取这些数据：
 
 ```python
 # 获取特定字段的简便写法（带有缺省回调值）

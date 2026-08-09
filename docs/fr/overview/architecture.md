@@ -123,3 +123,11 @@ Les processeurs dictent la topologie d'exécution et les modèles de concurrence
 - **Signature de Type :** `process(ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[str]`
 - **Concurrence :** Barrière de synchronisation globale. Suspend l'exécution des threads jusqu'à ce que tous les échantillons actifs atteignent cette étape.
 - **Rôle :** Renvoie une liste ordonnée de chaînes `sample_id` définissant quels échantillons survivent. Tout ID d'échantillon absent de la liste renvoyée est définitivement marqué avec `SampleStatus.FILTERED`.
+
+### Le Contrat de Sortie
+
+Quoi que fasse un processeur, il enregistre les trois mêmes choses : `data`, un dictionnaire arbitraire cloisonné par espace de noms ; `artifacts`, une association entre une étiquette et un chemin de fichier relatif ; et un statut. Ce contrat est délibérément indépendant de tout domaine, et c'est sur lui que repose tout ce qui se situe en aval du moteur.
+
+Le [rapport]({{ '/fr/reference/cli.html' | relative_url }}) en est la conséquence la plus visible. Il s'agit d'une projection de l'état persistant, et non d'une étape du pipeline : il lit les mêmes `data` et `artifacts` que n'importe quel processeur aurait pu lire. C'est pourquoi une chasse aux pilotes, un audit de code source ou n'importe quoi d'autre s'affichent sans que le code du rapport sache de quoi il s'agit. Un pipeline ne fournit que le vocabulaire, et celui-ci est un [bloc de YAML]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}) plutôt que du code.
+
+Comme le rapport ne contient rien que le répertoire d'exécution ne contienne déjà, il peut être construit pendant qu'une exécution se déroule, reconstruit après avoir été supprimé, et reconstruit encore pour une exécution terminée depuis des semaines. C'est cette même propriété qui rend la couche LLM interchangeable : un backend est sélectionné à partir de la chaîne `model` du pipeline, et aucun processeur, aucune étape et aucun fichier d'état ne sait lequel a répondu.

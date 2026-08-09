@@ -12,8 +12,14 @@ La CLI `deepzero` est le point d'interaction principal pour l'exécution et la g
 # Exécution standard
 deepzero run ./targets -p pipelines/loldrivers/pipeline.yaml
 
+# Vérifier que le backend LLM est connecté avant de s'engager dans une longue exécution
+deepzero run ./targets -p pipelines/source_audit/pipeline.yaml --preflight
+
 # Exécuter avec nettoyage de l'état (nouvelle exécution)
 deepzero run ./targets -p pipelines/loldrivers/pipeline.yaml --clean
+
+# Construire un rapport HTML consultable et l'ouvrir
+deepzero report -p loldrivers --open
 
 # Vérifier l'état de l'exécution
 deepzero status -p loldrivers
@@ -34,26 +40,173 @@ deepzero validate loldrivers
 deepzero list-processors
 ```
 
+`deepzero --version` affiche la version installée, et `--help` fonctionne sur le groupe comme sur chaque commande.
+
 ### Commandes Principales
 
 | Commande | Description |
 | --------- | ----------- |
 | `run` | Exécute un pipeline sur une cible. Reprend automatiquement si un état existe. |
+| `report` | Construit un rapport HTML consultable à partir des résultats d'une exécution. Peut être lancé sans risque pendant que l'exécution se déroule. |
 | `status` | Affiche l'état actuel de l'exécution du pipeline, les verdicts et les métriques des étapes. |
+| `validate` | Effectue une validation à blanc (dry-run) du schéma d'un pipeline, des importations de processeurs et des prompts. |
+| `list-processors` | Liste tous les types de processeurs intégrés et enregistrés dynamiquement. |
+| `init` | Échafaude un nouveau répertoire de pipeline avec un `pipeline.yaml` standard. |
 | `interactive` | REPL d'analyse interactive avec conversation assistée par LLM sur les résultats du pipeline. |
 | `serve` | Démarre le serveur API REST pour exposer l'état du pipeline en externe. |
-| `init` | Échafaude un nouveau répertoire de pipeline avec un `pipeline.yaml` standard. |
-| `validate` | Effectue une validation à blanc (dry-run) du schéma d'un pipeline et des importations de processeurs. |
-| `list-processors` | Liste tous les types de processeurs intégrés et enregistrés dynamiquement. |
 
-### Drapeaux d'Exécution (`run`)
-| Drapeau | Description |
-| --------- | ----------- |
-| `TARGET` | Argument positionnel. Chemin vers le corpus d'analyse (fichier ou répertoire). |
-| `-p, --pipeline` | Identifiant, nom du répertoire ou chemin de fichier YAML discret. |
-| `--clean` | Purger le répertoire d'état existant avant l'exécution. |
+### `run`
 
-### API REST (`serve`)
+```bash
+deepzero run <TARGET> -p <pipeline> [options]
+```
+
+| Drapeau | Défaut | Description |
+|---------|---------|-------------|
+| `TARGET` | requis | Argument positionnel. Chemin vers le corpus d'analyse. Doit exister ; un fichier ou un répertoire, selon ce qu'accepte l'étape d'ingestion du pipeline. |
+| `-p, --pipeline` | requis | Nom du pipeline, répertoire ou chemin de fichier YAML discret. |
+| `-m, --model` | le `model` du pipeline | Remplace le modèle LLM pour cette exécution, par exemple `openai/gpt-4o`. |
+| `-w, --work-dir` | le réglage `work_dir` du pipeline | Remplace la racine sous laquelle le répertoire d'exécution est construit. |
+| `--clean` | désactivé | Supprime définitivement les données de l'exécution précédente et repart de zéro. |
+| `--preflight` | désactivé | Vérifie que le backend LLM est authentifié avant l'exécution. Effectue un unique appel minimal. |
+| `--retry-timeouts` | désactivé | Retente les échantillons qui ont manqué de temps, en conservant tous les autres résultats. |
+| `--timeout-multiplier` | `2.0` | De combien allonger le délai lors d'une nouvelle tentative sur une étape qui a manqué de temps. |
+| `-v, --verbose` | désactivé | Journalisation détaillée, y compris les traces d'appels issues du code de DeepZero lui-même. |
+
+Une exécution sans état derrière elle repart de zéro ; une exécution avec état reprend, et l'en-tête indique quelle exécution est reprise. Modifier `--model` entre deux exécutions est autorisé et enregistré : l'état de l'exécution est mis à jour pour nommer le modèle qui sera réellement appelé, afin que `status` et le rapport ne décrivent pas un modèle qui n'est plus utilisé.
+
+`--clean` déplace le répertoire précédent sous un autre nom et le supprime en arrière-plan, afin qu'un corpus de plusieurs centaines de milliers de fichiers ne retienne pas la commande pendant sa suppression.
+
+#### Où réside l'état d'une exécution
+
+Les répertoires de travail sont cloisonnés par corpus :
+
+```text
+<réglage work_dir>/<nom du pipeline>/<clé de corpus>/
+```
+
+La clé de corpus est dérivée du chemin cible : son nom de base, augmenté d'une courte empreinte du chemin absolu résolu. Deux corpus traités par le même pipeline ne partagent donc jamais un magasin d'échantillons, un manifeste ou un rapport, et chacun reprend indépendamment. Un même chemin produit toujours la même clé : une nouvelle exécution retombe donc dans le répertoire qu'elle avait quitté.
+
+`-w, --work-dir` sur `run` ne remplace que le premier segment. Les segments du pipeline et du corpus sont toujours ajoutés à la suite, car ce sont eux qui séparent deux exécutions.
+
+#### Le rapport qu'une exécution écrit au fil de l'eau
+
+Une exécution écrit son rapport HTML dans `<répertoire de travail>/report` et en affiche l'URL avant le démarrage de la première étape. Il est reconstruit lorsque des résultats arrivent plutôt qu'à intervalle fixe, et pas plus d'une fois toutes les 15 secondes, afin qu'une étape rapide ne puisse pas dépenser le temps de l'exécution à écrire du HTML. Il est écrit une dernière fois à l'arrêt de l'exécution, interrompue ou terminée, de sorte que ce qui se trouve sur le disque soit toujours l'état final.
+
+#### Vérifier le LLM avant une longue exécution
+
+`--preflight` demande au backend s'il est prêt et refuse de démarrer s'il ne l'est pas. Cela existe parce que l'alternative consiste à l'apprendre plusieurs heures plus tard, à la première étape d'évaluation, une fois que les étapes coûteuses qui la précèdent se sont déjà exécutées.
+
+Ce que fait la vérification dépend du backend, car être authentifié ne signifie pas la même chose partout. Un backend de type CLI d'agent comme `claude-code` envoie un prompt minimal, puisque DeepZero ne peut pas lire sur le disque si ce binaire est connecté. Un backend à clé d'API répond à partir de la vérification de clé déjà effectuée lors de la validation et ne dépense rien.
+
+Une limite de débit ou une erreur réseau n'est pas traitée comme un échec d'authentification et ne bloque pas l'exécution. La vérification est optionnelle plutôt que systématique, car cet unique prompt constitue une consommation réelle, aussi minime soit-elle.
+
+Elle ne s'exécute que lorsque le pipeline configure un modèle. Un pipeline sans étape LLM n'a rien à vérifier.
+
+#### Retenter ce qui a manqué de temps
+
+Une étape qui atteint son `timeout` enregistre l'échantillon comme ayant manqué de temps plutôt que comme ayant échoué. C'est une affirmation sur le budget, pas sur l'échantillon : ceux qui l'atteignent sont les plus volumineux, c'est-à-dire, dans la plupart des corpus, ceux qui méritent d'être examinés, et les classer avec de véritables erreurs biaise discrètement l'exécution à leur détriment.
+
+Une exécution reprise ne les retente pas d'elle-même, car le budget qui était trop court l'est toujours. Demandez-le :
+
+```bash
+deepzero run <target> -p <pipeline> --retry-timeouts
+```
+
+Cela n'oublie que les étapes qui ont manqué de temps et leur accorde `--timeout-multiplier` (2x par défaut) de plus. Tous les autres résultats produits par l'exécution sont conservés : une nouvelle tentative coûte donc le temps nécessaire à ces étapes et rien d'autre. Les étapes qui ne déclarent aucun délai ne sont pas touchées. Le rapport les regroupe séparément et indique le budget que chacune a dépassé.
+
+### `report`
+
+```bash
+deepzero report -p <pipeline> [--open]
+deepzero report -w work/loldrivers/drivers-1a2b3c4d
+```
+
+| Drapeau | Défaut | Description |
+|---------|---------|-------------|
+| `-p, --pipeline` | aucun | Nom ou chemin du pipeline. Se résout vers le corpus le plus récent de ce pipeline. |
+| `-w, --work-dir` | aucun | Un répertoire d'exécution à lire directement. Prioritaire sur `--pipeline`. |
+| `-o, --out` | `<work_dir>/report` | Où écrire le rapport. |
+| `--open` | désactivé | Ouvre le rapport dans un navigateur une fois terminé. |
+| `-v, --verbose` | désactivé | Journalisation détaillée. |
+
+`--pipeline` ou `--work-dir` est requis.
+
+Le rapport est entièrement dérivé de l'état de l'exécution : il ne contient donc aucune information que le répertoire d'exécution ne contienne déjà. Supprimez le répertoire du rapport, relancez la commande, et vous le récupérez. Il peut également être construit sans risque pendant qu'une exécution se déroule : il lit les fichiers d'état et n'écrit rien dont dépende l'exécuteur, de sorte qu'il décrit l'exécution telle qu'elle était au moment de sa construction.
+
+Il écrit :
+
+| Fichier | Contenu |
+|---------|---------|
+| `index.html` | Synthèse et liste classée, de taille bornée |
+| `items/<id>.html` | Une page par échantillon méritant d'être lu, avec des liens vers les artefacts de cet échantillon |
+| `inventory.csv` | Chaque échantillon, une ligne, pour un tableur |
+| `findings.jsonl` | Chaque détection, un objet JSON par ligne |
+| `report.json` | Totaux de synthèse uniquement, pour une machine |
+
+Un échantillon obtient sa propre page lorsqu'il y a quelque chose à y lire : des détections, une évaluation, une erreur, ou une étape qui a manqué de temps. Les autres figurent toujours dans le CSV, et l'index signale lorsqu'une liste a été plafonnée et où trouver le reste.
+
+La résolution par nom de pipeline retient le corpus le plus récent, et le signale lorsque le pipeline en a vu plusieurs, en nommant les autres. L'exécution la plus récente n'est pas toujours celle sur laquelle porte la question, et répondre silencieusement à propos d'un autre corpus est l'échec qu'il faut éviter. Passez `--work-dir` pour en désigner un précisément.
+
+La manière dont le pipeline nomme ses échantillons, ses issues et ce vers quoi il a été pointé provient du bloc `report:` du pipeline. `--work-dir` seul effectue donc le rendu avec les valeurs par défaut : le bloc est lu depuis la définition du pipeline, et non depuis le répertoire d'exécution. Consultez [le bloc report]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}).
+
+### `status`
+
+```bash
+deepzero status -p loldrivers
+```
+
+| Drapeau | Défaut | Description |
+|---------|---------|-------------|
+| `-p, --pipeline` | aucun | Nom ou chemin du pipeline. Se résout vers le corpus le plus récent de ce pipeline. |
+| `-w, --work-dir` | aucun | Un répertoire d'exécution à lire directement. Prioritaire sur `--pipeline`. |
+| `-v, --verbose` | désactivé | Journalisation détaillée. |
+
+L'un des deux est requis. Affiche l'identifiant de l'exécution, la cible, le modèle, les horodatages, un tableau par étape des nombres d'échantillons terminés, filtrés et en échec, ainsi que les totaux des verdicts.
+
+### `validate`
+
+```bash
+deepzero validate <PIPELINE_REF>
+```
+
+Charge le pipeline, résout chaque processeur, exécute le `validate()` propre à chaque processeur, et vérifie chaque prompt par rapport aux valeurs que les étapes qui le précèdent produisent réellement. Cette commande n'accepte aucun drapeau. Lancez-la avant une longue exécution : c'est l'endroit le moins coûteux pour découvrir un binaire manquant, un ensemble de règles illisible ou un prompt nommant quelque chose qu'aucune étape n'enregistre.
+
+### `list-processors`
+
+Affiche chaque processeur enregistré avec son type et sa classe d'implémentation. N'accepte aucun drapeau. Seuls les processeurs intégrés sont listés ; un processeur externe est résolu à partir de son chemin au moment du chargement et n'est pas enregistré sous un nom.
+
+### `init`
+
+```bash
+deepzero init <NAME>
+```
+
+Crée `pipelines/<NAME>/pipeline.yaml` sous le répertoire de travail, avec un squelette commenté. La commande refuse d'agir plutôt que d'écraser un répertoire existant.
+
+### `interactive`
+
+```bash
+deepzero interactive -w work/loldrivers/drivers-1a2b3c4d
+```
+
+| Drapeau | Défaut | Description |
+|---------|---------|-------------|
+| `-m, --model` | `openai/gpt-4o` | Modèle pour la conversation. N'importe quelle chaîne de modèle acceptée par les backends. |
+| `-w, --work-dir` | `work` | Répertoire d'exécution depuis lequel charger le contexte. |
+| `-v, --verbose` | désactivé | Journalisation détaillée. |
+
+Une REPL qui charge l'état d'une exécution dans le prompt système afin de pouvoir lui poser des questions. `/status`, `/clear`, `/help` et `/quit` sont traités localement ; tout le reste part vers le modèle. Notez que le répertoire de travail par défaut est littéralement `work`, et non un répertoire d'exécution résolu : pointez donc `-w` vers l'exécution que vous visez.
+
+### `serve` et l'API REST
+
+| Drapeau | Défaut | Description |
+|---------|---------|-------------|
+| `--host` | `127.0.0.1` | Hôte d'écoute. Toute valeur autre que la boucle locale affiche un avertissement, car le serveur devient alors accessible depuis le réseau. |
+| `--port` | `8420` | Port d'écoute. |
+| `-w, --work-dir` | `work` | Répertoire de travail à servir. |
+
+Nécessite l'extra : `pip install deepzero[serve]`.
 
 > [!WARNING]
 > **Fonctionnalité Expérimentale / En cours de développement**

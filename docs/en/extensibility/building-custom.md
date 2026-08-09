@@ -6,15 +6,17 @@ order: 2
 
 ## Building Custom Processors
 
-Custom logic is injected into DeepZero by subclassing the typed abstractions provided in `deepzero.engine.stage`. See the [Core Architecture]({{ '/overview/architecture.html' | relative_url }}) to understand how these stages map to execution phases.
+Custom logic is injected into DeepZero by subclassing the typed abstractions provided in `deepzero.engine.stage`. See the [Core Architecture]({{ '/en/overview/architecture.html' | relative_url }}) to understand how these stages map to execution phases.
 
 ### Processor Context (`ProcessorContext`)
 
 The `ctx` object injected into every lifecycle hook provides systemic context and utilities:
 - `ctx.pipeline_dir`: Root directory of the invoked pipeline, useful for resolving local templates or rulesets.
-- `ctx.global_config`: TypedDict containing pipeline-level `settings`, `knowledge`, and the configured `model`.
-- `ctx.llm`: A generic proxy instance (implementing `LLMProtocol`) tied to [LiteLLM](https://github.com/BerriAI/litellm), abstracting provider APIs with native backoff/retry.
+- `ctx.global_config`: TypedDict containing pipeline-level `settings`, `knowledge`, and the configured `model`. `ctx.get_setting(key)` and `ctx.get_knowledge(key)` are shorthands into it.
+- `ctx.llm`: A generic proxy instance (implementing `LLMProtocol`) with native backoff and retry, or `None` when the pipeline configures no model. Which backend it drives is resolved from the pipeline's `model` string, so a processor calling `ctx.llm.complete()` works the same against an API key and against a local agent CLI. See [Choosing a Model]({{ '/en/reference/pipeline-yaml.html' | relative_url }}).
 - `ctx.log`: Pre-configured, namespaced `logging.Logger`.
+- `ctx.progress`: Progress reporting hook, `update(amount=, total=, description=)`, so a long-running ingest or bulk stage shows movement on the dashboard instead of looking hung.
+- `ctx.shutdown_event`: A `threading.Event`, set when the run is interrupted. A processor doing long work should check it and return early rather than being killed mid-write.
 
 ### Execution Hooks
 
@@ -27,7 +29,7 @@ Processors implement specific lifecycle hooks invoked by the engine:
 
 ### Defining Processor Configuration
 
-Use an embedded `@dataclass` named `Config` to strictly define and validate accepted YAML configurations. The engine parses the [Pipeline YAML]({{ '/reference/pipeline-yaml.html' | relative_url }}) dictionary and instantiates your `Config` object, fully expanding `${ENV_VARS}` automatically using standard Python [`dataclasses`](https://docs.python.org/3/library/dataclasses.html).
+Use an embedded `@dataclass` named `Config` to strictly define and validate accepted YAML configurations. The engine parses the [Pipeline YAML]({{ '/en/reference/pipeline-yaml.html' | relative_url }}) dictionary and instantiates your `Config` object, fully expanding `${ENV_VARS}` automatically using standard Python [`dataclasses`](https://docs.python.org/3/library/dataclasses.html).
 
 ```python
 from dataclasses import dataclass
@@ -84,7 +86,7 @@ class Decompiler(MapProcessor):
 An artifact is named by its path with the separators and the extension folded in;
 `template_key_for_artifact` in `engine/stage.py` is the single rule both rendering and
 validation use. List names that are only sometimes recorded — a prompt is expected to
-tolerate them being absent. See [Prompt Values]({{ '/reference/pipeline-yaml.html' | relative_url }})
+tolerate them being absent. See [Prompt Values]({{ '/en/reference/pipeline-yaml.html' | relative_url }})
 for what a prompt receives.
 
 ### Accessing Upstream Data

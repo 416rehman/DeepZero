@@ -22,6 +22,14 @@
 <br>
 
 <div align="center">
+  <img src=".github/assets/report-source-audit.png" alt="DeepZero HTML report" width="700">
+  <br>
+  <sub>Every run writes a browsable report and keeps it current while the run is going. Illustrative data.</sub>
+</div>
+
+<br>
+
+<div align="center">
   <b>English</b> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.fr.md">Français</a>
 </div>
 
@@ -29,8 +37,9 @@
 
 - 🔗 **Pipeline-as-YAML** - chain ingest, filter, transform, and LLM-assess stages declaratively
 - ⚡ **Parallel execution** - ThreadPoolExecutor with configurable concurrency per stage
-- 💾 **Resumable runs** - atomic per-sample state on disk; Ctrl+C and re-run to pick up where you left off
-- 🤖 **LLM integration** - Jinja2 prompt templates with any LLM provider via [LiteLLM](https://github.com/BerriAI/litellm)
+- 💾 **Resumable runs** - atomic per-sample state on disk, scoped per corpus; Ctrl+C and re-run to pick up where you left off
+- 🤖 **LLM integration** - Jinja2 prompt templates, with either an API key via [LiteLLM](https://github.com/BerriAI/litellm) or your Claude Code subscription and no API key at all
+- 📊 **Browsable reports** - `deepzero report` builds a self-contained HTML report from run state; each pipeline names its own entities and verdicts
 - 🌐 **REST API (WIP)** - query run state and sample data over HTTP (currently experimental and incomplete)
 - 🧩 **Extensible** - write custom processors as Python classes, reference them by path in YAML
 
@@ -46,7 +55,7 @@ DeepZero features extensive, exhaustive documentation covering architecture, pip
 
 ## ⚡️ Quickstart
 
-DeepZero requires a target corpus of files to analyze and a pipeline configuration detailing how to process them. 
+DeepZero requires a target corpus to analyze and a pipeline configuration detailing how to process it.
 
 1. **Clone & Install (Python 3.11+)**
    ```bash
@@ -59,11 +68,23 @@ DeepZero requires a target corpus of files to analyze and a pipeline configurati
    ```bash
    cp .env.example .env
    ```
+   Both bundled pipelines declare `model: claude-code/claude-opus-5`, which drives the Claude Code CLI you are already signed in to. Use `-m` for any LiteLLM model instead.
 
 3. **Run a Pipeline**
    ```bash
-   deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
+   # kernel drivers on disk
+   deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
+
+   # or source code, from a manifest of repositories or a directory of checkouts
+   deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
    ```
+   `--preflight` confirms the LLM backend is ready before the expensive stages run, rather than finding out hours later at the first assessment stage.
+
+4. **Read the Results**
+   ```bash
+   deepzero report -p loldrivers --open
+   ```
+   Safe to run mid-run. The report is built from run state, so it can be deleted and rebuilt at any time.
 
 For detailed setup instructions and example corpora, see the [Quickstart Documentation](https://blog.ahmadz.ai/DeepZero/en/overview/quickstart.html).
 
@@ -85,10 +106,14 @@ processors/              # external processors (shipped as examples)
 └── semgrep_scanner/     # semgrep batch scanner (BulkMapProcessor)
 
 pipelines/
-└── loldrivers/          # BYOVD kernel driver vulnerability research pipeline
+├── loldrivers/          # BYOVD kernel driver vulnerability research pipeline
+│   ├── pipeline.yaml
+│   ├── assessment.j2    # LLM prompt template
+│   └── rules/           # semgrep rules
+└── source_audit/        # source code audit over git repositories
     ├── pipeline.yaml
     ├── assessment.j2    # LLM prompt template
-    └── rules/           # semgrep rules
+    └── rules/           # 136 semgrep rules across eight languages
 
 docs/                    # Jekyll-based GitHub Pages documentation
 tests/                   # pytest suite

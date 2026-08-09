@@ -12,9 +12,11 @@ La logique personnalisée est injectée dans DeepZero en créant des sous-classe
 
 L'objet `ctx` injecté dans chaque hook de cycle de vie fournit un contexte systémique et des utilitaires :
 - `ctx.pipeline_dir` : Répertoire racine du pipeline appelé, utile pour résoudre les modèles ou ensembles de règles locaux.
-- `ctx.global_config` : `TypedDict` contenant les `settings` au niveau du pipeline, les `knowledge` (connaissances) et le `model` configuré.
-- `ctx.llm` : Une instance de proxy générique (implémentant `LLMProtocol`) liée à [LiteLLM](https://github.com/BerriAI/litellm), abstraiant les API des fournisseurs avec une fonction native de temporisation et de réessai (backoff/retry).
+- `ctx.global_config` : `TypedDict` contenant les `settings` au niveau du pipeline, les `knowledge` (connaissances) et le `model` configuré. `ctx.get_setting(key)` et `ctx.get_knowledge(key)` en sont des raccourcis.
+- `ctx.llm` : Une instance de proxy générique (implémentant `LLMProtocol`) dotée d'une fonction native de temporisation et de réessai (backoff/retry), ou `None` lorsque le pipeline ne configure aucun modèle. Le backend qu'elle pilote est résolu à partir de la chaîne `model` du pipeline : un processeur appelant `ctx.llm.complete()` fonctionne donc de la même manière avec une clé d'API et avec une CLI d'agent locale. Consultez [Choisir un Modèle]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}).
 - `ctx.log` : Instance `logging.Logger` préconfigurée et partitionnée.
+- `ctx.progress` : Hook de remontée de progression, `update(amount=, total=, description=)`, afin qu'une étape d'ingestion ou de traitement en masse de longue durée montre qu'elle avance sur le tableau de bord au lieu de paraître figée.
+- `ctx.shutdown_event` : Un `threading.Event`, positionné lorsque l'exécution est interrompue. Un processeur effectuant un travail long doit le consulter et retourner par anticipation plutôt que d'être tué en pleine écriture.
 
 ### Hooks d'Exécution
 
@@ -65,6 +67,21 @@ Les processeurs Map/BulkMap doivent renvoyer un `ProcessorResult` strictement fo
 - **`.ok(data={...}, artifacts={...})`** : Signale que l'exécution est `COMPLETED` (Terminée). Le dictionnaire `data` est placé dans l'espace de noms du bloc historique du processeur. `artifacts` associe des clés à des chemins de fichiers relatifs.
 - **`.filter(reason="...", data={...})`** : Interrompt silencieusement le traitement de l'échantillon. `SampleState.verdict` mute en `FILTERED`.
 - **`.fail(error="...")`** : Interrompt le traitement en raison d'une erreur fatale et inattendue. `SampleState.verdict` mute en `FAILED`.
+
+### Déclarer ce que les Étapes Suivantes Peuvent Utiliser
+
+Les clés `data` et les artefacts d'un processeur deviennent disponibles pour les prompts des étapes qui s'exécutent après lui. Déclarez ces noms dans `provides` afin que `deepzero validate` puisse vérifier un prompt avant une exécution, au lieu de laisser un nom inconnu ne rien produire au rendu :
+
+```python
+class Decompiler(MapProcessor):
+    description = "Static heuristics extraction"
+    provides = (
+        "device_name",                    # une clé que ce processeur place dans data
+        "decompiled_dispatch_ioctl_c",    # l'artefact decompiled/dispatch_ioctl.c
+    )
+```
+
+Un artefact est nommé d'après son chemin, séparateurs et extension incorporés au nom ; `template_key_for_artifact`, dans `engine/stage.py`, est l'unique règle utilisée à la fois pour le rendu et pour la validation. Listez également les noms qui ne sont enregistrés qu'occasionnellement : un prompt est censé tolérer leur absence. Consultez [Valeurs des Prompts]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}) pour savoir ce que reçoit un prompt.
 
 ### Accéder aux Données en Amont
 

@@ -6,7 +6,7 @@ order: 2
 
 ## Engine Architecture
 
-DeepZero's orchestration engine operates on a strictly directional processing graph defined by [pipelines]({{ '/reference/pipeline-yaml.html' | relative_url }}). The execution engine guarantees fault-tolerant, resumable [state management]({{ '/system/state-persistence.html' | relative_url }}) while fanning out parallel operations across a bounded thread pool ([`ThreadPoolExecutor`](https://docs.python.org/3/library/concurrent.futures.html#threadpoolexecutor)).
+DeepZero's orchestration engine operates on a strictly directional processing graph defined by [pipelines]({{ '/en/reference/pipeline-yaml.html' | relative_url }}). The execution engine guarantees fault-tolerant, resumable [state management]({{ '/en/system/state-persistence.html' | relative_url }}) while fanning out parallel operations across a bounded thread pool ([`ThreadPoolExecutor`](https://docs.python.org/3/library/concurrent.futures.html#threadpoolexecutor)).
 
 <div class="architecture-diagram" style="margin: 3rem 0;">
     <svg viewBox="0 0 800 400" style="width: 100%; height: auto; max-width: 800px;" xmlns="http://www.w3.org/2000/svg">
@@ -102,7 +102,7 @@ The data model transitions across these abstractions as a sample progresses:
 
 ### Processing Paradigms
 
-Processors dictate execution topology and concurrency models. All inherit from the base `Processor` class, exposing lifecycle hooks: `validate()`, `setup()`, `process()`, and `teardown()`. For instructions on writing your own, see [Building Custom Processors]({{ '/extensibility/building-custom.html' | relative_url }}).
+Processors dictate execution topology and concurrency models. All inherit from the base `Processor` class, exposing lifecycle hooks: `validate()`, `setup()`, `process()`, and `teardown()`. For instructions on writing your own, see [Building Custom Processors]({{ '/en/extensibility/building-custom.html' | relative_url }}).
 
 #### `IngestProcessor` (1 → N)
 - **Type Signature:** `process(ctx: ProcessorContext, target: Path) -> list[Sample]`
@@ -123,3 +123,23 @@ Processors dictate execution topology and concurrency models. All inherit from t
 - **Type Signature:** `process(ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[str]`
 - **Concurrency:** Global synchronization barrier. Pauses threaded execution until all active samples reach this stage.
 - **Role:** Returns an ordered list of `sample_id` strings defining which samples survive. Any sample ID absent from the returned list is permanently tagged with `SampleStatus.FILTERED`.
+
+### The Output Contract
+
+Whatever a processor is doing, it records the same three things: `data`, an arbitrary
+namespaced dict; `artifacts`, a mapping of label to relative file path; and a status.
+That contract is deliberately domain-free, and it is what everything downstream of the
+engine is built on.
+
+The [report]({{ '/en/reference/cli.html' | relative_url }}) is the clearest consequence. It
+is a projection of persisted state, not a stage in the pipeline: it reads the same
+`data` and `artifacts` any processor could have read, which is why a driver hunt, a
+source audit and anything else render without the reporting code knowing what any of
+them are. A pipeline supplies only the vocabulary, and that is a
+[block of YAML]({{ '/en/reference/pipeline-yaml.html' | relative_url }}) rather than code.
+
+Because the report holds nothing the run directory does not, it can be built while a run
+is going, rebuilt after being deleted, and rebuilt again for a run that ended weeks ago.
+The same property is what makes the LLM layer swappable: a backend is selected from the
+pipeline's model string, and no processor, stage or state file is aware of which one
+answered.

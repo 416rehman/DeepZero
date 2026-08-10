@@ -343,7 +343,9 @@ class PipelineDashboard:
 def _zero_or_val(count: int, is_ingest: bool) -> str:
     if is_ingest:
         return "[dim]·[/]"
-    return str(count) if count > 0 else "[dim]·[/]"
+    # grouped like the `in` and `passed` columns beside it: a five-figure filtered
+    # count rendered as 12595 next to 12,595 reads as a different magnitude
+    return f"{count:,}" if count > 0 else "[dim]·[/]"
 
 
 def _format_elapsed(seconds: float) -> str:

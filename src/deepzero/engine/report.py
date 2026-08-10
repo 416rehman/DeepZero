@@ -413,7 +413,7 @@ def _normalize_finding(raw: Any) -> dict[str, Any] | None:
         return None
     sev = str(raw.get("severity") or raw.get("level") or raw.get("impact") or "MEDIUM").upper()
     rule = str(raw.get("rule_id") or raw.get("rule") or raw.get("check_id") or raw.get("id") or "")
-    return {
+    out = {
         "severity": sev,
         "rule_id": rule,
         "message": str(raw.get("message") or raw.get("title") or raw.get("description") or ""),
@@ -423,6 +423,27 @@ def _normalize_finding(raw: Any) -> dict[str, Any] | None:
         "line": raw.get("line_start") or raw.get("line") or raw.get("start_line") or "",
         "code": str(raw.get("matched_code") or raw.get("snippet") or raw.get("code") or ""),
     }
+
+    # a name for the thing itself, when the processor knows one. The same
+    # advisory across forty repositories, one root cause behind three thousand
+    # crashes, one taint path reached from two entry points: all of those are one
+    # finding seen many times, and without a key from the processor there is no
+    # way to tell them from many findings that merely look alike. Never derived
+    # here, because anything this module could derive would fold in the location
+    # and so never match across samples, which is the case it exists for.
+    key = raw.get("finding_id") or raw.get("key") or raw.get("fingerprint")
+    if key:
+        out["finding_id"] = str(key)
+
+    # where the evidence is a path rather than a point. A taint result is a
+    # source, a sink and the route between them, and collapsing that to one line
+    # number throws away the part that makes it judgeable.
+    for field_name in ("source", "sink", "trace", "evidence"):
+        val = raw.get(field_name)
+        if val not in (None, "", [], {}):
+            out[field_name] = val
+
+    return out
 
 
 _FINDING_FIELDS = frozenset(
@@ -436,6 +457,7 @@ _FINDING_FIELDS = frozenset(
         "rule_id",
         "rule",
         "check_id",
+        "finding_id",
     }
 )
 
@@ -602,6 +624,10 @@ def collect(
     }
     buckets: dict[str, int] = {}
     rule_totals: dict[str, int] = {}
+    # finding identity -> the samples it was seen on, for the pipelines whose
+    # processors name their findings. Empty for the ones that do not, which is
+    # what keeps this out of their reports entirely.
+    finding_groups: dict[str, dict[str, Any]] = {}
     severity_totals: dict[str, int] = {}
     key_freq: dict[str, int] = {}
 
@@ -617,6 +643,22 @@ def collect(
         buckets[item.bucket] = buckets.get(item.bucket, 0) + 1
         for r, n in item.rule_hits.items():
             rule_totals[r] = rule_totals.get(r, 0) + n
+        for finding in item.findings:
+            fid = str(finding.get("finding_id") or "")
+            if not fid:
+                continue
+            group = finding_groups.setdefault(
+                fid,
+                {
+                    "finding_id": fid,
+                    "severity": finding.get("severity", ""),
+                    "message": finding.get("message", ""),
+                    "rule_id": finding.get("rule_id", ""),
+                    "samples": [],
+                },
+            )
+            if item.sample_id not in group["samples"]:
+                group["samples"].append(item.sample_id)
         for s, n in item.severity_counts.items():
             severity_totals[s] = severity_totals.get(s, 0) + n
         for k in item.data:
@@ -686,6 +728,9 @@ def collect(
         "buckets": buckets,
         "severity_totals": dict(sorted(severity_totals.items(), key=lambda kv: -kv[1])),
         "rule_totals": dict(sorted(rule_totals.items(), key=lambda kv: -kv[1])),
+        "finding_groups": sorted(
+            finding_groups.values(), key=lambda g: (-len(g["samples"]), g["finding_id"])
+        ),
         "detail_truncated": truncated,
         "items": kept,
         "rows": rows,
@@ -1822,6 +1867,29 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
         f"<td class='r' data-v='{v}'>{v:,}</td></tr>"
         for k, v in payload["rule_totals"].items()
     )
+    groups = payload.get("finding_groups") or []
+    group_rows = "".join(
+        f"<tr><td class='spec mono' style='color:var(--ink)'>{_esc(str(g['finding_id']))}</td>"
+        f"<td>{_esc(str(g.get('message', ''))[:160])}</td>"
+        f"<td class='r' data-v='{len(g['samples'])}'>{len(g['samples']):,}</td></tr>"
+        for g in groups[:200]
+    )
+    # only for pipelines whose processors name their findings. One advisory
+    # across forty repositories is one thing to judge, not forty, and the count
+    # beside it is how many places it turned up.
+    findings_section = (
+        f"""<section>
+  <div class="shead q"><h2>Distinct findings</h2>
+    <span class="n">{len(groups):,}</span>
+    <span class="of">named by the pipeline, and where each was seen</span></div>
+  <div class="scroll"><table data-sortable><thead><tr><th>finding</th>
+  <th>what it is</th><th class="r">{_esc(plural)}</th></tr></thead>
+  <tbody>{group_rows}</tbody></table></div>
+</section>"""
+        if group_rows
+        else ""
+    )
+
     rules_section = (
         f"""<section>
   <div class="shead q"><h2>Rules that fired</h2>
@@ -1892,7 +1960,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
   <span class="axis"><span class="lbl">reviewed</span>{review_chips}</span>
   <span class="hint" id="hint"></span>
 </div>
-{sections}{rules_section}"""
+{sections}{findings_section}{rules_section}"""
     return _page(title, body, live=running, corpus=corpus, marks=marks)
 
 

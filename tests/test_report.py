@@ -786,3 +786,76 @@ class TestAssessedMeansAJudgementWasAttempted:
         payload = collect(work)
         assert payload["totals"]["assessed"] == 1
         assert payload["items"][0].bucket == "unassessed"
+
+
+class TestAFindingCanBeOneThingSeenManyTimes:
+    """The same advisory across forty repositories, one root cause behind three
+    thousand crashes, one taint path reached from two entry points: each is one
+    thing to judge, not many. Only the processor knows which, so the identity is
+    read from what it emits and never derived here, since anything derivable
+    would fold in the location and so never match across samples."""
+
+    def _two_samples_sharing(self, tmp_path, finding):
+        work = tmp_path / "work" / "p"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+        for sid in ("a", "b"):
+            s = SampleState(sample_id=sid, filename=sid)
+            s.mark_stage_completed(
+                "scan", artifacts={"findings": "findings.json"}, data={"finding_count": 1}
+            )
+            store.save_sample(s)
+            (store.sample_dir(sid) / "findings.json").write_text(
+                json.dumps([finding]), encoding="utf-8"
+            )
+        return work
+
+    def test_a_named_finding_groups_across_samples(self, tmp_path):
+        work = self._two_samples_sharing(
+            tmp_path,
+            {"finding_id": "CVE-2024-1234", "severity": "HIGH", "message": "vulnerable dep"},
+        )
+        groups = collect(work)["finding_groups"]
+        assert len(groups) == 1
+        assert groups[0]["finding_id"] == "CVE-2024-1234"
+        assert sorted(groups[0]["samples"]) == ["a", "b"]
+
+    def test_findings_with_no_name_are_not_grouped_or_shown(self, tmp_path):
+        """the shipping pipelines emit findings with no identity, and their
+        reports must not gain a section that would list every hit again with a
+        count of one."""
+        work = self._two_samples_sharing(
+            tmp_path, {"rule_id": "some.rule", "severity": "HIGH", "message": "a hit"}
+        )
+        payload = collect(work)
+        assert payload["finding_groups"] == []
+        index, _ = write_report(work)
+        assert "Distinct findings" not in index.read_text(encoding="utf-8")
+
+    def test_the_section_appears_when_findings_are_named(self, tmp_path):
+        work = self._two_samples_sharing(
+            tmp_path, {"key": "bug-7", "severity": "HIGH", "message": "one root cause"}
+        )
+        index, _ = write_report(work)
+        text = index.read_text(encoding="utf-8")
+        assert "Distinct findings" in text
+        assert "bug-7" in text
+
+    def test_a_path_is_carried_when_the_evidence_is_one(self, tmp_path):
+        """a taint result is a source, a sink and the route between them, and
+        collapsing that to a line number throws away what makes it judgeable."""
+        work = self._two_samples_sharing(
+            tmp_path,
+            {
+                "rule_id": "taint",
+                "severity": "HIGH",
+                "message": "user input reaches a query",
+                "source": "handlers/api.go:12",
+                "sink": "db/query.go:88",
+                "trace": ["api.go:12", "svc.go:40", "query.go:88"],
+            },
+        )
+        finding = collect(work)["items"][0].findings[0]
+        assert finding["source"] == "handlers/api.go:12"
+        assert finding["sink"] == "db/query.go:88"
+        assert len(finding["trace"]) == 3

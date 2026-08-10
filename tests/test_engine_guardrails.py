@@ -216,3 +216,79 @@ class TestAPipelineCanShipItsOwnFiles:
             raw_yaml="",
         ).to_global_config()
         assert "mypipe" in cfg["pipeline_dir"]
+
+
+class TestAPipelineCanLiveAnywhere:
+    """The engine is the product; the pipelines beside it are examples. Somebody
+    building their own workflow keeps it in their own repository, and resolving
+    their processors only against a folder called `processors` next to whichever
+    directory the command was run from made the engine dictate their layout."""
+
+    def _pipeline_carrying_a_processor(self, root):
+        import textwrap
+
+        pipe = root / "mypipe"
+        (pipe / "processors" / "mine").mkdir(parents=True)
+        (pipe / "processors" / "mine" / "mine.py").write_text(
+            textwrap.dedent("""
+                from deepzero.engine.stage import IngestProcessor
+
+                class MineIngest(IngestProcessor):
+                    description = "ships with its pipeline"
+                    def process(self, ctx, target):
+                        return []
+            """),
+            encoding="utf-8",
+        )
+        (pipe / "pipeline.yaml").write_text(
+            "name: mine\nstages:\n  - name: discover\n    processor: mine/mine.py\n",
+            encoding="utf-8",
+        )
+        return pipe
+
+    def test_a_processor_beside_the_pipeline_resolves_from_elsewhere(self, tmp_path, monkeypatch):
+        import deepzero.stages  # noqa: F401
+        from deepzero.engine.pipeline import load_pipeline
+
+        pipe = self._pipeline_carrying_a_processor(tmp_path)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        loaded = load_pipeline(str(pipe))
+        assert type(loaded.ingest_processor).__name__ == "MineIngest"
+
+    def test_a_shared_library_can_be_named_by_environment(self, tmp_path, monkeypatch):
+        import textwrap
+
+        from deepzero.engine.registry import resolve_processor_class
+
+        shared = tmp_path / "shared" / "lib"
+        shared.mkdir(parents=True)
+        (shared / "lib.py").write_text(
+            textwrap.dedent("""
+                from deepzero.engine.stage import MapProcessor
+
+                class Shared(MapProcessor):
+                    def process(self, ctx, entry):
+                        return None
+            """),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DEEPZERO_PROCESSORS", str(tmp_path / "shared"))
+        assert resolve_processor_class("lib/lib.py").__name__ == "Shared"
+
+    def test_a_reference_that_resolves_nowhere_lists_where_it_looked(self, tmp_path, monkeypatch):
+        from deepzero.engine.registry import resolve_processor_class
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DEEPZERO_PROCESSORS", raising=False)
+        try:
+            resolve_processor_class("nope/nope.py", tmp_path / "somepipe")
+        except FileNotFoundError as exc:
+            # the search path is the thing a reader needs, and it is not guessable
+            assert "searched" in str(exc)
+            assert "somepipe" in str(exc)
+        else:
+            raise AssertionError("a missing processor must not resolve")

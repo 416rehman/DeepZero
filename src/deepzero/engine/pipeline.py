@@ -198,7 +198,7 @@ def load_pipeline(
 
 def _resolve_processors(pipeline: PipelineDefinition) -> None:
     for i, spec in enumerate(pipeline.stage_specs):
-        cls = resolve_processor_class(spec.processor)
+        cls = resolve_processor_class(spec.processor, pipeline.pipeline_dir)
         instance = cls(spec)
 
         if i == 0:
@@ -406,7 +406,7 @@ def validate_pipeline(pipeline_ref: str) -> list[str]:
     resolved: dict[str, type] = {}
     for spec in pipeline.stage_specs:
         try:
-            cls = resolve_processor_class(spec.processor)
+            cls = resolve_processor_class(spec.processor, pipeline.pipeline_dir)
             stype = getattr(cls, "processor_type", None)
             proc_types.append((spec.name, stype))
             resolved[spec.name] = cls

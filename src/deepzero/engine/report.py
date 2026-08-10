@@ -101,7 +101,8 @@ class Lexicon:
     nothing_positive: str = "Nothing was confirmed vulnerable"
     # findings exist, no assessment has ruled on them
     unconfirmed: str = "Needs assessment"
-    # analysed all the way through, nothing flagged
+    # analysed all the way through, and nothing survived that analysis: either
+    # nothing was flagged, or an assessment ruled out what was
     negative: str = "Clear"
 
     @classmethod
@@ -136,7 +137,7 @@ def bucket_help(lex: Lexicon) -> dict[str, str]:
         BUCKET_TIMED_OUT: "a stage hit its time budget, so these were never finished",
         BUCKET_UNASSESSED: "assessed but the verdict could not be classified",
         BUCKET_FILTERED: "a stage excluded these, so the later stages never saw them",
-        BUCKET_CLEAN: "analysed all the way through and nothing was flagged",
+        BUCKET_CLEAN: "analysed all the way through with nothing left standing",
     }
 
 
@@ -181,8 +182,10 @@ _BUCKET_RULE = {
         "stages never saw them. This is not a judgement about the item."
     ),
     BUCKET_CLEAN: (
-        "These went through every stage, produced no findings, and were not "
-        "flagged by an assessment."
+        "These went through every stage and came out with nothing to act on: "
+        "either no finding was raised, or an assessment considered the ones "
+        "that were and ruled them out. A count of findings on one of these is "
+        "not a contradiction, it is the second case."
     ),
 }
 

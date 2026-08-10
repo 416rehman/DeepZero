@@ -695,3 +695,41 @@ class TestTheReportSpeaksThePipelineSLanguage:
     def test_an_unknown_lexicon_key_is_ignored_rather_than_crashing(self, tmp_path):
         cfg = ReportConfig.from_dict({"lexicon": {"positive": "Bad", "nonsense": "x"}})
         assert cfg.lexicon.positive == "Bad"
+
+
+class TestClearDoesNotClaimNothingWasFound:
+    """A sample can reach the clear bucket two ways: no finding was raised, or
+    findings were raised and an assessment ruled them out. A label saying
+    "nothing was flagged" is false in the second case, and the second case is the
+    one a reader is most likely to want to question."""
+
+    def _assessed_safe_with_findings(self, tmp_path):
+        work = tmp_path / "work" / "p"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+        s = SampleState(sample_id="a1", filename="a.sys")
+        s.mark_stage_completed("scan", data={"finding_count": 7})
+        s.mark_stage_completed(
+            "assess", artifacts={"llm_output": "a.md"}, data={"classification": "safe"}
+        )
+        store.save_sample(s)
+        (store.sample_dir("a1") / "a.md").write_text("[SAFE] every path is bounded", "utf-8")
+        (store.sample_dir("a1") / "findings.json").write_text(
+            json.dumps([{"rule_id": "r", "severity": "HIGH", "message": "m"}]), "utf-8"
+        )
+        return work
+
+    def test_findings_ruled_out_still_land_in_clear(self, tmp_path):
+        payload = collect(self._assessed_safe_with_findings(tmp_path))
+        item = payload["items"][0]
+        assert item.bucket == BUCKET_CLEAN
+        assert item.finding_count == 1
+
+    def test_the_label_does_not_deny_the_findings_it_holds(self, tmp_path):
+        from deepzero.engine.report import Lexicon, bucket_help, bucket_rule
+
+        lex = Lexicon()
+        assert "nothing was flagged" not in bucket_help(lex)[BUCKET_CLEAN]
+        assert "produced no findings" not in bucket_rule(lex)[BUCKET_CLEAN]
+        # and it explains the case a reader will otherwise read as a contradiction
+        assert "ruled" in bucket_rule(lex)[BUCKET_CLEAN]

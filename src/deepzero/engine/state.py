@@ -153,7 +153,9 @@ class SampleState:
             self.verdict = SampleStatus.ACTIVE
         return reset
 
-    def clear_stages_from(self, stage_names: list[str], pipeline_order: list[str]) -> list[str]:
+    def clear_stages_from(
+        self, stage_names: list[str], pipeline_order: list[str]
+    ) -> dict[str, list[str]]:
         """forget a stage and everything the run did after it.
 
         Redoing one stage and keeping the stages that consumed its old output
@@ -161,21 +163,29 @@ class SampleState:
         assessment written from findings that no longer exist, say. So the
         named stage and every later stage in the pipeline go together, and
         everything before it, which is usually the expensive part, is kept.
+
+        Returns each dropped stage with the artifacts it had recorded. Several
+        processors treat their own output on disk as a cache and skip when it is
+        present, so forgetting the state alone would have them re-adopt the
+        stale file and record it as fresh, which is worse than not redoing at
+        all. The caller removes what is returned here.
         """
         targets = {name for name in stage_names if name in pipeline_order}
         if not targets:
-            return []
+            return {}
         first = min(pipeline_order.index(name) for name in targets)
         doomed = set(pipeline_order[first:]) | targets
         reset = [name for name in self.history if name in doomed]
+        dropped: dict[str, list[str]] = {}
         for name in reset:
+            dropped[name] = [str(p) for p in self.history[name].artifacts.values() if p]
             del self.history[name]
         if reset:
             self.error = None
             # a sample filtered out by a stage being redone is in the run again
             self.verdict = SampleStatus.ACTIVE
             self.current_stage = ""
-        return reset
+        return dropped
 
     def mark_stage_cached(self, stage_name: str, reason: str = "") -> None:
         """work for this stage was already done (e.g. output already on disk).

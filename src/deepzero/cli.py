@@ -157,6 +157,87 @@ def _require_run_dir(raw: str) -> Path:
     return chosen
 
 
+def _discover_runs(root: Path) -> list[Path]:
+    """every run directory under `root`, newest first.
+
+    A run is any directory holding a run.json, at any depth. Work is namespaced
+    <root>/<pipeline>/<corpus>/, but --work-dir can put one anywhere, so the
+    marker file is what is searched for rather than a shape that only holds for
+    the default layout.
+    """
+    if not root.is_dir():
+        return []
+    return sorted(
+        (p.parent for p in root.rglob("run.json")),
+        key=lambda d: (d / "run.json").stat().st_mtime,
+        reverse=True,
+    )
+
+
+def _describe_run(d: Path) -> tuple[str, str, str]:
+    """(pipeline, status, sample count) for a run directory, for listing."""
+    from deepzero.engine.state import StateStore
+
+    run_state = StateStore(d).load_run()
+    if run_state is None:
+        return "?", "unreadable", ""
+    status = getattr(run_state.status, "value", str(run_state.status))
+    total = ""
+    if isinstance(run_state.stats, dict):
+        total = str(run_state.stats.get("discovered", "") or "")
+    return (run_state.pipeline or "?"), status, total
+
+
+def _choose_run(root: Path) -> Path | None:
+    """the run to report on when nothing was named.
+
+    One run is not a choice, so it is taken. Several is a question, and it is
+    only worth asking a person: a prompt with nowhere to read an answer from
+    would hang a script, so a non-interactive caller is shown the list and told
+    how to name one instead.
+    """
+    found = _discover_runs(root)
+    if not found:
+        console.print(f"[yellow]no runs found under {escape(str(root))}[/]")
+        console.print("      name one with --work-dir, or a pipeline with --pipeline")
+        return None
+    if len(found) == 1:
+        console.print(f"      one run under {escape(str(root))}: [bold]{found[0].name}[/]")
+        return found[0]
+
+    table = Table(title=f"runs under {root}", title_style="bold")
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("pipeline", style="cyan")
+    table.add_column("corpus")
+    table.add_column("status")
+    table.add_column("samples", justify="right")
+    for i, d in enumerate(found, start=1):
+        name, status, total = _describe_run(d)
+        table.add_row(str(i), name, d.name, status, total)
+    console.print(table)
+
+    def _cannot_ask() -> None:
+        console.print("  [dim]several runs, and nothing to read a choice from.[/]")
+        console.print(f"  name one:  [bold]deepzero report -w {found[0]}[/]")
+
+    if not sys.stdin.isatty():
+        _cannot_ask()
+        return None
+
+    try:
+        choice = click.prompt(
+            "  which run", type=click.IntRange(1, len(found)), default=1, show_default=True
+        )
+    except (click.Abort, EOFError):
+        # isatty is not a promise. Some shells report a redirected stdin as a
+        # terminal, and a prompt that reaches end of input there would otherwise
+        # end the command with nothing said about how to get the report.
+        console.print()
+        _cannot_ask()
+        return None
+    return found[choice - 1]
+
+
 def _report_config_for_run(work_path: Path) -> dict:
     """recover a run's report block from the work directory alone.
 
@@ -517,8 +598,13 @@ def report(
         _announce_corpus(pipeline_def.base_work_dir, work_path)
         report_cfg = pipeline_def.report
     else:
-        console.print("[bold red]X ERROR[/]: pass --pipeline or --work-dir")
-        raise SystemExit(1)
+        # neither was named, so work out what there is rather than refusing to
+        # answer a question that has one obvious answer most of the time
+        chosen = _choose_run(Path("work"))
+        if chosen is None:
+            raise SystemExit(1)
+        work_path = chosen
+        report_cfg = _report_config_for_run(work_path)
 
     html_path, json_path = write_report(work_path, Path(out) if out else None, config=report_cfg)
     console.print(f"[green]\\[ok][/] report written to [bold]{html_path}[/]")
@@ -627,23 +713,13 @@ def validate(pipeline_ref: str):
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
 def runs(work_dir: str, open_browser: bool, verbose: bool):
     """list every run on disk, whatever pipeline or corpus produced it"""
-    from deepzero.engine.state import StateStore
-
     _setup_logging(verbose)
     root = Path(work_dir)
     if not root.is_dir():
         console.print(f"[yellow]nothing to list: {escape(str(root))} is not a directory[/]")
         raise SystemExit(1)
 
-    # a run is any directory holding a run.json, at any depth under the root.
-    # Work is namespaced <root>/<pipeline>/<corpus>/, but a --work-dir override
-    # can put one anywhere, so the marker file is what is searched for rather
-    # than a shape that only holds for the default layout.
-    found = sorted(
-        (p.parent for p in root.rglob("run.json")),
-        key=lambda d: (d / "run.json").stat().st_mtime,
-        reverse=True,
-    )
+    found = _discover_runs(root)
     if not found:
         console.print(f"[yellow]no runs found under {escape(str(root))}[/]")
         console.print("      a run writes its state as it goes, so this fills in once one starts")
@@ -659,17 +735,12 @@ def runs(work_dir: str, open_browser: bool, verbose: bool):
 
     colors = {"completed": "green", "running": "cyan", "interrupted": "yellow", "failed": "red"}
     for d in found:
-        run_state = StateStore(d).load_run()
-        status_text = str(getattr(run_state, "status", "unknown"))
-        status_text = getattr(run_state.status, "value", status_text) if run_state else "unreadable"
-        total = ""
-        if run_state and isinstance(run_state.stats, dict):
-            total = str(run_state.stats.get("discovered", "") or "")
+        name, status_text, total = _describe_run(d)
         # the report is rebuilt from state on demand, so its absence is a fact
         # about this directory rather than about whether the results survive
         has_report = (d / "report" / "index.html").exists()
         table.add_row(
-            (run_state.pipeline if run_state else "?") or "?",
+            name,
             d.name,
             f"[{colors.get(status_text, 'white')}]{status_text}[/]",
             total,

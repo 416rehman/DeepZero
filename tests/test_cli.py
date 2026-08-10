@@ -266,3 +266,84 @@ class TestRunsCommand:
         f.write_text("", encoding="utf-8")
         result = CliRunner().invoke(main, ["runs", "-w", str(f)])
         assert result.exit_code == 1
+
+
+class TestReportWithNothingNamed:
+    """Naming a run means remembering a pipeline and a corpus key nobody chose
+    by hand. When there is one run the question has an obvious answer, and when
+    there are several it is a question worth asking a person, but only a person:
+    a prompt with nowhere to read from would hang whatever is running it."""
+
+    def _work(self, root, pipeline, corpus):
+        d = root / pipeline / corpus
+        d.mkdir(parents=True)
+        (d / "run.json").write_text(
+            json.dumps({"run_id": corpus, "pipeline": pipeline, "status": "completed"}),
+            encoding="utf-8",
+        )
+        return d
+
+    def test_a_single_run_is_taken_rather_than_asked_about(self, tmp_path, monkeypatch):
+        from deepzero.cli import _choose_run
+
+        root = tmp_path / "work"
+        only = self._work(root, "loldrivers", "packA-1111")
+
+        def never(*a, **k):
+            raise AssertionError("asked about a choice that does not exist")
+
+        monkeypatch.setattr("click.prompt", never)
+        assert _choose_run(root) == only
+
+    def test_several_runs_with_no_terminal_are_listed_not_prompted(self, tmp_path, monkeypatch):
+        from deepzero.cli import _choose_run
+
+        root = tmp_path / "work"
+        self._work(root, "loldrivers", "packA-1111")
+        self._work(root, "source_audit", "orgB-2222")
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+        monkeypatch.setattr(
+            "click.prompt", lambda *a, **k: (_ for _ in ()).throw(AssertionError("prompted"))
+        )
+        assert _choose_run(root) is None
+
+    def test_several_runs_at_a_terminal_take_the_answer(self, tmp_path, monkeypatch):
+        from deepzero.cli import _choose_run
+
+        root = tmp_path / "work"
+        self._work(root, "loldrivers", "packA-1111")
+        self._work(root, "source_audit", "orgB-2222")
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        monkeypatch.setattr("click.prompt", lambda *a, **k: 2)
+        chosen = _choose_run(root)
+        assert chosen is not None
+        # ordered newest first, so the second row is the older run
+        assert chosen.name in {"packA-1111", "orgB-2222"}
+
+    def test_a_terminal_that_turns_out_to_have_no_input_says_what_to_do(
+        self, tmp_path, monkeypatch
+    ):
+        """isatty is not a promise: some shells call a redirected stdin a
+        terminal, and reaching end of input there must not end the command
+        without saying how to get the report."""
+        import click as click_mod
+
+        from deepzero.cli import _choose_run
+
+        root = tmp_path / "work"
+        self._work(root, "loldrivers", "packA-1111")
+        self._work(root, "source_audit", "orgB-2222")
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+        def eof(*a, **k):
+            raise click_mod.Abort()
+
+        monkeypatch.setattr("click.prompt", eof)
+        assert _choose_run(root) is None
+
+    def test_no_runs_at_all_explains_rather_than_traceback(self, tmp_path):
+        from deepzero.cli import _choose_run
+
+        empty = tmp_path / "work"
+        empty.mkdir()
+        assert _choose_run(empty) is None

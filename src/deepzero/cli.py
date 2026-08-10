@@ -1066,7 +1066,9 @@ def _build_interactive_system_prompt(state_store) -> str:
 
         manifest = state_store.load_manifest()
         if manifest:
-            active = [e for e in manifest if e.get("verdict") in ("active", "completed")]
+            # a sample that finishes the pipeline stays active: the lifecycle
+            # ends at filtered, failed or out of time, and nothing sets completed
+            active = [e for e in manifest if e.get("verdict") == "active"]
             prompt_parts.append(f"\ntotal samples: {len(manifest)}")
             if active:
                 prompt_parts.append(f"active/completed: {len(active)}")

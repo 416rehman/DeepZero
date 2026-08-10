@@ -733,3 +733,56 @@ class TestClearDoesNotClaimNothingWasFound:
         assert "produced no findings" not in bucket_rule(lex)[BUCKET_CLEAN]
         # and it explains the case a reader will otherwise read as a contradiction
         assert "ruled" in bucket_rule(lex)[BUCKET_CLEAN]
+
+
+class TestAssessedMeansAJudgementWasAttempted:
+    """A stage can leave a log beside a sample without having judged anything.
+    Counting that as an assessment reported samples as judged that nothing had
+    looked at, and put them in the outcome that means "judged, but the verdict
+    was not recognised"."""
+
+    def _with_a_log_but_no_judgement(self, tmp_path):
+        work = tmp_path / "work" / "p"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+        s = SampleState(sample_id="a1", filename="a.bin")
+        s.mark_stage_completed("shell", artifacts={"stdout": "run.log"}, data={"exit_code": 0})
+        store.save_sample(s)
+        (store.sample_dir("a1") / "run.log").write_text("ran fine\n", encoding="utf-8")
+        return work
+
+    def test_a_log_from_an_ordinary_stage_is_not_an_assessment(self, tmp_path):
+        payload = collect(self._with_a_log_but_no_judgement(tmp_path))
+        assert payload["totals"]["assessed"] == 0
+        assert payload["items"][0].bucket != "unassessed"
+
+    def test_a_verdict_that_was_not_recognised_still_counts_as_judged(self, tmp_path):
+        """the whole point of the unrecognised outcome: something judged this and
+        the pipeline could not read the answer, which is not the same as nothing
+        having judged it."""
+        work = tmp_path / "work" / "p"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+        s = SampleState(sample_id="a1", filename="a.bin")
+        s.mark_stage_completed("assess", data={"classification": "somethingelse"})
+        store.save_sample(s)
+        payload = collect(work)
+        assert payload["totals"]["assessed"] == 1
+        assert payload["items"][0].bucket == "unassessed"
+
+    def test_an_llm_response_with_no_readable_verdict_counts_as_judged(self, tmp_path):
+        """the built-in llm stage records the file it wrote whenever it got a
+        response, so a verdict its pattern missed is still a judgement attempted
+        rather than a sample nothing looked at."""
+        work = tmp_path / "work" / "p"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+        s = SampleState(sample_id="a1", filename="a.bin")
+        s.mark_stage_completed(
+            "assess", artifacts={"llm_output": "a.md"}, data={"llm_output_file": "a.md"}
+        )
+        store.save_sample(s)
+        (store.sample_dir("a1") / "a.md").write_text("a long preamble, verdict later", "utf-8")
+        payload = collect(work)
+        assert payload["totals"]["assessed"] == 1
+        assert payload["items"][0].bucket == "unassessed"

@@ -18,7 +18,11 @@ report:
   title: Source repository audit
   entity: repository
   entity_plural: repositories
-  target_label: organisation
+  # what the run was pointed at, which is the manifest of repositories or the
+  # directory of checkouts the ingest read. Calling it an organisation would
+  # name something the header then does not show: the value beside this label is
+  # that path, and one manifest can list repositories from several owners.
+  target_label: repository list
   classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]

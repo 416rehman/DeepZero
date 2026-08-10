@@ -146,7 +146,12 @@ class GenericLLM(MapProcessor):
         if classify_by:
             import re
 
-            match = re.search(classify_by, content[:200], re.IGNORECASE)
+            # the verdict is asked for at the top, and reading only the top
+            # stops a model discussing the words later in its reasoning from
+            # being read as the verdict. A prompt with a longer preamble can say
+            # so rather than losing every verdict past the default.
+            window = int(self.config.get("classify_window", 200) or 200)
+            match = re.search(classify_by, content[:window], re.IGNORECASE)
             if match:
                 verdict_text = match.group(0).strip("[]").lower()
                 data["classification"] = verdict_text

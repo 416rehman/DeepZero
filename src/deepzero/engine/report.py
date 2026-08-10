@@ -322,6 +322,10 @@ class ItemReport:
     skips: dict[str, str] = field(default_factory=dict)
     artifacts: dict[str, str] = field(default_factory=dict)  # label -> relative path
     texts: dict[str, str] = field(default_factory=dict)  # label -> inline text
+    # whether a stage set out to judge this sample, which is not the same as one
+    # having written text beside it. Any stage can leave a log; counting that as
+    # an assessment reported samples as judged that nothing had looked at.
+    judged: bool = False
     findings: list[dict[str, Any]] = field(default_factory=list)
     severity_counts: dict[str, int] = field(default_factory=dict)
     rule_hits: dict[str, int] = field(default_factory=dict)
@@ -463,8 +467,15 @@ def iter_items(work_dir: Path, cfg: ReportConfig) -> Iterator[ItemReport]:
                 if key.startswith("__"):
                     continue
                 item.data[f"{stage_name}.{key}"] = val
-                if key == cfg.classification_key and val:
-                    item.classification = str(val)
+                if key == cfg.classification_key:
+                    item.judged = True
+                    if val:
+                        item.classification = str(val)
+                # the built-in llm stage records this whenever it produced a
+                # response, so a judgement whose verdict went unrecognised is
+                # still visible as one that was attempted
+                if key.endswith("_output_file"):
+                    item.judged = True
 
             for label, rel in (getattr(output, "artifacts", None) or {}).items():
                 item.artifacts[label] = rel
@@ -512,7 +523,7 @@ def iter_items(work_dir: Path, cfg: ReportConfig) -> Iterator[ItemReport]:
                 bucket = BUCKET_FAILED
             elif item.findings:
                 bucket = BUCKET_SUSPICIOUS
-            elif item.classification or item.texts:
+            elif item.judged:
                 bucket = BUCKET_UNASSESSED
             elif item.filtered_at:
                 # never reached the later stages, so it was not judged clean
@@ -564,7 +575,7 @@ def collect(
         totals["total_findings"] += item.finding_count
         if item.findings:
             totals["with_findings"] += 1
-        if item.classification or item.texts:
+        if item.judged:
             totals["assessed"] += 1
         if item.errors:
             totals["errored"] += 1

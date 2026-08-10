@@ -1331,6 +1331,12 @@ _LIST_ORDER = {
     BUCKET_FAILED: 2,
     BUCKET_TIMED_OUT: 3,
     BUCKET_UNASSESSED: 4,
+    # last, because nothing here needs acting on, but listed: a page is written
+    # for anything that was assessed, and a page nothing links to cannot be read.
+    # A cleared result is also the one worth being able to question, since a
+    # false negative is the expensive mistake and the reasoning behind "nothing
+    # found" is exactly what a reader disagreeing with it wants to see.
+    BUCKET_CLEAN: 5,
 }
 
 # a pipeline names its own severities, so they are folded onto the four tiers

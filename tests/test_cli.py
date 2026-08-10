@@ -16,17 +16,35 @@ class TestMainGroup:
 
 
 class TestValidateCommand:
-    def test_validate_missing_pipeline(self):
+    """validate exists to answer, before a long run, whether a pipeline holds
+    together. That answer has to reach automation, so a pipeline that cannot
+    start must not exit 0 while printing errors nobody is reading."""
+
+    def test_a_pipeline_that_cannot_be_found_fails(self):
         runner = CliRunner()
         result = runner.invoke(main, ["validate", "nonexistent_pipeline_xyz"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "ERROR" in result.output or "not found" in result.output
 
-    def test_validate_valid_pipeline(self, tmp_path):
+    def test_a_pipeline_naming_a_processor_that_does_not_exist_fails(self):
+        """a bare name resolves against the built-ins only, so naming an
+        external processor without its path is a real and easy mistake."""
+        runner = CliRunner()
+        with runner.isolated_filesystem() as tmp:
+            pipeline_yaml = Path(tmp) / "pipeline.yaml"
+            pipeline_yaml.write_text(
+                "name: test\nstages:\n  - name: discover\n    processor: pe_ingest\n",
+                encoding="utf-8",
+            )
+            result = runner.invoke(main, ["validate", tmp])
+        assert result.exit_code == 1
+        assert "ERROR" in result.output
+
+    def test_a_pipeline_that_holds_together_passes(self, tmp_path):
         yaml_content = """name: test
 stages:
   - name: discover
-    processor: pe_ingest
+    processor: file_discovery
 """
         pipeline_yaml = tmp_path / "pipeline.yaml"
         pipeline_yaml.write_text(yaml_content)

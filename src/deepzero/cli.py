@@ -626,13 +626,22 @@ def validate(pipeline_ref: str):
     console.print(f"validating pipeline: {pipeline_ref}\n")
     warnings = validate_pipeline(pipeline_ref)
 
+    failed = False
     for w in warnings:
         if w.startswith("ERROR"):
             console.print(f"  [red]X[/] {w}")
+            failed = True
         elif "valid" in w.lower():
             console.print(f"  [green]OK[/] {w}")
         else:
             console.print(f"  [yellow]![/] {w}")
+
+    # the point of validating is to find out before a long run whether the
+    # pipeline holds together, which is a thing worth putting in front of a
+    # commit. Printing errors and exiting 0 means no automation can tell the
+    # difference between a pipeline that is fine and one that cannot start.
+    if failed:
+        raise SystemExit(1)
 
 
 @main.command("list-processors")
@@ -703,7 +712,12 @@ stages:
 
 
 @main.command()
-@click.option("--model", "-m", default="openai/gpt-4o", help="llm model for interactive mode")
+@click.option(
+    "--model",
+    "-m",
+    default="claude-code/claude-opus-5",
+    help="llm model for interactive mode",
+)
 @click.option("--work-dir", "-w", default="work", help="work directory for context")
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
 def interactive(model: str, work_dir: str, verbose: bool):

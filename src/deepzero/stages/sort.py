@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 from deepzero.engine.stage import ProcessorContext, ProcessorEntry, ReduceProcessor
 
@@ -29,6 +30,28 @@ def bad_direction(field: str, order: str) -> list[str]:
     return [f"'{field}' must be one of {accepted}, got '{order}'"]
 
 
+def metric_reader(path: str) -> Callable[[ProcessorEntry], float]:
+    """read a numeric value at `stage.key` off a sample, for ordering.
+
+    Anything missing or unreadable sorts as zero rather than raising: a reducer
+    ranks whatever reached it, and one sample whose stage recorded a string
+    should not stop the ordering of the rest. Both reducers use this so a change
+    to how a metric is read cannot apply to one and not the other.
+    """
+    stage_name, _, data_key = path.partition(".")
+
+    def _read(entry: ProcessorEntry) -> float:
+        output = entry.history.get(stage_name)
+        if output is None:
+            return 0.0
+        try:
+            return float(output.data.get(data_key, 0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    return _read
+
+
 class Sort(ReduceProcessor):
     description = "sorts active samples by an upstream data field - preserves all samples, changes processing order"
 
@@ -45,20 +68,11 @@ class Sort(ReduceProcessor):
         return bad_direction("order", self.config.order)
 
     def process(self, ctx: ProcessorContext, samples: list[ProcessorEntry]) -> list[str]:
-        parts = self.config.by.split(".", 1)
-        stage_name, data_key = parts
-
-        def _get_val(s: ProcessorEntry) -> float:
-            output = s.history.get(stage_name)
-            if output is None:
-                return 0.0
-            val = output.data.get(data_key, 0)
-            try:
-                return float(val)
-            except (TypeError, ValueError):
-                return 0.0
-
-        scored = sorted(samples, key=_get_val, reverse=descending(self.config.order))
+        scored = sorted(
+            samples,
+            key=metric_reader(self.config.by),
+            reverse=descending(self.config.order),
+        )
         self.log.info(
             "sorted %d samples by %s (%s)",
             len(scored),

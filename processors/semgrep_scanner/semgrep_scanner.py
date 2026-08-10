@@ -93,7 +93,10 @@ class SemgrepScanner(BulkMapProcessor):
             # without that the file outlives the run state that describes it and
             # the next run reports findings the current rules cannot produce.
             findings_path = entry.sample_dir / "findings.json"
-            if findings_path.exists():
+            # only while it still describes the rules in force: the engine says
+            # so, because it is the only thing that knows what this stage read
+            # last time
+            if findings_path.exists() and entry.cache_is_valid:
                 try:
                     findings = json.loads(findings_path.read_text(encoding="utf-8"))
                     results[i] = self._make_result(findings, min_findings, cached=True)

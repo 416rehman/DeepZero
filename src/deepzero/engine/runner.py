@@ -30,6 +30,7 @@ from deepzero.engine.stage import (
     ProcessorResult,
     ReduceProcessor,
     StageSpec,
+    stage_input_digest,
 )
 from deepzero.engine.state import RunState, SampleState, StateStore, atomic_replace
 from deepzero.engine.types import RunStatus, SampleStatus, StageStatus, Verdict
@@ -110,13 +111,32 @@ class PipelineRunner:
         except Exception as exc:  # noqa: BLE001 - a view refresh must never fail a run
             log.debug("progress hook failed: %s", exc)
 
-    def _make_entry(self, state: SampleState) -> ProcessorEntry:
+    def _digest_for(self, spec: StageSpec) -> str:
+        """this stage's input fingerprint, computed once per run.
+
+        Recomputed per sample it would read the same rule set thousands of times.
+        """
+        if not hasattr(self, "_digest_cache"):
+            self._digest_cache: dict[str, str] = {}
+        if spec.name not in self._digest_cache:
+            self._digest_cache[spec.name] = stage_input_digest(spec, self.pipeline_dir)
+        return self._digest_cache[spec.name]
+
+    def _make_entry(self, state: SampleState, spec: StageSpec | None = None) -> ProcessorEntry:
         # centralizes ProcessorEntry construction for map/reduce/batch
+        cache_is_valid = True
+        if spec is not None:
+            previous = state.history.get(spec.name)
+            if previous is not None and previous.input_digest:
+                # the stage ran before with different inputs, so whatever it
+                # wrote beside the sample describes those inputs, not these
+                cache_is_valid = previous.input_digest == self._digest_for(spec)
         return ProcessorEntry(
             sample_id=state.sample_id,
             source_path=Path(state.source_path),
             filename=state.filename,
             sample_dir=self.state_store.sample_dir(state.sample_id),
+            cache_is_valid=cache_is_valid,
             _store=self.state_store,
         )
 
@@ -224,7 +244,8 @@ class PipelineRunner:
 
             is_fully_cached = False
             if len(active) > 0:
-                pending_count = sum(1 for s in active if not s.is_stage_done(spec.name))
+                digest = self._digest_for(spec)
+                pending_count = sum(1 for s in active if not s.is_stage_done(spec.name, digest))
                 is_fully_cached = pending_count == 0
 
             if self.dashboard:
@@ -491,7 +512,8 @@ class PipelineRunner:
     ) -> None:
 
         # filter out samples that already completed this stage (resume granularity)
-        pending = [s for s in active if not s.is_stage_done(spec.name)]
+        digest = self._digest_for(spec)
+        pending = [s for s in active if not s.is_stage_done(spec.name, digest)]
         cached = len(active) - len(pending)
         if cached > 0:
             log.info("%s: %d cached, %d pending", spec.name, cached, len(pending))
@@ -605,6 +627,7 @@ class PipelineRunner:
                     verdict=result.verdict,
                     artifacts=result.artifacts,
                     data=result.data,
+                    input_digest=self._digest_for(spec),
                 )
         elif result.status == StageStatus.TIMED_OUT:
             budget = int((result.data or {}).get("__timeout_budget", spec.timeout) or 0)
@@ -642,7 +665,7 @@ class PipelineRunner:
             progress=_UIProgressAdapter(self.dashboard, spec.name),
             shutdown_event=self._shutdown_event,
         )
-        entry = self._make_entry(state)
+        entry = self._make_entry(state, spec)
         sample_dir.mkdir(parents=True, exist_ok=True)
 
         # optional skip hook (e.g. cached decompilation)
@@ -805,7 +828,7 @@ class PipelineRunner:
             progress=_UIProgressAdapter(self.dashboard, spec.name),
             shutdown_event=self._shutdown_event,
         )
-        entries = [self._make_entry(state) for state in active]
+        entries = [self._make_entry(state, spec) for state in active]
         results, error = self._invoke_stage(spec, lambda: processor.process(ctx, entries))
         if error is not None:
             # a barrier decides who survives, so a barrier that did not run has
@@ -848,7 +871,7 @@ class PipelineRunner:
         stage_stats: dict[str, int],
     ) -> None:
         # filter out already-completed samples (resume)
-        pending = [s for s in active if not s.is_stage_done(spec.name)]
+        pending = [s for s in active if not s.is_stage_done(spec.name, self._digest_for(spec))]
         cached = len(active) - len(pending)
         if cached > 0:
             log.info("  %d already completed (cached), %d pending", cached, len(pending))
@@ -858,7 +881,7 @@ class PipelineRunner:
         if not pending:
             return
 
-        entries = [self._make_entry(state) for state in pending]
+        entries = [self._make_entry(state, spec) for state in pending]
 
         log.info("%s: batch processing %d samples", spec.name, len(entries))
 

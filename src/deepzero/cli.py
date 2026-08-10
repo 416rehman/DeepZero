@@ -409,27 +409,9 @@ def run(
         first = min(order.index(name) for name in redo_stages)
         affected = order[first:]
         redone = 0
-        discarded = 0
         for state in state_store.list_samples():
-            dropped = state.clear_stages_from(list(redo_stages), order)
-            if not dropped:
+            if not state.clear_stages_from(list(redo_stages), order):
                 continue
-            # several processors treat their own output on disk as a cache, so a
-            # stage whose file survives is silently re-adopted and recorded as
-            # fresh. Redoing has to take the output with the state.
-            sample_dir = state_store.sample_dir(state.sample_id).resolve()
-            for paths in dropped.values():
-                for rel in paths:
-                    victim = (sample_dir / rel).resolve()
-                    if not victim.is_relative_to(sample_dir) or not victim.exists():
-                        # an artifact recorded outside the sample's own directory
-                        # is not this run's to delete
-                        continue
-                    try:
-                        shutil.rmtree(victim) if victim.is_dir() else victim.unlink()
-                        discarded += 1
-                    except OSError as exc:
-                        log.debug("could not remove %s: %s", victim, exc)
             state_store.save_sample(state)
             redone += 1
         if redone:
@@ -437,11 +419,6 @@ def run(
                 f"[yellow]![/] re-running {', '.join(affected)} for {redone} sample(s); "
                 f"earlier stages are kept"
             )
-            if discarded:
-                console.print(
-                    f"        discarded {discarded} output file(s) those stages had written, "
-                    f"so they are produced again rather than read back"
-                )
         else:
             console.print("[dim]no sample had reached those stages - nothing to redo[/]")
 
@@ -642,6 +619,80 @@ def validate(pipeline_ref: str):
     # difference between a pipeline that is fine and one that cannot start.
     if failed:
         raise SystemExit(1)
+
+
+@main.command()
+@click.option("--work-dir", "-w", default="work", help="root to search for runs")
+@click.option("--open", "open_browser", is_flag=True, help="open the newest run's report")
+@click.option("--verbose", "-v", is_flag=True, help="verbose logging")
+def runs(work_dir: str, open_browser: bool, verbose: bool):
+    """list every run on disk, whatever pipeline or corpus produced it"""
+    from deepzero.engine.state import StateStore
+
+    _setup_logging(verbose)
+    root = Path(work_dir)
+    if not root.is_dir():
+        console.print(f"[yellow]nothing to list: {escape(str(root))} is not a directory[/]")
+        raise SystemExit(1)
+
+    # a run is any directory holding a run.json, at any depth under the root.
+    # Work is namespaced <root>/<pipeline>/<corpus>/, but a --work-dir override
+    # can put one anywhere, so the marker file is what is searched for rather
+    # than a shape that only holds for the default layout.
+    found = sorted(
+        (p.parent for p in root.rglob("run.json")),
+        key=lambda d: (d / "run.json").stat().st_mtime,
+        reverse=True,
+    )
+    if not found:
+        console.print(f"[yellow]no runs found under {escape(str(root))}[/]")
+        console.print("      a run writes its state as it goes, so this fills in once one starts")
+        raise SystemExit(1)
+
+    table = Table(title=f"runs under {root}", title_style="bold")
+    table.add_column("pipeline", style="cyan")
+    table.add_column("corpus")
+    table.add_column("status")
+    table.add_column("samples", justify="right")
+    table.add_column("report")
+    table.add_column("updated", style="dim")
+
+    colors = {"completed": "green", "running": "cyan", "interrupted": "yellow", "failed": "red"}
+    for d in found:
+        run_state = StateStore(d).load_run()
+        status_text = str(getattr(run_state, "status", "unknown"))
+        status_text = getattr(run_state.status, "value", status_text) if run_state else "unreadable"
+        total = ""
+        if run_state and isinstance(run_state.stats, dict):
+            total = str(run_state.stats.get("discovered", "") or "")
+        # the report is rebuilt from state on demand, so its absence is a fact
+        # about this directory rather than about whether the results survive
+        has_report = (d / "report" / "index.html").exists()
+        table.add_row(
+            (run_state.pipeline if run_state else "?") or "?",
+            d.name,
+            f"[{colors.get(status_text, 'white')}]{status_text}[/]",
+            total,
+            "built" if has_report else "[dim]not built[/]",
+            time.strftime("%Y-%m-%d %H:%M", time.localtime((d / "run.json").stat().st_mtime)),
+        )
+
+    console.print(table)
+    newest = found[0]
+    console.print(f"\n  browse one:  [bold]deepzero report -w {newest}[/] --open")
+    console.print(
+        "  [dim]the report is rebuilt from the run's own state, so deleting it costs"
+        " nothing and this still works long after the run finished[/]"
+    )
+
+    if open_browser:
+        from deepzero.engine.report import write_report
+
+        html, _ = write_report(newest, config=_report_config_for_run(newest))
+        console.print(f"\n[green]\\[ok][/] {escape(str(html))}")
+        import webbrowser
+
+        webbrowser.open(html.resolve().as_uri())
 
 
 @main.command("list-processors")

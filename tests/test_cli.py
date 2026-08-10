@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -206,3 +207,62 @@ class TestServeCommand:
         assert result.exit_code == 0
         assert "--host" in result.output
         assert "--port" in result.output
+
+
+class TestRunsCommand:
+    """A run's results outlive its report, because the report is a projection of
+    state that can be rebuilt at any time. That is only useful if there is a way
+    to find the runs, which otherwise means remembering a pipeline name and a
+    corpus key nobody chose by hand."""
+
+    def _work(self, root, pipeline, corpus, status="completed"):
+        d = root / pipeline / corpus
+        d.mkdir(parents=True)
+        (d / "run.json").write_text(
+            json.dumps(
+                {
+                    "run_id": f"r_{corpus}",
+                    "pipeline": pipeline,
+                    "status": status,
+                    "stats": {"discovered": 7},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return d
+
+    def test_every_run_on_disk_is_listed_whatever_produced_it(self, tmp_path):
+        root = tmp_path / "work"
+        self._work(root, "loldrivers", "packA-1111")
+        self._work(root, "source_audit", "orgB-2222", status="running")
+
+        result = CliRunner().invoke(main, ["runs", "-w", str(root)])
+        assert result.exit_code == 0
+        assert "loldrivers" in result.output
+        assert "source_audit" in result.output
+        assert "packA" in result.output and "orgB" in result.output
+
+    def test_a_missing_report_is_reported_rather_than_hidden(self, tmp_path):
+        """deleting the report must read as a rebuildable state, not a lost run."""
+        root = tmp_path / "work"
+        d = self._work(root, "loldrivers", "packA-1111")
+        result = CliRunner().invoke(main, ["runs", "-w", str(root)])
+        assert "not built" in result.output
+
+        (d / "report").mkdir()
+        (d / "report" / "index.html").write_text("<html></html>", encoding="utf-8")
+        result = CliRunner().invoke(main, ["runs", "-w", str(root)])
+        assert "built" in result.output
+
+    def test_an_empty_root_says_so_rather_than_printing_nothing(self, tmp_path):
+        empty = tmp_path / "work"
+        empty.mkdir()
+        result = CliRunner().invoke(main, ["runs", "-w", str(empty)])
+        assert result.exit_code == 1
+        assert "no runs found" in result.output
+
+    def test_a_path_that_is_not_a_directory_is_refused(self, tmp_path):
+        f = tmp_path / "afile"
+        f.write_text("", encoding="utf-8")
+        result = CliRunner().invoke(main, ["runs", "-w", str(f)])
+        assert result.exit_code == 1

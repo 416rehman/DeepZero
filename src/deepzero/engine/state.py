@@ -55,6 +55,12 @@ class StageOutput:
     # why this stage did no work (cached output, filtered out). kept separate from
     # error so a normal skip is never reported as a failure
     skip_reason: str = ""
+    # fingerprint of the processor, config and referenced files this result came
+    # from. A resumed run compares it with the current one to work out whether
+    # this result still describes the pipeline as it stands. Empty on results
+    # written before this was recorded, which are trusted rather than redone:
+    # discarding a corpus because it predates a feature would be the worse guess.
+    input_digest: str = ""
 
 
 @dataclass
@@ -83,6 +89,7 @@ class SampleState:
         verdict: Verdict = Verdict.CONTINUE,
         artifacts: dict[str, str] | None = None,
         data: dict[str, Any] | None = None,
+        input_digest: str = "",
     ) -> None:
         if stage_name not in self.history:
             self.history[stage_name] = StageOutput()
@@ -94,6 +101,8 @@ class SampleState:
             stage.artifacts = artifacts
         if data:
             stage.data = data
+        if input_digest:
+            stage.input_digest = input_digest
 
         # promote skip verdict to sample level
         if verdict == Verdict.FILTER:
@@ -214,9 +223,15 @@ class SampleState:
             stage.skip_reason = reason
         self.verdict = SampleStatus.FILTERED
 
-    def is_stage_done(self, stage_name: str) -> bool:
+    def is_stage_done(self, stage_name: str, input_digest: str = "") -> bool:
         s = self.history.get(stage_name)
         if s is None:
+            return False
+        # a result produced from inputs the pipeline no longer has is not done,
+        # it is stale. An empty digest on either side means the question cannot
+        # be asked, and an unanswerable question is not grounds for discarding
+        # work that may have taken hours.
+        if input_digest and s.input_digest and s.input_digest != input_digest:
             return False
         return s.status in (
             StageStatus.COMPLETED,

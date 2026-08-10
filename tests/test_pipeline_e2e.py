@@ -194,10 +194,10 @@ class TestPipelineE2E:
         # abort causes the first crash to stop the pipeline - status depends on runner implementation
         assert run_state.status in ("interrupted", "completed", "failed")
 
-        # resume with cache - m1 should be skipped via should_skip()
-        m_proc1_resumed = E2EMapProcessor(
-            StageSpec(name="m1", processor="mock_success", config={"cache_marker": True})
-        )
+        # resume with m1 unchanged, so its results still describe this pipeline
+        # and the stage is not asked to do them again. Its config has to match:
+        # a stage whose inputs changed is stale, which is tested below.
+        m_proc1_resumed = E2EMapProcessor(StageSpec(name="m1", processor="mock_success"))
         m_proc2_resumed = E2EMapProcessor(StageSpec(name="m2", processor="mock_success"))
 
         runner2 = PipelineRunner(
@@ -214,3 +214,74 @@ class TestPipelineE2E:
 
         assert res.status == "completed"
         assert res.stats["per_stage"]["m1"]["completed"] == 2
+
+    def _processed_by(self, store, tmp_path, spec, ingest, run_id):
+        """run a one-stage pipeline and report which samples it actually worked.
+
+        Counted at the processor rather than read off the stage stats, because a
+        cached sample is reported as completed there too. That is right for
+        somebody watching progress and useless for deciding whether the work
+        happened.
+        """
+        proc = E2EMapProcessor(spec)
+        worked: list[str] = []
+        inner = proc.process
+
+        def counting(ctx, entry):
+            worked.append(entry.sample_id)
+            return inner(ctx, entry)
+
+        proc.process = counting
+        PipelineRunner(ingest, [(spec, proc)], store, tmp_path, {}).run(
+            Path("."), RunState(run_id=run_id, pipeline="e2e")
+        )
+        return worked
+
+    def test_editing_a_stage_makes_its_results_stale(self, tmp_path):
+        """A result is only worth keeping while it still describes the pipeline
+        that produced it. Change what a stage reads and its old answers are about
+        a question nobody is asking any more, so a resumed run redoes that stage
+        rather than reporting the previous answer as current."""
+        store = StateStore(tmp_path / "work")
+        ingest = E2EIngest(self._make_samples(2))
+
+        first = self._processed_by(
+            store,
+            tmp_path,
+            StageSpec(name="m1", processor="mock", config={"data": {"v": 1}}),
+            ingest,
+            "a",
+        )
+        assert len(first) == 2
+        assert all(s.history["m1"].data == {"v": 1} for s in store.list_samples())
+
+        second = self._processed_by(
+            store,
+            tmp_path,
+            StageSpec(name="m1", processor="mock", config={"data": {"v": 2}}),
+            ingest,
+            "b",
+        )
+        assert len(second) == 2, "a stage whose config changed has to run again"
+        assert all(s.history["m1"].data == {"v": 2} for s in store.list_samples())
+
+    def test_an_untouched_stage_is_not_redone(self, tmp_path):
+        """the other half of the same promise: nothing changed, nothing repeats,
+        which is what makes resuming a long run worth anything."""
+        store = StateStore(tmp_path / "work")
+        ingest = E2EIngest(self._make_samples(2))
+        config = {"data": {"v": 1}}
+
+        first = self._processed_by(
+            store, tmp_path, StageSpec(name="m1", processor="mock", config=config), ingest, "a"
+        )
+        assert len(first) == 2
+
+        again = self._processed_by(
+            store,
+            tmp_path,
+            StageSpec(name="m1", processor="mock", config=dict(config)),
+            ingest,
+            "b",
+        )
+        assert again == [], "an unchanged stage must not process anything again"

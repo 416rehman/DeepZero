@@ -171,6 +171,11 @@ class GhidraDecompile(MapProcessor):
         # the way out of a crash too, and treating that one as cached marked the
         # driver decompiled while leaving no decompiled code and none of the
         # values a later prompt reads.
+        # and only while it still describes this stage. The engine knows whether
+        # the strategy, depth and limits that wrote it are the ones in force now;
+        # a result from a different script is not a cache hit for this one.
+        if not entry.cache_is_valid:
+            return None
         if _read_cached_result(entry.sample_dir / "decompiled", self.log) is not None:
             return "decompilation already cached"
         return None

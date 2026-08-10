@@ -91,6 +91,14 @@ class ProcessorEntry:
     # working directory for this sample (work/<pipeline>/samples/<id>/)
     sample_dir: Path | None = None
 
+    # whether this stage's own output on disk still describes the pipeline. A
+    # processor that adopts its previous output instead of doing the work again
+    # has to consult this: the file is only a valid cache while the stage that
+    # wrote it had the same inputs. False means the file is from a prompt, rule
+    # set or config that has since changed, and adopting it would report an
+    # answer to a question nobody is asking any more.
+    cache_is_valid: bool = True
+
     # attached automatically by the runner to enable memory-efficient lazy-loading
     _store: StateStore | None = field(default=None, repr=False, compare=False)
 
@@ -203,6 +211,65 @@ class StageSpec:
     max_retries: int = 0
     # timeout in seconds per sample (0 = no timeout)
     timeout: int = 0
+
+
+# how big a file has to be before its contents are summarised by size rather than
+# read. A prompt or a rule set is kilobytes; anything far larger is not the kind
+# of input whose editing should silently invalidate a stage.
+_DIGEST_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _digest_path(path: Path, into: Any) -> None:
+    """fold a file, or a directory of files, into a running hash."""
+    try:
+        if path.is_file():
+            into.update(path.name.encode("utf-8"))
+            if path.stat().st_size <= _DIGEST_MAX_BYTES:
+                into.update(path.read_bytes())
+            else:
+                into.update(str(path.stat().st_size).encode("utf-8"))
+        elif path.is_dir():
+            for child in sorted(path.rglob("*")):
+                if child.is_file():
+                    into.update(str(child.relative_to(path)).encode("utf-8"))
+                    if child.stat().st_size <= _DIGEST_MAX_BYTES:
+                        into.update(child.read_bytes())
+    except OSError:
+        # unreadable is a state worth being stable about rather than failing on:
+        # the stage will report the real problem when it runs
+        into.update(b"<unreadable>")
+
+
+def stage_input_digest(spec: StageSpec, pipeline_dir: Path | None = None) -> str:
+    """a fingerprint of everything that decides what this stage produces.
+
+    A stage's results are stale when its inputs change, and the inputs are its
+    processor, its config, and any file that config points at: a prompt, a rule
+    set, an analysis script. Recording this alongside the result is what lets a
+    resumed run work out for itself which stages still hold and which have to be
+    done again, instead of the reader having to remember what they edited.
+
+    Only the config's own file references are followed. The corpus is not
+    hashed: it is keyed by the work directory, and reading every sample to decide
+    whether to read every sample would cost more than the stage it protects.
+    """
+    import hashlib
+    import json
+
+    h = hashlib.sha256()
+    h.update(spec.processor.encode("utf-8"))
+    h.update(json.dumps(spec.config or {}, sort_keys=True, default=str).encode("utf-8"))
+
+    roots = [Path.cwd()] + ([pipeline_dir] if pipeline_dir else [])
+    for value in (spec.config or {}).values():
+        if not isinstance(value, str) or not value:
+            continue
+        for root in roots:
+            candidate = Path(value) if Path(value).is_absolute() else root / value
+            if candidate.exists():
+                _digest_path(candidate, h)
+                break
+    return h.hexdigest()[:16]
 
 
 # -- processor base classes --

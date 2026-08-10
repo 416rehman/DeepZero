@@ -220,6 +220,12 @@ def main(ctx: click.Context):
     help="verify the LLM backend is authenticated before running (makes one tiny call)",
 )
 @click.option(
+    "--redo",
+    "redo_stages",
+    multiple=True,
+    help="re-run a stage and everything after it, keeping the earlier work",
+)
+@click.option(
     "--retry-timeouts",
     "retry_timeouts",
     is_flag=True,
@@ -239,6 +245,7 @@ def run(
     verbose: bool,
     clean: bool,
     preflight: bool,
+    redo_stages: tuple[str, ...],
     retry_timeouts: bool,
     timeout_multiplier: float,
 ):
@@ -324,6 +331,28 @@ def run(
             )
             raise SystemExit(1)
         console.print("[green]\\[ok][/] LLM backend authenticated")
+
+    if redo_stages:
+        order = [spec.name for spec in pipeline_def.stage_specs]
+        unknown = [name for name in redo_stages if name not in order]
+        if unknown:
+            console.print(f"[bold red]X ERROR[/]: no such stage: {', '.join(unknown)}")
+            console.print(f"      this pipeline has: {', '.join(order)}")
+            raise SystemExit(1)
+        first = min(order.index(name) for name in redo_stages)
+        affected = order[first:]
+        redone = 0
+        for state in state_store.list_samples():
+            if state.clear_stages_from(list(redo_stages), order):
+                state_store.save_sample(state)
+                redone += 1
+        if redone:
+            console.print(
+                f"[yellow]![/] re-running {', '.join(affected)} for {redone} sample(s); "
+                f"earlier stages are kept"
+            )
+        else:
+            console.print("[dim]no sample had reached those stages - nothing to redo[/]")
 
     if retry_timeouts:
         # only the stages that ran out of time are forgotten, so this costs the

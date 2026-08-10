@@ -70,6 +70,7 @@ deepzero run <TARGET> -p <pipeline> [options]
 | `-w, --work-dir` | pipeline's `work_dir` setting | Replaces the root the run directory is built under. |
 | `--clean` | off | Permanently delete previous run data and start fresh. |
 | `--preflight` | off | Verify the LLM backend is authenticated before running. Makes one tiny call. |
+| `--redo` | none | Re-run a named stage and everything after it, keeping the earlier work. Repeatable. |
 | `--retry-timeouts` | off | Attempt the samples that ran out of time again, keeping every other result. |
 | `--timeout-multiplier` | `2.0` | How much longer to allow when retrying a stage that ran out of time. |
 | `-v, --verbose` | off | Verbose logging, including tracebacks from DeepZero's own code. |
@@ -144,6 +145,26 @@ This forgets only the stages that ran out of time and gives them `--timeout-mult
 (default 2x) longer. Every other result the run produced is kept, so a retry costs the
 time those stages need and nothing else. Stages that declare no timeout are untouched.
 The report groups them separately and shows the budget each one exceeded.
+
+#### Re-running one stage
+
+Editing a prompt, a rule set or a scanner's configuration invalidates that stage's
+results and nothing before it. Decompiling a corpus again to re-ask a question of it
+would cost hours for no reason, so name the stage instead:
+
+```bash
+deepzero run <target> -p <pipeline> --redo assess
+```
+
+Every sample forgets that stage and every later stage, and keeps everything earlier.
+Later stages go too because they consumed output that is about to change: an
+assessment written from findings that no longer exist would leave one sample
+describing two different runs. A sample an obsolete stage filtered out rejoins the
+run, so a narrowed rule set is free to reach a different verdict about it.
+
+`--redo` is repeatable and starts from the earliest stage named. An unknown stage
+name is rejected, with the pipeline's actual stage names listed, rather than being
+treated as nothing to do.
 
 ### `report`
 

@@ -116,6 +116,7 @@ una etapa sin ninguna ordenación detrás, conserva las muestras que casualmente
 |-------|------|----------------|-------------|
 | `name` | string | el nombre del directorio de la canalización | Nombra la canalización, y nombra su directorio de trabajo |
 | `description` | string | `""` | Texto libre |
+| `version` | string | ninguno | Metadatos de formato libre que el motor nunca lee. Ambas canalizaciones incluidas declaran uno por convención, para quien las mantenga |
 | `model` | string | `""` | Modelo para cada etapa de LLM. Una canalización sin etapas de LLM no necesita ninguno; `deepzero validate` avisa cuando falta |
 | `settings` | dict | `{}` | `work_dir` (predeterminado `work`) y `max_workers` (predeterminado `min(4, cpu_count)`) |
 | `knowledge` | dict | `{}` | Valores arbitrarios a nivel de canalización, legibles por cualquier procesador mediante `ctx.get_knowledge(key)` |
@@ -147,12 +148,35 @@ La forma del valor de `processor:` decide cómo se resuelve, de modo que una ref
 
 | Referencia | Se resuelve como |
 |-----------|-------------|
-| Contiene `/` o `\`, p. ej. `ghidra_decompile/ghidra_decompile.py` | Un archivo bajo `processors/` en el directorio de trabajo. Se usa la primera subclase de Processor que contenga, ignorando las propias clases base |
+| Contiene `/` o `\`, p. ej. `ghidra_decompile/ghidra_decompile.py` | Un archivo bajo una de las raíces de procesadores que se enumeran más abajo. Se usa la primera subclase de Processor que contenga, ignorando las propias clases base |
 | Lo mismo, con `:NombreDeClase` añadido | Esa clase concreta en ese archivo, que es lo que necesita un archivo que define más de un procesador |
 | Un nombre simple, p. ej. `metadata_filter` | El registro interno, poblado en `stages/__init__.py` |
 | Un nombre simple que contiene `:`, p. ej. `my.python.module:MyClass` | Un módulo importable en `sys.path`, y una clase dentro de él |
 
-Cualquier otra cosa es un error que enumera los integrados, en lugar de un fallo más adelante durante la ejecución. Tenga en cuenta que las rutas externas se resuelven respecto al directorio de trabajo, no al directorio de la canalización, y por eso las canalizaciones incluidas se ejecutan desde la raíz del repositorio.
+Cualquier otra cosa es un error que enumera los integrados, en lugar de un fallo más adelante durante la ejecución.
+
+Una referencia que lleva un separador se busca bajo cinco raíces, en este orden, y gana la
+primera que exista:
+
+1. cada ruta de `$DEEPZERO_PROCESSORS`, separadas como esta plataforma separe las entradas de
+   `PATH`: con `;` en Windows y con `:` en el resto
+2. `processors/` en el directorio de trabajo
+3. `processors/` junto al propio YAML de la canalización
+4. `processors/` en el directorio padre del de la canalización
+5. el propio directorio de la canalización, para una canalización que mantenga un procesador
+   junto a su YAML en lugar de en un subdirectorio
+
+El directorio de trabajo se busca antes que el de la canalización, y por eso las canalizaciones
+incluidas se resuelven desde la raíz del repositorio. No es la única raíz, sin embargo: una
+canalización guardada en cualquier sitio puede llevar sus propios procesadores al lado y
+ejecutarse desde cualquier directorio, sin que el motor dicte desde dónde toque lanzar el
+comando.
+
+`$DEEPZERO_PROCESSORS` se busca antes que cualquier otra raíz, y eso es lo que la convierte en
+una biblioteca compartida de procesadores: un nombre encontrado ahí eclipsa ese mismo nombre
+bajo el `processors/` del directorio de trabajo o junto a la canalización. Una referencia que no
+coincide con ninguna raíz falla enumerando todas las rutas que intentó, así que una errata se
+lee como una errata y no como un archivo ausente.
 
 ### Expansión Dinámica
 
@@ -197,7 +221,7 @@ report:
   title: Source repository audit
   entity: repository
   entity_plural: repositories
-  target_label: organisation
+  target_label: repository list
   classification_key: classification
   positive_when: [vulnerable]
   negative_when: [not exploitable]
@@ -224,7 +248,9 @@ Todos los campos son opcionales, y cada valor predeterminado reproduce el compor
 
 `vulnerable_when` y `safe_when` se aceptan como los nombres antiguos de `positive_when` y `negative_when`, y significan exactamente lo mismo. `positive_when` gana si se indican ambos.
 
-`target_label` se gana su sitio porque el valor predeterminado, "corpus", da por hecho un montón de archivos en disco. Una ejecución contra una aplicación en vivo tiene un alcance, una ejecución sobre los repositorios de una organización tiene una organización, y llamar corpus a cualquiera de las dos se lee como un error en un informe que va a abrir otra persona.
+`target_label` se gana su sitio porque el valor predeterminado, "corpus", da por hecho un montón de archivos en disco. Una ejecución contra una aplicación en vivo tiene un alcance, y una ejecución sobre un conjunto de repositorios tiene la lista o el directorio de copias locales al que se apuntó. Llamar corpus a cualquiera de las dos se lee como un error en un informe que va a abrir otra persona.
+
+Nombre lo que muestra la cabecera, que es el destino de la ejecución, y no aquello de lo que trata la ejecución. "Organización" es lo tentador y equivocado: se lee bien, y luego resulta que etiqueta la ruta de un manifiesto que puede enumerar repositorios pertenecientes a varias organizaciones.
 
 #### Cómo se Compara un Veredicto
 
@@ -243,6 +269,10 @@ No hace falta añadir nada al informe para esto. Una clave está disponible en c
 #### Hallazgos
 
 `findings_files` nombra archivos dentro del directorio de cada muestra de los que leer hallazgos. También se recoge cualquier artefacto JSON cuyo contenido parezca una lista de hallazgos, así que un procesador que escriba bajo otro nombre aparece igualmente sin configuración alguna.
+
+Un hallazgo puede además nombrar aquello de lo que es una instancia. El informe lee ese nombre de `finding_id`, y recae en `key` y después en `fingerprint`, y agrupa todos los hallazgos que llevan el mismo como una sola cosa vista en varios sitios. El informe gana entonces una sección "Distinct findings" que enumera cada nombre, qué es y en cuántas entidades apareció. La sección no está en un informe en el que ningún hallazgo lleve nombre.
+
+El motor nunca se lo inventa. Cualquier cosa que pudiera derivar incorporaría la ubicación y por tanto nunca coincidiría entre muestras, que es justamente el caso para el que existe el nombre. Un mismo aviso en cuarenta repositorios es un hallazgo en lugar de cuarenta solo si el procesador lo dice, y lo mismo vale para una única causa raíz detrás de tres mil caídas, o para un único camino de contaminación alcanzado desde dos puntos de entrada.
 
 #### El Léxico
 

@@ -12,7 +12,7 @@ Référencés par leur nom simple. Exécutez `deepzero list-processors` pour les
 | ----------- | ---- | -------------- |
 | `file_discovery` | Ingest | Parcours récursif du système de fichiers et hachage cryptographique. |
 | `metadata_filter` | Map | Égalité de champs via `require:`, seuils numériques via n'importe quelle clé `min_<champ>` / `max_<champ>`, et déduplication via `dedup_field`. Les champs sont lus dans les données fusionnées de toutes les étapes en amont. |
-| `hash_exclude` | Map | Exclusions cryptographiques via des listes intégrées ou des fichiers plats. |
+| `hash_exclude` | Map | Exclusions cryptographiques via des listes intégrées ou des fichiers plats, déduplication au sein d'une exécution via `dedup`, et champ dans lequel le hachage est lu via `hash_field` (`sha256` sauf indication contraire). |
 | `generic_llm` | Map | Rendu de modèles Jinja2, appel de LLM, et analyse des réponses. |
 | `generic_command` | Map | Exécution arbitraire de commandes shell avec substitution de variables contextuelles. |
 | `top_k` | Reduce | Tronque l'ensemble des échantillons en fonction de valeurs scalaires numériques. |
@@ -55,9 +55,9 @@ Le `sample_id` est dérivé de l'identité du dépôt plutôt que d'un chemin : 
 
 #### Un findings.json déjà sur le disque est adopté, non réanalysé
 
-C'est le comportement surprenant. Avant toute analyse, le processeur cherche un `findings.json` dans le répertoire propre à chaque échantillon. S'il est là et qu'il s'analyse, ces détections sont retenues comme résultat, l'échantillon est enregistré avec `findings_cached: true`, et semgrep n'est jamais interrogé à son sujet. Si le fichier est illisible, l'échantillon est réanalysé.
+C'est le comportement surprenant. Avant toute analyse, le processeur cherche un `findings.json` dans le répertoire propre à chaque échantillon. S'il est là, que le moteur rapporte le résultat mis en cache comme toujours valide, et que le fichier s'analyse, ces détections sont retenues comme résultat, l'échantillon est enregistré avec `findings_cached: true`, et semgrep n'est jamais interrogé à son sujet. La validité n'appartient pas au processeur : le moteur compare l'empreinte actuelle de cette étape avec celle sous laquelle le résultat précédent a été enregistré, il est donc le seul à savoir si le fichier décrit encore les règles et la configuration en vigueur. Si le fichier est illisible, l'échantillon est réanalysé.
 
-C'est ce qui empêche une exécution interrompue de refaire les lots qu'elle avait déjà terminés. Cela signifie aussi que modifier les règles puis relancer ne change rien en soi : l'ancien fichier est toujours là, ce sont donc les anciennes détections qui sont rapportées. `deepzero run --redo <étape>` est le moyen de forcer une véritable réanalyse, et cela fonctionne parce que `findings.json` est enregistré comme artefact sur chaque chemin de code qui en écrit un, y compris le chemin filtré : `--redo` peut donc trouver le fichier et le supprimer.
+C'est ce qui empêche une exécution interrompue de refaire les lots qu'elle avait déjà terminés. Modifier les règles invalide le cache de soi-même : `rules_dir` est une valeur de configuration désignant un répertoire, les fichiers de règles eux-mêmes sont donc intégrés à l'empreinte, et un résultat enregistré sous une empreinte différente est périmé plutôt qu'adopté. `deepzero run --redo <étape>` reste le moyen de forcer une réanalyse pour ce que l'empreinte ne peut pas voir, et cela fonctionne parce que `findings.json` est enregistré comme artefact sur chaque chemin de code qui en écrit un, y compris le chemin filtré : `--redo` peut donc trouver le fichier et le supprimer. Un résultat enregistré avant l'existence des empreintes porte une empreinte vide, et ceux-là sont retenus tels quels : jeter un corpus au motif qu'il précède cette fonctionnalité serait la pire supposition.
 
 Un résultat adopté ne porte que `finding_count` et `findings_cached`. `files_submitted` et `files_scanned` proviennent de l'exécution de semgrep elle-même : un échantillon qui n'a pas été analysé cette fois-ci ne porte donc ni l'un ni l'autre.
 

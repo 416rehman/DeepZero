@@ -121,13 +121,15 @@ report:
   title: Source repository audit
   entity: repository
   entity_plural: repositories
-  target_label: organisation
+  target_label: repository list
   classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
   lexicon:
     negative: Not exploitable
 ```
+
+`target_label` はその実行のターゲットに名前を与えるものであり、レポートがその隣に置く値は、実行が向けられたマニフェストまたはチェックアウトのディレクトリです。したがって、これを組織と呼べば、ヘッダーが表示していないものに名前を付けることになります。1 つのマニフェストは、複数の所有者のリポジトリを列挙できるからです。
 
 `vulnerable_when` を絞り込んでいるのには、知っておく価値のある理由があります。評価は `[VULNERABLE]` または `[NOT EXPLOITABLE]` を返しますが、デフォルトの肯定側リストには `exploitab` が含まれており、これは否定側の判定に含まれています。[判定の照合方法]({{ '/ja/reference/pipeline-yaml.html' | relative_url }})を参照してください。`vulnerable_when` と `safe_when` は `positive_when` と `negative_when` の古い綴りであり、意味は今も同じです。
 

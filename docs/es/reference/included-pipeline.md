@@ -175,13 +175,18 @@ report:
   title: Source repository audit
   entity: repository
   entity_plural: repositories
-  target_label: organisation
+  target_label: repository list
   classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
   lexicon:
     negative: Not exploitable
 ```
+
+`target_label` nombra el destino de la ejecución, y el valor que el informe coloca a su lado
+es el manifiesto o el directorio de copias locales al que se apuntó la ejecución, así que
+llamarlo organización sería nombrar algo que la cabecera no muestra: un mismo manifiesto puede
+enumerar repositorios de varios propietarios.
 
 `vulnerable_when` se restringe por una razón que conviene conocer. La evaluación responde
 `[VULNERABLE]` o `[NOT EXPLOITABLE]`, y la lista de positivos predeterminada incluye

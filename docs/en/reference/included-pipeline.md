@@ -174,13 +174,18 @@ report:
   title: Source repository audit
   entity: repository
   entity_plural: repositories
-  target_label: organisation
+  target_label: repository list
   classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
   lexicon:
     negative: Not exploitable
 ```
+
+`target_label` names the run's target, and the value the report puts beside it is
+the manifest or checkout directory the run was pointed at, so calling it an
+organisation would name something the header does not show: one manifest can list
+repositories from several owners.
 
 `vulnerable_when` is narrowed for a reason worth knowing about. The assessment answers
 `[VULNERABLE]` or `[NOT EXPLOITABLE]`, and the default positive list includes

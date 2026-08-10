@@ -6,8 +6,9 @@ title: Home
     <div class="hero-massive-content">
         <h1>Hunt zero-days at scale.</h1>
         <p class="hero-subtitle">DeepZero is a highly concurrent orchestration engine for automated vulnerability
-            research. Define custom, multi-stage pipelines to parse binaries, run heuristics, and orchestrate LLMs
-            across massive datasets at scale.</p>
+            research. Define multi-stage pipelines in YAML and run them over any corpus you can enumerate: binaries,
+            repositories, endpoints, model responses. The engine brings the parallelism, the state and the reporting;
+            your pipeline brings the discipline.</p>
 
         <div class="hero-cta">
             <a href="{{ '/en/overview/quickstart.html' | relative_url }}" class="btn btn-primary">Start Hunting</a>
@@ -160,9 +161,9 @@ title: Home
             </g>
         </svg>
         <h4>Massive Parallel Triage</h4>
-        <p>Ingest massive datasets like the Snappy Driver Installer corpus, or a set of git repositories. DeepZero
-            parallelizes PE parsing, Ghidra headless decompilation, cloning, and static analysis natively across your
-            hardware.</p>
+        <p>Point a pipeline at whatever your corpus is and the engine works through it across your hardware, with
+            concurrency set per stage. The two pipelines that ship are worked examples: a driver pack of hundreds of
+            thousands of files, and a list of git repositories.</p>
     </div>
     <div class="feature-item">
         <svg viewBox="0 0 100 100" style="width:72px;height:72px;margin-bottom:1.5rem;display:block;">
@@ -174,9 +175,9 @@ title: Home
             </g>
         </svg>
         <h4>Heuristic & AI Assessment</h4>
-        <p>LLMs are just one stage of the pipeline. DeepZero filters Windows IOCTL surfaces, excludes known
-            loldrivers.io hashes, runs Semgrep rules, and uses LLMs only to assess exploitability on the highest-signal
-            candidates. Bring an API key, or your Claude Code subscription and no key at all.</p>
+        <p>An LLM is one stage among many, and the cheap stages run first. Filter, scan and rank with whatever your
+            domain calls for, then spend model calls only on what survived. Bring an API key, or your Claude Code
+            subscription and no key at all.</p>
     </div>
     <div class="feature-item">
         <svg viewBox="0 0 100 100" style="width:72px;height:72px;margin-bottom:1.5rem;display:block;">

@@ -97,8 +97,17 @@ El motor de orquestación de DeepZero opera en un estricto gráfico de procesami
 El modelo de datos pasa por estas abstracciones a medida que una muestra avanza:
 
 1. **`Sample`**: La estructura base emitida por un `IngestProcessor`. Vincula una ruta física (`source_path`) a un `sample_id` único (normalmente un hash SHA-256 o un UUID determinista) e inicializa el diccionario `data` de la muestra.
-2. **`SampleState`**: El registro persistente que mantiene el `StateStore`. Rastrea el veredicto (`verdict`) de la muestra (`PENDING`, `ACTIVE`, `FILTERED`, `FAILED`, `TIMED_OUT`, `COMPLETED`) y mantiene un `history` que asocia cada procesador con su `StageOutput`. `TIMED_OUT` se mantiene aparte de `FAILED` porque no dice nada sobre la muestra, y es el único desenlace que un presupuesto mayor puede cambiar.
-3. **`ProcessorEntry`**: La fachada generada dinámicamente, eficiente en memoria, que se pasa a los procesadores Map/BulkMap/Reduce. Incorpora un mecanismo de carga diferida (`_store`) que solo recupera del disco los datos históricos de ejecución cuando se accede a `.history` o a `.upstream_data()`.
+2. **`SampleState`**: El registro persistente que mantiene el `StateStore`. Rastrea el veredicto (`verdict`) de la muestra (`PENDING`, `ACTIVE`, `FILTERED`, `FAILED`, `TIMED_OUT`) y mantiene un `history` que asocia cada procesador con su `StageOutput`. Una muestra que llega al final de la canalización sigue en `ACTIVE`. `FILTERED`, `FAILED` y `TIMED_OUT` son los veredictos que sacaron a una muestra de la ejecución, así que llegar al final significa no haber recibido ninguno. `TIMED_OUT` se mantiene aparte de `FAILED` porque no dice nada sobre la muestra, y es el único desenlace que un presupuesto mayor puede cambiar.
+3. **`ProcessorEntry`**: La fachada generada dinámicamente, eficiente en memoria, que se pasa a los procesadores Map/BulkMap/Reduce. Incorpora un mecanismo de carga diferida (`_store`) que solo recupera del disco los datos históricos de ejecución cuando se accede a `.history` o a `.upstream_data()`. Lleva además `cache_is_valid`, que tiene que consultar cualquier procesador que adopte su propia salida anterior en lugar de rehacer el trabajo: `False` significa que esa salida se produjo a partir de un prompt, un conjunto de reglas o una configuración que han cambiado desde entonces, así que adoptarla sería informar de la respuesta a una pregunta que ya nadie hace.
+
+Cada `StageOutput` registra también un `input_digest`, una huella del procesador, de su
+configuración y de cualquier archivo que esa configuración nombre: un prompt, un conjunto de
+reglas, un script de análisis. Una ejecución reanudada recalcula la huella una vez por etapa y
+la compara con la registrada, de modo que una etapa cuyas entradas han cambiado se vuelve a
+ejecutar mientras que las etapas que siguen siendo válidas se restauran del disco. Los
+resultados escritos antes de que se registraran las huellas llevan un resumen vacío y se dan
+por buenos en lugar de rehacerse, porque descartar un corpus que puede haber costado horas,
+por una pregunta que no se le puede hacer, es la peor apuesta.
 
 ### Paradigmas de Procesamiento
 
@@ -106,8 +115,9 @@ Los procesadores determinan la topología de ejecución y el modelo de concurren
 
 #### `IngestProcessor` (1 → N)
 - **Firma:** `process(ctx: ProcessorContext, target: Path) -> list[Sample]`
-- **Concurrencia:** Síncrona. Se ejecuta exactamente una vez por ejecución de la canalización.
+- **Concurrencia:** Síncrona. Se ejecuta una vez, y solo cuando el directorio de la ejecución todavía no contiene ninguna muestra. Una ejecución reanudada enumera primero lo que ya hay en disco y, si encuentra cualquier cosa, registra que se salta la ingestión y nunca llama al procesador.
 - **Función:** Genera el corpus inicial. Antes de la ingestión no existen datos anteriores.
+- **Consecuencia:** Como al reanudar nunca se vuelve a ingerir, lo que se añada al destino después de la primera ejecución no se recoge al volver a ejecutar la canalización. `--clean` descarta el corpus y lo empieza de cero, y un destino distinto es un corpus distinto con su propio directorio de ejecución; cualquiera de las dos vías ingiere de nuevo. `--redo` sobre la etapa de ingestión no lo hace: olvida lo que esa etapa registró, pero el estado de las muestras sobre el que lo olvidó sigue en disco, y encontrar estado de muestras es justo lo que convierte una ejecución en reanudada.
 
 #### `MapProcessor` (1 → 1)
 - **Firma:** `process(ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult`
@@ -119,15 +129,19 @@ Los procesadores determinan la topología de ejecución y el modelo de concurren
 - **Firma:** `process(ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[ProcessorResult]`
 - **Concurrencia:** Ejecución síncrona sobre una parte o la totalidad de las muestras activas.
 - **Función:** Optimiza las invocaciones de procesos externos (por ejemplo, lanzar una herramienta JVM monolítica o un análisis semgrep por lotes) para repartir un arranque costoso entre varias muestras. Las salidas deben indexarse exactamente igual que la lista `entries` de entrada.
+- **Hallazgos sobre el corpus:** Recibe todas las muestras pendientes en una sola llamada, así que aquí `ctx.conclude()` está activo.
 
 #### `ReduceProcessor` (N → M)
 - **Firma:** `process(ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[str]`
 - **Concurrencia:** Barrera de sincronización global. Detiene la ejecución en hilos hasta que todas las muestras activas alcanzan esta etapa.
 - **Función:** Devuelve una lista ordenada de cadenas `sample_id` que define qué muestras sobreviven. Cualquier identificador ausente de esa lista queda marcado permanentemente como `SampleStatus.FILTERED`.
+- **Hallazgos sobre el corpus:** Ve todas las muestras activas en una sola llamada, así que aquí `ctx.conclude()` está activo.
 
 ### El Contrato de Salida
 
 Haga lo que haga un procesador, registra siempre las mismas tres cosas: `data`, un diccionario arbitrario con espacio de nombres propio; `artifacts`, una asociación de etiqueta a ruta de archivo relativa; y un estado. Ese contrato es deliberadamente ajeno a cualquier dominio, y es sobre lo que se construye todo lo que hay aguas abajo del motor.
+
+Una etapa que ve el corpus entero de una vez puede registrar una cosa más. `ctx.conclude(**fields)` archiva un hallazgo sobre el corpus en lugar de sobre una muestra concreta: qué modelo hay detrás de un endpoint, cuántos fallos distintos representa un montón de caídas, si un alcance está bien configurado. Los campos se fusionan en `RunState.conclusion`, dentro de `run.json`, y se escriben en el momento en que se producen, así que una ejecución interrumpida conserva la conclusión a la que ya había llegado. En una etapa map la llamada no hace nada y registra por qué: ese carril se ejecuta una vez por muestra repartido entre un grupo de hilos, así que varios de ellos escribiendo un veredicto sobre el corpus serían una carrera cuyo ganador es la muestra que terminara la última.
 
 El [informe]({{ '/es/reference/cli.html' | relative_url }}) es la consecuencia más clara. Es una proyección del estado persistido, no una etapa de la canalización: lee los mismos `data` y `artifacts` que podría haber leído cualquier procesador, y por eso una caza de controladores, una auditoría de código fuente o cualquier otra cosa se renderizan sin que el código del informe sepa qué es ninguna de ellas. La canalización aporta únicamente el vocabulario, y eso es un [bloque de YAML]({{ '/es/reference/pipeline-yaml.html' | relative_url }}), no código.
 

@@ -32,7 +32,7 @@ Data integrity is handled by the `StateStore` (defined in `engine/state.py`). Op
         <!-- Temp Node -->
         <g transform="translate(320, 120)">
             <rect x="0" y="-40" width="140" height="80" fill="var(--bg-secondary)" stroke="var(--border)" stroke-width="2" stroke-dasharray="4 4" rx="8"/>
-            <text x="70" y="-5" font-family="JetBrains Mono, monospace" font-size="14" font-weight="bold" text-anchor="middle" fill="var(--text-secondary)">state.json.tmp</text>
+            <text x="70" y="-5" font-family="JetBrains Mono, monospace" font-size="14" font-weight="bold" text-anchor="middle" fill="var(--text-secondary)">state.tmp</text>
             <text x="70" y="15" font-family="Inter, sans-serif" font-size="12" text-anchor="middle" fill="var(--text-tertiary)">Buffer</text>
         </g>
         
@@ -57,17 +57,29 @@ Data integrity is handled by the `StateStore` (defined in `engine/state.py`). Op
 
 ### Atomic Swaps (`atomic_replace`)
 
-Instead of writing directly to expected artifacts (e.g., `state.json`), the persistence layer marshals data into temporary `.tmp` buffers. Once serialization completes, an `os.replace` operation forcibly overwrites the destination atomic inode. A retry-backoff mechanism actively intercepts `PermissionError` locks triggered by host EDR/Antivirus heuristics scanning newly created binaries.
+Instead of writing directly to expected artifacts (e.g., `state.json`), the persistence layer marshals data into temporary `.tmp` buffers. The buffer takes the destination's name with its suffix replaced rather than extended, so `state.json` is staged as `state.tmp`. Once serialization completes, an `os.replace` operation forcibly overwrites the destination atomic inode. A retry-backoff mechanism actively intercepts `PermissionError` locks triggered by host EDR/Antivirus heuristics scanning newly created binaries.
 
 ### Schema Versioning
 
-All state objects are tagged with an internal `STATE_VERSION`. If the engine encounters schema drift during deserialization (e.g., reading a v1 JSON under a v2 runtime), it explicitly deprecates the state object rather than inducing unpredictable mutation bugs.
+Sample state is the part that is both tagged and gated. `state.json` is written with a
+`_version` field carrying the internal `STATE_VERSION`, and on load anything older is
+refused: reading a v1 JSON under a v2 runtime returns nothing at all, rather than inducing
+unpredictable mutation bugs by interpreting a record under a schema that no longer
+describes it.
+
+The other two files are not gated. `run_manifest.json` carries the same `_version` field,
+but nothing reads it back, because the manifest is a derived summary rewritten from the
+samples every time they are saved. `run.json` is neither tagged nor checked: it is loaded
+by filtering the JSON through `RunState`'s own field names and dropping anything
+unrecognised, so a record written by an older version loads with whatever fields it has
+and the rest left at their defaults.
 
 ### Workspace Hierarchy
 
 ```text
 work/<pipeline_name>/<corpus_key>/
-├── run.json             # Serialized `RunState`: Execution metrics and pipeline metadata
+├── run.json             # Serialized `RunState`: execution metrics, pipeline metadata,
+│                        #   the corpus-wide conclusion and the run's liveness record
 ├── pipeline.yaml        # Immutable snapshot of the pipeline YAML config during initialization
 ├── run_manifest.json    # Aggregated macro-overview of all samples, read by `status` and `interactive`
 ├── report/              # Browsable HTML report, rebuilt as results land
@@ -77,6 +89,16 @@ work/<pipeline_name>/<corpus_key>/
         ├── context.md   # Synthesized LLM context generated via `engine/context.py`
         └── ...          # Processor-specific artifacts
 ```
+
+Two parts of `RunState` are worth naming beyond the metrics. `conclusion` holds a finding
+about the corpus rather than about any one sample: which model sits behind an endpoint,
+how many distinct bugs a pile of crashes represents, whether a scope is configured
+correctly. It is written through `ctx.conclude(...)` by a stage that sees every sample,
+and stays empty for the many pipelines whose answers are all per-sample. Alongside it,
+`host`, `pid`, `pid_token` and `heartbeat_at` record who is writing the run: a status of
+`running` is only a claim until the process behind it can be checked, and a killed run
+never gets to withdraw the claim itself, so those four fields are what lets another
+process tell a live run from an abandoned one.
 
 ### Corpus Scoping
 
@@ -92,11 +114,38 @@ was never given. With it, each corpus has its own state, its own manifest and it
 report, and each resumes independently.
 
 The same resolved path always maps to the same key, so a rerun lands back where it left
-off. Everything under this directory is derived: `report/` in particular holds nothing
-the run state does not, and deleting it costs a rebuild rather than a run.
+off. Nearly everything under this directory is derived, and deleting `report/` normally
+costs a rebuild rather than a run.
+
+There is one exception, and it is not recoverable. `report/marks.json` holds the review
+marks: for each sample, whether a reader checked it and found it held or did not hold up,
+plus a note. That is what the reader has checked, which no stage can know, so it exists
+nowhere in the run state. It is saved back next to the report precisely so it renders for
+anyone who opens it instead of being stranded in one person's browser, and it is re-read
+on every rebuild. Deleting `report/` destroys it, as does `run --clean`, which removes the
+whole corpus directory before starting.
 
 ### The `history` Ledger
 
 The `SampleState.history` dictionary strictly maps processor stage names to instances of `StageOutput`. Output data structures are strictly isolated and namespaced. A downstream processor extracting metrics from an upstream map will query: `history["upstream_processor"].data.get("metric")` (see [Building Custom Processors]({{ '/en/extensibility/building-custom.html' | relative_url }})).
 
 This namespacing permanently prevents field collision across divergent heuristic analysis techniques.
+
+### Stage Input Fingerprints
+
+Each `StageOutput` also carries an `input_digest`: a fingerprint of everything that decides
+what that stage produces, which is its processor, its config, and any file the config
+points at, such as a prompt, a rule set or an analysis script. It is recorded when the
+stage completes and compared when a resumed run asks whether that stage is already done.
+
+Where both digests are present and they differ, the stored result describes inputs the
+pipeline no longer has, so it counts as stale rather than done and the stage runs again.
+This is what lets a resumed run work out for itself which results still hold, instead of
+the reader having to remember what they edited. Where either digest is empty the question
+cannot be asked, and an unanswerable question is not grounds for discarding work that may
+have taken hours, so results written before the digest was recorded are trusted rather
+than redone.
+
+The corpus itself is not part of the fingerprint. It is already keyed by the work
+directory, and reading every sample to decide whether to read every sample would cost more
+than the stage the check protects.

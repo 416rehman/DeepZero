@@ -13,7 +13,7 @@ implementing classes.
 | ---------- | ---- | ------------- |
 | `file_discovery` | Ingest | Recursive filesystem traversal and cryptographic hashing. |
 | `metadata_filter` | Map | Field equality via `require:`, numeric thresholds via any `min_<field>` / `max_<field>` key, and deduplication via `dedup_field`. Fields are read from the merged data of every upstream stage. |
-| `hash_exclude` | Map | Cryptographic exclusions against inline lists or flat files. |
+| `hash_exclude` | Map | Cryptographic exclusions against inline lists or flat files, in-run deduplication via `dedup`, and the field the hash is read from via `hash_field` (`sha256` unless set). |
 | `generic_llm` | Map | Jinja2 template rendering, LLM invocation, and response parsing. |
 | `generic_command` | Map | Arbitrary shell execution with contextual variable substitution. |
 | `top_k` | Reduce | Truncates sample set based on numeric scalar values. |
@@ -80,17 +80,24 @@ rather than scanning with nothing loaded and reporting a clean corpus.
 #### A findings.json already on disk is adopted, not rescanned
 
 This is the surprising one. Before scanning anything, the processor looks for
-`findings.json` in each sample's own directory. If it is there and it parses, those
-findings are taken as the result, the sample is recorded with `findings_cached: true`,
-and semgrep is never asked about it. If the file is unreadable the sample is rescanned
-instead.
+`findings.json` in each sample's own directory. If it is there, the engine reports the
+cached result as still valid, and the file parses, those findings are taken as the
+result, the sample is recorded with `findings_cached: true`, and semgrep is never asked
+about it. Validity is not the processor's to judge: the engine compares this stage's
+current fingerprint against the one the previous result was recorded under, so it is the
+only thing that knows whether the file still describes the rules and config in force. If
+the file is unreadable the sample is rescanned instead.
 
 That is what stops an interrupted run from repeating batches it had already finished.
-It also means editing the rules and running again changes nothing on its own: the old
-file is still there, so the old findings are reported back. `deepzero run --redo <stage>`
-is the way to force a real rescan, and it works because `findings.json` is recorded as
-an artifact on every path that writes one, including the filtered path, so `--redo` can
-find the file and delete it.
+Editing the rules invalidates the cache on its own: `rules_dir` is a config value naming
+a directory, so the rule files themselves are folded into the fingerprint, and a result
+recorded under a different fingerprint is stale rather than adopted.
+`deepzero run --redo <stage>` is still the way to force a rescan for what the fingerprint
+cannot see, and it works because `findings.json` is recorded as an artifact on every path
+that writes one, including the filtered path, so `--redo` can find the file and delete
+it. A result recorded before fingerprinting existed carries an empty digest, and those
+are trusted as they stand: discarding a corpus because it predates the feature would be
+the worse guess.
 
 An adopted result carries `finding_count` and `findings_cached` only. `files_submitted`
 and `files_scanned` come from the semgrep run itself, so a sample that was never scanned

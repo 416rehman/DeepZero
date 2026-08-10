@@ -5,7 +5,7 @@ title: 首页
 <section class="hero-massive">
     <div class="hero-massive-content">
         <h1>大规模发现零日漏洞。</h1>
-        <p class="hero-subtitle">DeepZero 是一个用于自动化漏洞研究的高并发编排引擎。通过定义自定义的多阶段流水线，解析二进制文件、运行启发式算法，并在海量数据集上大规模编排 LLM（大型语言模型）。</p>
+        <p class="hero-subtitle">DeepZero 是一个用于自动化漏洞研究的高并发编排引擎。用 YAML 定义多阶段流水线，并在任何你能枚举出来的语料库上运行它们：二进制文件、代码仓库、端点、模型响应。引擎带来并行、状态与报告，你的流水线带来其中的章法。</p>
 
         <div class="hero-cta">
             <a href="{{ '/zh-CN/overview/quickstart.html' | relative_url }}" class="btn btn-primary">开始使用</a>
@@ -158,7 +158,7 @@ title: 首页
             </g>
         </svg>
         <h4>海量并行分流</h4>
-        <p>摄取像 Snappy Driver Installer 语料库这样的大型数据集，或者一组 git 仓库。DeepZero 可以在你的硬件上原生并行执行 PE 解析、Ghidra 无头反编译、克隆和静态分析。</p>
+        <p>把一条流水线指向你的语料库，无论它是什么，引擎都会在你的硬件上把它处理完，并发程度按阶段分别设定。随附的两条流水线就是现成的示例：一个包含数十万个文件的驱动程序包，以及一份 git 仓库清单。</p>
     </div>
     <div class="feature-item">
         <svg viewBox="0 0 100 100" style="width:72px;height:72px;margin-bottom:1.5rem;display:block;">
@@ -170,7 +170,7 @@ title: 首页
             </g>
         </svg>
         <h4>启发式和人工智能评估</h4>
-        <p>LLM（大型语言模型）仅仅是流水线中的一个阶段。DeepZero 能够过滤 Windows IOCTL 接口面、排除已知的 loldrivers.io 哈希值、运行 Semgrep 规则，并只在最高信号的候选对象上使用 LLM 评估可利用性。可以带上 API 密钥，也可以完全不用密钥，直接使用你的 Claude Code 订阅。</p>
+        <p>LLM（大型语言模型）只是众多阶段中的一个，而且便宜的阶段先跑。用你所在领域需要的方式去过滤、扫描和排序，然后只把模型调用花在活下来的那些东西上。可以带上 API 密钥，也可以完全不用密钥，直接使用你的 Claude Code 订阅。</p>
     </div>
     <div class="feature-item">
         <svg viewBox="0 0 100 100" style="width:72px;height:72px;margin-bottom:1.5rem;display:block;">

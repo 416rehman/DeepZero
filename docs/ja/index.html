@@ -5,7 +5,7 @@ title: ホーム
 <section class="hero-massive">
     <div class="hero-massive-content">
         <h1>大規模なゼロデイ脆弱性探索。</h1>
-        <p class="hero-subtitle">DeepZeroは自動化された脆弱性研究のための高並行オーケストレーションエンジンです。膨大なデータセットに対して、バイナリの解析、ヒューリスティクスの実行、およびカスタマイズされたマルチステージパイプラインを使用したLLMのスケーリングを行います。</p>
+        <p class="hero-subtitle">DeepZeroは自動化された脆弱性研究のための高並行オーケストレーションエンジンです。マルチステージのパイプラインをYAMLで定義し、列挙できるあらゆるコーパスに対して実行できます。バイナリ、リポジトリ、エンドポイント、モデルの応答。並列化と状態管理とレポートはエンジンが受け持ち、規律はパイプラインが受け持ちます。</p>
 
         <div class="hero-cta">
             <a href="{{ '/ja/overview/quickstart.html' | relative_url }}" class="btn btn-primary">はじめる</a>
@@ -158,7 +158,7 @@ title: ホーム
             </g>
         </svg>
         <h4>大規模な並行委譲</h4>
-        <p>Snappy Driver Installer のような巨大なコーパスや、git リポジトリの集合を取り込みます。DeepZero はハードウェア上でネイティブに PE 解析、Ghidra ヘッドレスデコンパイル、クローン、静的解析を並列化します。</p>
+        <p>コーパスが何であれパイプラインをそこへ向ければ、エンジンはステージごとに設定された並行数で、ハードウェア全体を使ってそれを処理していきます。同梱の 2 つのパイプラインはその実例です。数十万ファイルからなるドライバーパックと、git リポジトリの一覧です。</p>
     </div>
     <div class="feature-item">
         <svg viewBox="0 0 100 100" style="width:72px;height:72px;margin-bottom:1.5rem;display:block;">
@@ -170,7 +170,7 @@ title: ホーム
             </g>
         </svg>
         <h4>ヒューリスティックおよび AI 評価</h4>
-        <p>LLM はパイプラインの一つのステージにすぎません。DeepZero は Windows IOCTL 表面をフィルタリングし、loldrivers.io ハッシュを除外し、Semgrep ルールを実行し、最も悪用の可能性が高い候補に対してのみ LLM 評価を使用します。API キーを持ち込むこともできますし、Claude Code のサブスクリプションだけでキーなしで使うこともできます。</p>
+        <p>LLM は数あるステージの一つにすぎず、安価なステージが先に走ります。対象領域が求めるやり方で絞り込み、スキャンし、順位付けたうえで、生き残ったものにだけモデルの呼び出しを費やします。API キーを持ち込むこともできますし、Claude Code のサブスクリプションだけでキーなしで使うこともできます。</p>
     </div>
     <div class="feature-item">
         <svg viewBox="0 0 100 100" style="width:72px;height:72px;margin-bottom:1.5rem;display:block;">

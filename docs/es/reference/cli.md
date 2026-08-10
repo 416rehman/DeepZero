@@ -18,6 +18,9 @@ deepzero run ./targets -p pipelines/source_audit/pipeline.yaml --preflight
 # Ejecutar limpiando el estado (ejecución en limpio)
 deepzero run ./targets -p pipelines/loldrivers/pipeline.yaml --clean
 
+# Enumerar todas las ejecuciones en disco, las produjera lo que las produjera
+deepzero runs
+
 # Generar un informe HTML navegable y abrirlo
 deepzero report -p loldrivers --open
 
@@ -48,6 +51,7 @@ deepzero list-processors
 | ------- | ----------- |
 | `run` | Ejecuta una canalización en un objetivo. Se reanuda automáticamente si existe estado. |
 | `report` | Genera un informe HTML navegable a partir de los resultados de una ejecución. Puede ejecutarse con la ejecución en marcha. |
+| `runs` | Enumera todas las ejecuciones en disco, las produjera la canalización o el corpus que fuera. |
 | `status` | Muestra el estado actual de la ejecución, los veredictos y las métricas por etapa. |
 | `validate` | Valida en seco el esquema de una canalización, la importación de sus procesadores y sus prompts. |
 | `list-processors` | Enumera todos los tipos de procesadores integrados y registrados dinámicamente. |
@@ -147,9 +151,9 @@ deepzero report -w work/loldrivers/drivers-1a2b3c4d
 | `--open` | desactivado | Abre el informe en el navegador al terminar. |
 | `-v, --verbose` | desactivado | Registro detallado. |
 
-Es obligatorio indicar `--pipeline` o `--work-dir`.
+Ninguna de las dos opciones es obligatoria. Si se dan ambas, la que decide es `--work-dir`. Si no se da ninguna, `report` busca en `work`, que es el directorio con ese nombre literal y no el ajuste `work_dir` de la canalización. Si debajo hay una sola ejecución, se toma esa y se dice cuál es. Si hay varias, se enumeran en una tabla numerada y, en un terminal, se pregunta por cuál de ellas mediante su número. A quien llama sin sitio del que leer una respuesta se le muestra esa misma lista y la línea `deepzero report -w <ejecución>` que nombra una con exactitud, y se sale con código 1, porque una pregunta interactiva dejaría colgado un script. Si no hay ninguna ejecución, se dice y se sale con código 1.
 
-El informe se deriva por completo del estado de la ejecución, así que no contiene ninguna información que no esté en el directorio de la ejecución. Borre el directorio del informe, vuelva a ejecutar el comando y lo recupera. También es seguro generarlo con la ejecución en marcha: lee los archivos de estado y no escribe nada de lo que dependa el ejecutor, así que describe la ejecución tal como estaba en el momento en que se generó.
+El informe se deriva del estado de la ejecución, así que basta con borrar su directorio y volver a ejecutar el comando para recuperarlo. Lo único que no vuelve es `report/marks.json`, que guarda lo que un lector marcó como revisado y es lo único bajo ese directorio que ninguna etapa puede producir. También es seguro generarlo con la ejecución en marcha: lee los archivos de estado y no escribe nada de lo que dependa el ejecutor, así que describe la ejecución tal como estaba en el momento en que se generó.
 
 Escribe:
 
@@ -166,6 +170,27 @@ Una muestra recibe página propia cuando hay algo que leer en ella: hallazgos, u
 Resolver por nombre de canalización elige el corpus más reciente, y lo advierte cuando la canalización ha visto más de uno, nombrando los otros. La ejecución más nueva no siempre es aquella por la que se pregunta, y responder en silencio sobre un corpus distinto es el fallo que conviene evitar. Pase `--work-dir` para nombrar uno con exactitud.
 
 Cómo llama la canalización a sus muestras, a sus desenlaces y a aquello contra lo que se apuntó viene del bloque `report:`, que vive en la definición de la canalización y no en el directorio de la ejecución. `--work-dir` lo obtiene igualmente: la ejecución registra qué canalización la escribió, así que el bloque se recupera por ese nombre. Ahora bien, una ejecución puede sobrevivir a la canalización que la produjo, y cuando esa canalización ya no carga, el informe recae en el vocabulario predeterminado en lugar de negarse a generarse. Consulte [el bloque report]({{ '/es/reference/pipeline-yaml.html' | relative_url }}).
+
+### `runs`
+
+```bash
+deepzero runs
+deepzero runs -w work --open
+```
+
+| Opción | Predeterminado | Descripción |
+|------|---------|-------------|
+| `-w, --work-dir` | `work` | Raíz en la que buscar. Cualquier directorio bajo ella que contenga un `run.json` cuenta como ejecución, a cualquier profundidad. |
+| `--open` | desactivado | Genera el informe de la ejecución más nueva y lo abre en el navegador. |
+| `-v, --verbose` | desactivado | Registro detallado. |
+
+Imprime una tabla con todas las ejecuciones que hay en disco, las produjera la canalización o el corpus que fuera, y las más nuevas primero: la canalización que la escribió, el directorio del corpus, el estado de la ejecución, cuántas muestras descubrió la ingestión, si se ha generado un informe y cuándo se escribió el estado por última vez. Después imprime la línea `deepzero report -w <ejecución más nueva> --open`, para poder abrir la ejecución que encabeza la tabla sin escribir la ruta entera.
+
+Lo que se busca es el archivo marcador `run.json`, a cualquier profundidad, y no la forma `<directorio de trabajo>/<canalización>/<corpus>/`. Una ejecución aterriza siempre en esa forma, pero solo respecto a su propia raíz, y la opción `-w` de `run` puede poner esa raíz en cualquier sitio: buscar por la forma desde aquí dejaría fuera todas las ejecuciones cuya raíz no sea la que se está examinando.
+
+La columna del informe dice `built` o `not built`. Eso es un hecho sobre el directorio, no sobre los resultados: un informe se deriva del estado de la ejecución, así que `not built` significa que está a un comando de distancia, no que se haya perdido.
+
+Sale con código 1 cuando la raíz no es un directorio, y también cuando lo es pero no contiene ninguna ejecución.
 
 ### `status`
 
@@ -218,6 +243,8 @@ deepzero interactive -w work/loldrivers/drivers-1a2b3c4d
 Una REPL que carga el estado de una ejecución en el prompt de sistema para poder hacerle preguntas. `/status`, `/findings [filtro]`, `/clear`, `/help` y `/quit` se atienden localmente; todo lo demás va al modelo, y un `/palabra` que no se reconozca se señala en lugar de facturarse como un turno de conversación. `/findings` enumera todos los hallazgos que registró la ejecución, restringidos a las líneas que coinciden con su argumento, en el vocabulario que declaró la canalización que escribió la ejecución.
 
 `-w` acepta un directorio de ejecución o la raíz de una canalización, y nombra el corpus que eligió cuando hay más de uno. El valor predeterminado es literalmente `work`, que es la raíz por encima de los directorios de canalización y no se resuelve a ninguna ejecución; la REPL lo dice y responde sin contexto de ejecución en lugar de fingir que ha cargado uno, así que apunte `-w` a la ejecución que quiera.
+
+`report` sí encuentra una ejecución bajo un `work` a secas y esto no, y es una diferencia real y no una errata en uno de los dos: `report` recorre el árbol en busca de directorios de ejecución, mientras que `interactive` resuelve un solo nivel y toma el corpus más reciente bajo lo que se le haya dado. Una conversación merece la certeza de que le pidan nombrar la ejecución; un informe es barato de reconstruir contra otra.
 
 ### `serve` y la API REST
 

@@ -18,6 +18,9 @@ deepzero run ./targets -p pipelines/source_audit/pipeline.yaml --preflight
 # Exécuter avec nettoyage de l'état (nouvelle exécution)
 deepzero run ./targets -p pipelines/loldrivers/pipeline.yaml --clean
 
+# Lister toutes les exécutions présentes sur le disque, quelle qu'en soit l'origine
+deepzero runs
+
 # Construire un rapport HTML consultable et l'ouvrir
 deepzero report -p loldrivers --open
 
@@ -48,6 +51,7 @@ deepzero list-processors
 | --------- | ----------- |
 | `run` | Exécute un pipeline sur une cible. Reprend automatiquement si un état existe. |
 | `report` | Construit un rapport HTML consultable à partir des résultats d'une exécution. Peut être lancé sans risque pendant que l'exécution se déroule. |
+| `runs` | Liste toutes les exécutions présentes sur le disque, quels que soient le pipeline et le corpus qui les ont produites. |
 | `status` | Affiche l'état actuel de l'exécution du pipeline, les verdicts et les métriques des étapes. |
 | `validate` | Effectue une validation à blanc (dry-run) du schéma d'un pipeline, des importations de processeurs et des prompts. |
 | `list-processors` | Liste tous les types de processeurs intégrés et enregistrés dynamiquement. |
@@ -147,9 +151,9 @@ deepzero report -w work/loldrivers/drivers-1a2b3c4d
 | `--open` | désactivé | Ouvre le rapport dans un navigateur une fois terminé. |
 | `-v, --verbose` | désactivé | Journalisation détaillée. |
 
-`--pipeline` ou `--work-dir` est requis.
+Aucun des deux drapeaux n'est requis. Si les deux sont donnés, c'est `--work-dir` qui tranche. Si aucun ne l'est, `report` cherche dans `work`, c'est-à-dire le répertoire portant littéralement ce nom et non le réglage `work_dir` du pipeline. S'il n'y trouve qu'une exécution, elle est retenue et nommée. S'il y en a plusieurs, elles sont listées dans un tableau numéroté et, depuis un terminal, la commande demande laquelle par son numéro. Un appelant n'ayant nulle part où lire une réponse se voit présenter la même liste ainsi que la ligne `deepzero report -w <exécution>` qui en désigne une précisément, et la commande sort avec le code 1, car une invite bloquerait un script. S'il n'y a aucune exécution, la commande le dit et sort avec le code 1.
 
-Le rapport est entièrement dérivé de l'état de l'exécution : il ne contient donc aucune information que le répertoire d'exécution ne contienne déjà. Supprimez le répertoire du rapport, relancez la commande, et vous le récupérez. Il peut également être construit sans risque pendant qu'une exécution se déroule : il lit les fichiers d'état et n'écrit rien dont dépende l'exécuteur, de sorte qu'il décrit l'exécution telle qu'elle était au moment de sa construction.
+Le rapport est dérivé de l'état de l'exécution : supprimez son répertoire, relancez la commande, et vous le récupérez. La seule chose qui ne revient pas est `report/marks.json`, qui retient ce qu'un lecteur a marqué comme vérifié et qui est la seule chose sous ce répertoire qu'aucune étape ne peut produire. Il peut également être construit sans risque pendant qu'une exécution se déroule : il lit les fichiers d'état et n'écrit rien dont dépende l'exécuteur, de sorte qu'il décrit l'exécution telle qu'elle était au moment de sa construction.
 
 Il écrit :
 
@@ -166,6 +170,27 @@ Un échantillon obtient sa propre page lorsqu'il y a quelque chose à y lire : d
 La résolution par nom de pipeline retient le corpus le plus récent, et le signale lorsque le pipeline en a vu plusieurs, en nommant les autres. L'exécution la plus récente n'est pas toujours celle sur laquelle porte la question, et répondre silencieusement à propos d'un autre corpus est l'échec qu'il faut éviter. Passez `--work-dir` pour en désigner un précisément.
 
 La manière dont le pipeline nomme ses échantillons, ses issues et ce vers quoi il a été pointé provient du bloc `report:` du pipeline, qui réside dans la définition du pipeline et non dans le répertoire d'exécution. `--work-dir` l'obtient tout de même : l'exécution enregistre quel pipeline l'a produite, et le bloc est donc récupéré par son nom. Une exécution peut cependant survivre au pipeline qui l'a créée, et lorsque ce pipeline ne se charge plus, le rapport retombe sur la formulation par défaut plutôt que de refuser d'être construit. Consultez [le bloc report]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}).
+
+### `runs`
+
+```bash
+deepzero runs
+deepzero runs -w work --open
+```
+
+| Drapeau | Défaut | Description |
+|---------|---------|-------------|
+| `-w, --work-dir` | `work` | Racine à parcourir. Tout répertoire situé en dessous et contenant un `run.json` compte comme une exécution, à n'importe quelle profondeur. |
+| `--open` | désactivé | Construit le rapport de l'exécution la plus récente et l'ouvre dans un navigateur. |
+| `-v, --verbose` | désactivé | Journalisation détaillée. |
+
+Affiche un tableau de toutes les exécutions présentes sur le disque, quels que soient le pipeline et le corpus qui les ont produites, de la plus récente à la plus ancienne : le pipeline qui l'a écrite, le répertoire du corpus, le statut de l'exécution, le nombre d'échantillons découverts par l'ingestion, si un rapport a été construit, et la date de la dernière écriture de l'état. La commande affiche ensuite la ligne `deepzero report -w <exécution la plus récente> --open`, de sorte que l'exécution en tête de tableau puisse être ouverte sans avoir à taper son chemin.
+
+Ce qui est recherché, c'est le fichier marqueur `run.json`, à n'importe quelle profondeur, plutôt que la forme `<répertoire de travail>/<pipeline>/<corpus>/`. Une exécution se range toujours selon cette forme, mais seulement par rapport à sa propre racine, et `-w` sur `run` peut placer cette racine n'importe où : filtrer sur la forme depuis ici laisserait de côté toute exécution dont la racine n'est pas celle qui est parcourue.
+
+La colonne du rapport indique `built` ou `not built`. C'est un fait sur le répertoire plutôt que sur les résultats : un rapport est dérivé de l'état de l'exécution, `not built` signifie donc à une commande de distance, et non perdu.
+
+La commande sort avec le code 1 lorsque la racine n'est pas un répertoire, et lorsqu'elle en est un mais ne contient aucune exécution.
 
 ### `status`
 
@@ -218,6 +243,8 @@ deepzero interactive -w work/loldrivers/drivers-1a2b3c4d
 Une REPL qui charge l'état d'une exécution dans le prompt système afin de pouvoir lui poser des questions. `/status`, `/findings [filtre]`, `/clear`, `/help` et `/quit` sont traités localement ; tout le reste part vers le modèle, et un `/mot` non reconnu est signalé plutôt que facturé comme un tour de conversation. `/findings` liste chaque détection enregistrée par l'exécution, restreinte aux lignes correspondant à son argument, dans le vocabulaire déclaré par le pipeline qui a produit l'exécution.
 
 `-w` accepte un répertoire d'exécution ou la racine d'un pipeline, en nommant le corpus retenu lorsqu'il y en a plusieurs. La valeur par défaut est littéralement `work`, c'est-à-dire la racine située au-dessus des répertoires de pipelines, qui ne se résout à aucune exécution : la REPL le dit et répond sans contexte d'exécution plutôt que de faire comme si elle en avait chargé un. Pointez donc `-w` vers l'exécution que vous visez.
+
+`report` trouve bien une exécution sous un simple `work` là où celle-ci n'y parvient pas, et c'est une véritable différence plutôt qu'une coquille dans l'une des deux : `report` parcourt l'arborescence à la recherche de répertoires d'exécution, tandis qu'`interactive` résout un seul niveau et retient le corpus le plus récent sous ce qui lui a été donné. Une conversation vaut la certitude qu'apporte le fait de devoir nommer l'exécution ; un rapport, lui, est peu coûteux à reconstruire sur une autre.
 
 ### `serve` et l'API REST
 

@@ -31,8 +31,8 @@ you are already signed in to and needs no API key at all. Any [LiteLLM model]({{
 
 ### 3. Check Before You Commit to a Run
 
-These runs are long. Both of these are cheap, and both fail in seconds rather than
-hours:
+These runs are long. This one is cheap, it answers in seconds rather than hours, and it
+starts nothing:
 
 ```bash
 # resolves every processor, checks its prerequisites, and checks every prompt
@@ -41,11 +41,6 @@ deepzero validate pipelines/loldrivers/pipeline.yaml
 
 It exits 1 when it reports an error, so it works as a commit hook or a CI step rather
 than only as something to read.
-
-```bash
-# one tiny call, to confirm the LLM backend is actually signed in
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
-```
 
 ### 4. Pipeline Execution
 
@@ -59,6 +54,16 @@ Or the source audit, against a manifest of repositories or a directory of checko
 
 ```bash
 deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
+```
+
+Either of those takes `--preflight`, which makes one tiny call to confirm the LLM
+backend is actually signed in. It stops in seconds if the backend is not ready, and
+otherwise the run carries on normally, so it is a flag on a run you meant to start
+rather than a check to type on its own. The alternative is finding out several hours
+in, at the first assessment stage:
+
+```bash
+deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
 ```
 
 <div class="callout">
@@ -78,6 +83,20 @@ at any time, including against a run still in progress:
 ```bash
 deepzero report -p loldrivers --open
 ```
+
+Naming only the pipeline resolves to its most recent corpus, and says which other
+corpora that pipeline has seen, because the newest run is not always the one being
+asked about. To see every run under `work` instead, whatever pipeline or corpus produced
+it, newest first:
+
+```bash
+deepzero runs
+```
+
+That lists each run's pipeline, corpus, status and sample count, and prints the
+`deepzero report -w <dir>` line for browsing one. `deepzero report` with no flags
+answers the same question directly: a single run is taken, and several become a list to
+pick from.
 
 The report is derived entirely from run state, so it can be deleted and rebuilt, and
 what it calls the things it found is [declared by the pipeline]({{ '/en/reference/pipeline-yaml.html' | relative_url }}).

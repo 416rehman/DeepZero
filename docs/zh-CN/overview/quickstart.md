@@ -30,7 +30,7 @@ cp .env.example .env
 
 ### 3. 在投入一次长时间运行之前先做检查
 
-这些运行都很漫长。下面两条命令都很廉价，而且失败只需几秒，而不是几小时：
+这些运行都很漫长。下面这条命令很廉价，它在几秒而不是几小时内就给出答案，而且它什么也不会启动：
 
 ```bash
 # 解析每一个处理器，检查它的前置条件，并检查每一份提示词
@@ -38,11 +38,6 @@ deepzero validate pipelines/loldrivers/pipeline.yaml
 ```
 
 报告出错误时它以 1 退出，因此它可以充当一个提交钩子或一个 CI 步骤，而不只是拿来看看。
-
-```bash
-# 发起一次极小的调用，确认 LLM 后端确实已登录
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
-```
 
 ### 4. 执行流水线
 
@@ -58,6 +53,12 @@ deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
 deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
 ```
 
+上面两条都接受 `--preflight`，它会发起一次极小的调用，确认 LLM 后端确实已登录。后端若尚未就绪，它会在几秒内停下；否则运行照常继续。因此它是一个加在你本来就要启动的运行上的标志，而不是一条单独敲出来的检查命令。不用它的另一种下场，是跑了好几个小时之后才在第一个评估阶段发现问题：
+
+```bash
+deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
+```
+
 <div class="callout">
     <p><strong>注意：</strong> DeepZero 会安全地对执行过程 <a href="{{ '/zh-CN/overview/architecture.html' | relative_url }}">进行并行化</a>，并缓存中间输出。如需优雅停止，请发送 SIGINT 信号 (<code>Ctrl+C</code>)。具有相同参数的后续执行将会从 <a href="{{ '/zh-CN/system/state-persistence.html' | relative_url }}">持久化的磁盘状态</a> 瞬间恢复运行。</p>
 </div>
@@ -71,5 +72,13 @@ deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
 ```bash
 deepzero report -p loldrivers --open
 ```
+
+只写出流水线名时，会解析到它最近的那个语料库，并说明这条流水线还见过哪些别的语料库，因为最新的那次运行并不总是被问及的那一次。要改为查看 `work` 下的每一次运行，无论它由哪条流水线或哪个语料库产出，按从新到旧排列：
+
+```bash
+deepzero runs
+```
+
+它会列出每次运行的流水线、语料库、状态和样本数量，并打印出用于浏览其中某一次的 `deepzero report -w <dir>` 命令行。不带任何标志的 `deepzero report` 直接回答同一个问题：只有一次运行时就直接采用它，有多次时则变成一份供你挑选的列表。
 
 报告完全依据运行状态生成，所以删除后可以重建；而它用什么词来称呼所发现的东西，则 [由流水线声明]({{ '/zh-CN/reference/pipeline-yaml.html' | relative_url }})。

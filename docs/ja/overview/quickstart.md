@@ -30,7 +30,7 @@ cp .env.example .env
 
 ### 3. 実行に踏み切る前の確認
 
-これらの実行は長時間かかります。以下の 2 つはどちらも安価で、数時間ではなく数秒で失敗します。
+これらの実行は長時間かかります。次のものは安価で、数時間ではなく数秒で答えを返し、しかも何も開始しません。
 
 ```bash
 # すべてのプロセッサを解決し、その前提条件と、すべてのプロンプトを検査する
@@ -38,11 +38,6 @@ deepzero validate pipelines/loldrivers/pipeline.yaml
 ```
 
 エラーを報告したときは終了コード 1 を返すため、読むためだけのものではなく、コミットフックや CI のステップとしても機能します。
-
-```bash
-# LLM バックエンドが実際にサインイン済みかを、ごく小さな呼び出し 1 回で確認する
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
-```
 
 ### 4. パイプラインの実行
 
@@ -58,6 +53,12 @@ deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
 deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
 ```
 
+このどちらにも `--preflight` を付けられます。これは、LLM バックエンドが実際にサインイン済みかを、ごく小さな呼び出し 1 回で確認します。バックエンドの準備ができていなければ数秒で停止し、そうでなければ実行はそのまま通常どおり進みます。つまり、単独で打ち込む確認コマンドではなく、もともと始めるつもりだった実行に添えるフラグです。これがなければ、数時間経ってから最初の評価ステージで気づくことになります。
+
+```bash
+deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
+```
+
 <div class="callout">
     <p><strong>注意:</strong> DeepZero は安全に<a href="{{ '/ja/overview/architecture.html' | relative_url }}">実行を並列化</a>し、中間出力をキャッシュします。正常に停止するには、SIGINT（<code>Ctrl+C</code>）を送信してください。同じパラメータでの後続の実行は、<a href="{{ '/ja/system/state-persistence.html' | relative_url }}">ディスクに保存された状態</a>から即座に再開されます。</p>
 </div>
@@ -71,5 +72,13 @@ deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
 ```bash
 deepzero report -p loldrivers --open
 ```
+
+パイプラインだけを名指しすると、そのパイプラインの最新のコーパスに解決され、そのパイプラインが他にどのコーパスを見てきたかも示されます。最も新しい実行が、いつも尋ねられている実行だとは限らないからです。どのパイプラインやコーパスが生み出したものかを問わず、`work` の下にあるすべての実行を新しい順に見るには、次のようにします。
+
+```bash
+deepzero runs
+```
+
+各実行のパイプライン、コーパス、ステータス、サンプル数が一覧され、そのうちの 1 つを閲覧するための `deepzero report -w <dir>` の行が表示されます。フラグなしの `deepzero report` も同じ問いに直接答えます。実行が 1 つならそれが選ばれ、複数あれば選ぶための一覧になります。
 
 レポートは実行状態だけから導出されるため、削除して再構築できます。また、見つかったものを何と呼ぶかは[パイプラインが宣言します]({{ '/ja/reference/pipeline-yaml.html' | relative_url }})。

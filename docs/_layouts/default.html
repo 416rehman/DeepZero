@@ -14,7 +14,10 @@
     <meta name="keywords"
         content="{{ page.keywords | default: site.keywords | default: 'vulnerability research, zero-day, BYOVD, orchestration, AI security, automated exploit discovery, Ghidra, Semgrep, LLM security' }}">
     <meta name="author" content="{{ site.author | default: 'DeepZero Team' }}">
-    <link rel="canonical" href="{{ site.url }}{{ page.url | replace:'index.html','' }}">
+    <!-- absolute_url prepends site.url AND site.baseurl; site.url alone drops the
+         /DeepZero prefix the site is actually served under, so every canonical and
+         social URL pointed at a page that does not exist -->
+    <link rel="canonical" href="{{ page.url | replace:'index.html','' | absolute_url }}">
 
     <!-- Favicon -->
     <link rel="icon"
@@ -22,7 +25,7 @@
 
     <!-- Open Graph / Facebook / LinkedIn -->
     <meta property="og:type" content="website">
-    <meta property="og:url" content="{{ site.url }}{{ page.url }}">
+    <meta property="og:url" content="{{ page.url | absolute_url }}">
     <meta property="og:title"
         content="{% if page.title == 'Home' or page.url == '/' %}DeepZero: Automated Vulnerability Research at Scale{% else %}{{ page.title }} | DeepZero{% endif %}">
     <meta property="og:description"
@@ -32,7 +35,7 @@
 
     <!-- Twitter / X -->
     <meta property="twitter:card" content="summary_large_image">
-    <meta property="twitter:url" content="{{ site.url }}{{ page.url }}">
+    <meta property="twitter:url" content="{{ page.url | absolute_url }}">
     <meta property="twitter:title"
         content="{% if page.title == 'Home' or page.url == '/' %}DeepZero: Automated Vulnerability Research at Scale{% else %}{{ page.title }} | DeepZero{% endif %}">
     <meta property="twitter:description"

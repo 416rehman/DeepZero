@@ -114,6 +114,7 @@ no ranking behind it, it keeps whichever samples happen to come first.
 |-------|------|---------|-------------|
 | `name` | string | the pipeline directory's name | Names the pipeline, and names its work directory |
 | `description` | string | `""` | Free text |
+| `version` | string | none | Free-form metadata the engine never reads. Both shipped pipelines declare one by convention, for whoever maintains them |
 | `model` | string | `""` | Model for every LLM stage. A pipeline with no LLM stage needs none; `deepzero validate` warns when one is missing |
 | `settings` | dict | `{}` | `work_dir` (default `work`) and `max_workers` (default `min(4, cpu_count)`) |
 | `knowledge` | dict | `{}` | Arbitrary pipeline-level values, readable by any processor via `ctx.get_knowledge(key)` |
@@ -162,14 +163,33 @@ ambiguous between an external file and a built-in name:
 
 | Reference | Resolved as |
 |-----------|-------------|
-| Contains `/` or `\`, e.g. `ghidra_decompile/ghidra_decompile.py` | A file under `processors/` in the working directory. The first Processor subclass in it is used, ignoring the base classes themselves |
+| Contains `/` or `\`, e.g. `ghidra_decompile/ghidra_decompile.py` | A file under one of the processor roots listed below. The first Processor subclass in it is used, ignoring the base classes themselves |
 | The same, with `:ClassName` appended | That specific class in that file, which is what a file defining more than one processor needs |
 | A bare name, e.g. `metadata_filter` | The internal registry, populated in `stages/__init__.py` |
 | A bare name containing `:`, e.g. `my.python.module:MyClass` | An importable module on `sys.path`, and a class within it |
 
 Anything else is an error naming the built-ins, rather than a failure later in the run.
-Note that external paths resolve against the working directory, not against the pipeline
-directory, which is why the shipped pipelines are run from the repository root.
+
+A reference carrying a separator is looked for under five roots, in this order, and the
+first one that exists wins:
+
+1. every path in `$DEEPZERO_PROCESSORS`, separated the way this platform separates
+   `PATH` entries: `;` on Windows, `:` elsewhere
+2. `processors/` in the working directory
+3. `processors/` beside the pipeline's own YAML
+4. `processors/` in the pipeline directory's parent
+5. the pipeline directory itself, for a pipeline keeping a processor next to its YAML
+   rather than in a subdirectory
+
+The working directory is searched before the pipeline directory, which is why the
+shipped pipelines resolve from the repository root. It is not the only root, though: a
+pipeline kept anywhere can carry its own processors beside it and be run from any
+directory, without the engine dictating where the command happens to be issued from.
+
+`$DEEPZERO_PROCESSORS` is searched ahead of every other root, which is what makes it a
+shared library of processors: a name found there shadows the same name under the working
+directory's `processors/` or beside the pipeline. A reference matching no root fails
+naming every path it tried, so a typo reads as a typo rather than as a missing file.
 
 ### Dynamic Expansion
 
@@ -234,7 +254,7 @@ report:
   title: Source repository audit
   entity: repository
   entity_plural: repositories
-  target_label: organisation
+  target_label: repository list
   classification_key: classification
   positive_when: [vulnerable]
   negative_when: [not exploitable]
@@ -265,9 +285,13 @@ and `negative_when` and mean exactly the same thing. `positive_when` wins if bot
 given.
 
 `target_label` earns its place because the default, "corpus", assumes a pile of files on
-disk. A run against a live application has a scope, a run over an organisation's
-repositories has an organisation, and calling either a corpus reads as a mistake in a
-report someone else is going to open.
+disk. A run against a live application has a scope, and a run over a set of repositories
+has the list or the checkout directory it was pointed at. Calling either a corpus reads
+as a mistake in a report someone else is going to open.
+
+Name what the header shows, which is the run's target, rather than what the run is about.
+"Organisation" is the tempting one to get wrong: it reads well, and then it labels a
+manifest path that can list repositories belonging to several organisations.
 
 #### How a Verdict is Matched
 
@@ -300,6 +324,19 @@ processor records it in `data` and the pipeline names it here.
 `findings_files` names files inside each sample's directory to read findings from. Any
 JSON artifact whose contents look like a findings list is picked up as well, so a
 processor writing under a different name still shows up without configuration.
+
+A finding can also name the thing it is an instance of. The report reads that name from
+`finding_id`, falling back to `key` and then to `fingerprint`, and every finding carrying
+the same one is grouped as a single thing seen in several places. The
+report then gains a "Distinct findings" section listing each name, what it is, and how
+many entities it turned up on. The section is absent from a report where no finding
+carries a name.
+
+The engine never invents one. Anything it could derive would fold in the location and so
+never match across samples, which is the case the name exists for. One advisory across
+forty repositories is one finding rather than forty only if the processor says so, and
+the same holds for one root cause behind three thousand crashes, or one taint path
+reached from two entry points.
 
 #### The Lexicon
 

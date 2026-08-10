@@ -90,6 +90,7 @@ L'ordre est celui dans lequel l'exécution transporte le corpus à cet instant, 
 |-------|------|---------|-------------|
 | `name` | string | le nom du répertoire du pipeline | Nomme le pipeline, et nomme son répertoire de travail |
 | `description` | string | `""` | Texte libre |
+| `version` | string | aucun | Métadonnée libre que le moteur ne lit jamais. Les deux pipelines fournis en déclarent une par convention, à l'intention de qui les maintient |
 | `model` | string | `""` | Modèle pour chaque étape LLM. Un pipeline sans étape LLM n'en a pas besoin ; `deepzero validate` avertit lorsqu'il en manque un |
 | `settings` | dict | `{}` | `work_dir` (défaut `work`) et `max_workers` (défaut `min(4, cpu_count)`) |
 | `knowledge` | dict | `{}` | Valeurs arbitraires au niveau du pipeline, lisibles par n'importe quel processeur via `ctx.get_knowledge(key)` |
@@ -121,12 +122,27 @@ La forme de la valeur `processor:` détermine la manière dont elle est résolue
 
 | Référence | Résolue comme |
 |-----------|---------------|
-| Contient `/` ou `\`, par exemple `ghidra_decompile/ghidra_decompile.py` | Un fichier sous `processors/` dans le répertoire de travail. La première sous-classe de Processor qu'il contient est utilisée, en ignorant les classes de base elles-mêmes |
+| Contient `/` ou `\`, par exemple `ghidra_decompile/ghidra_decompile.py` | Un fichier situé sous l'une des racines de processeurs listées ci-dessous. La première sous-classe de Processor qu'il contient est utilisée, en ignorant les classes de base elles-mêmes |
 | La même chose, suivie de `:NomDeClasse` | Cette classe précise dans ce fichier, ce dont a besoin un fichier définissant plusieurs processeurs |
 | Un nom simple, par exemple `metadata_filter` | Le registre interne, peuplé dans `stages/__init__.py` |
 | Un nom simple contenant `:`, par exemple `my.python.module:MyClass` | Un module importable présent sur `sys.path`, et une classe qu'il contient |
 
-Tout le reste produit une erreur nommant les processeurs intégrés, plutôt qu'un échec plus tard dans l'exécution. Notez que les chemins externes se résolvent par rapport au répertoire de travail, et non par rapport au répertoire du pipeline, ce qui explique pourquoi les pipelines fournis sont lancés depuis la racine du dépôt.
+Tout le reste produit une erreur nommant les processeurs intégrés, plutôt qu'un échec plus tard dans l'exécution.
+
+Une référence portant un séparateur est cherchée sous cinq racines, dans cet ordre, et la
+première qui existe l'emporte :
+
+1. chaque chemin de `$DEEPZERO_PROCESSORS`, séparé comme cette plateforme sépare les
+   entrées de `PATH` : `;` sous Windows, `:` ailleurs
+2. `processors/` dans le répertoire de travail
+3. `processors/` à côté du YAML propre au pipeline
+4. `processors/` dans le répertoire parent du répertoire du pipeline
+5. le répertoire du pipeline lui-même, pour un pipeline gardant un processeur à côté de son
+   YAML plutôt que dans un sous-répertoire
+
+Le répertoire de travail est parcouru avant le répertoire du pipeline, ce qui explique pourquoi les pipelines fournis se résolvent depuis la racine du dépôt. Ce n'est pourtant pas la seule racine : un pipeline conservé n'importe où peut transporter ses propres processeurs à côté de lui et être lancé depuis n'importe quel répertoire, sans que le moteur dicte l'endroit d'où la commande est émise.
+
+`$DEEPZERO_PROCESSORS` est parcouru avant toutes les autres racines, et c'est ce qui en fait une bibliothèque partagée de processeurs : un nom qui s'y trouve masque le même nom placé sous le `processors/` du répertoire de travail ou à côté du pipeline. Une référence ne correspondant à aucune racine échoue en nommant chacun des chemins essayés, de sorte qu'une faute de frappe se lise comme une faute de frappe plutôt que comme un fichier manquant.
 
 ### Expansion Dynamique
 
@@ -171,7 +187,7 @@ report:
   title: Source repository audit
   entity: repository
   entity_plural: repositories
-  target_label: organisation
+  target_label: repository list
   classification_key: classification
   positive_when: [vulnerable]
   negative_when: [not exploitable]
@@ -198,7 +214,9 @@ Chaque champ est optionnel, et chaque valeur par défaut reproduit le comporteme
 
 `vulnerable_when` et `safe_when` sont acceptés comme anciens noms de `positive_when` et `negative_when` et signifient exactement la même chose. `positive_when` l'emporte si les deux sont fournis.
 
-`target_label` mérite sa place parce que la valeur par défaut, « corpus », suppose un tas de fichiers sur un disque. Une exécution portant sur une application en production a un périmètre, une exécution portant sur les dépôts d'une organisation a une organisation, et appeler l'un ou l'autre un corpus se lit comme une erreur dans un rapport que quelqu'un d'autre va ouvrir.
+`target_label` mérite sa place parce que la valeur par défaut, « corpus », suppose un tas de fichiers sur un disque. Une exécution portant sur une application en production a un périmètre, et une exécution portant sur un ensemble de dépôts a la liste ou le répertoire de copies de travail vers lequel elle a été pointée. Appeler l'un ou l'autre un corpus se lit comme une erreur dans un rapport que quelqu'un d'autre va ouvrir.
+
+Nommez ce que l'en-tête affiche, c'est-à-dire la cible de l'exécution, plutôt que ce dont l'exécution traite. « Organisation » est la valeur tentante à se tromper : elle se lit bien, et elle étiquette ensuite un chemin de manifeste qui peut lister des dépôts appartenant à plusieurs organisations.
 
 #### Comment un verdict est mis en correspondance
 
@@ -217,6 +235,10 @@ Rien n'a besoin d'être ajouté au rapport pour cela. Une clé est disponible d�
 #### Détections
 
 `findings_files` nomme les fichiers, situés dans le répertoire de chaque échantillon, où lire les détections. Tout artefact JSON dont le contenu ressemble à une liste de détections est également repris, de sorte qu'un processeur écrivant sous un autre nom apparaît quand même sans configuration.
+
+Une détection peut également nommer la chose dont elle est une occurrence. Le rapport lit ce nom dans `finding_id`, à défaut dans `key`, puis dans `fingerprint`, et toute détection portant le même nom est regroupée comme une seule chose vue à plusieurs endroits. Le rapport gagne alors une section « Distinct findings » listant chaque nom, ce dont il s'agit, et sur combien d'entités il est apparu. La section est absente d'un rapport où aucune détection ne porte de nom.
+
+Le moteur n'en invente jamais. Tout ce qu'il pourrait dériver intégrerait l'emplacement et ne correspondrait donc jamais d'un échantillon à l'autre, ce qui est précisément le cas pour lequel ce nom existe. Un même avis de sécurité sur quarante dépôts n'est une seule détection plutôt que quarante que si le processeur le dit, et il en va de même d'une cause racine unique derrière trois mille plantages, ou d'un même chemin de contamination atteint depuis deux points d'entrée.
 
 #### Le lexique
 

@@ -13,7 +13,7 @@ con las clases que los implementan.
 | ------------- | ---- | ------------- |
 | `file_discovery` | Ingest | Recorrido recursivo del sistema de archivos y hash criptográfico. |
 | `metadata_filter` | Map | Igualdad de campos mediante `require:`, umbrales numéricos mediante cualquier clave `min_<field>` / `max_<field>`, y deduplicación mediante `dedup_field`. Los campos se leen de los datos combinados de todas las etapas anteriores. |
-| `hash_exclude` | Map | Exclusiones criptográficas mediante listas integradas o archivos planos. |
+| `hash_exclude` | Map | Exclusiones criptográficas mediante listas integradas o archivos planos, deduplicación dentro de la propia ejecución mediante `dedup`, y el campo del que se lee el hash mediante `hash_field` (`sha256` si no se indica). |
 | `generic_llm` | Map | Renderizado de plantillas Jinja2, invocación de LLM y análisis de respuestas. |
 | `generic_command` | Map | Ejecución arbitraria de comandos shell con sustitución de variables. |
 | `top_k` | Reduce | Trunca el conjunto de muestras en función de valores escalares numéricos. |
@@ -84,16 +84,25 @@ nada cargado e informar de un corpus limpio.
 #### Un findings.json ya presente en disco se adopta, no se vuelve a analizar
 
 Este es el comportamiento que más sorprende. Antes de analizar nada, el procesador busca `findings.json` en el
-directorio propio de cada muestra. Si está y se puede analizar, esos hallazgos se toman como
+directorio propio de cada muestra. Si está, si el motor informa de que el resultado en caché
+sigue siendo válido y si el archivo se puede analizar, esos hallazgos se toman como
 resultado, la muestra se registra con `findings_cached: true` y a semgrep no se le pregunta
-por ella. Si el archivo es ilegible, la muestra se vuelve a analizar.
+por ella. La validez no le toca juzgarla al procesador: el motor compara la huella actual de
+esta etapa con aquella bajo la que se registró el resultado anterior, así que es lo único que
+sabe si el archivo sigue describiendo las reglas y la configuración vigentes. Si el archivo es
+ilegible, la muestra se vuelve a analizar.
 
 Eso es lo que impide que una ejecución interrumpida repita los lotes que ya había terminado.
-También significa que editar las reglas y volver a ejecutar no cambia nada por sí solo: el
-archivo viejo sigue ahí, así que se informa de los hallazgos viejos.
-`deepzero run --redo <etapa>` es la forma de forzar un análisis de verdad, y funciona porque
-`findings.json` se registra como artefacto en todos los caminos que lo escriben, incluido el
-camino filtrado, de modo que `--redo` puede encontrar el archivo y borrarlo.
+Editar las reglas invalida la caché por sí solo: `rules_dir` es un valor de configuración que
+nombra un directorio, así que los propios archivos de reglas entran en la huella, y un
+resultado registrado bajo una huella distinta queda obsoleto en lugar de adoptarse.
+`deepzero run --redo <etapa>` sigue siendo la forma de forzar un nuevo análisis para lo que la
+huella no alcanza a ver, y funciona porque `findings.json` se registra como artefacto en todos
+los caminos que lo escriben, incluido el camino filtrado, de modo que `--redo` puede encontrar
+el archivo y borrarlo. Un resultado
+registrado antes de que existieran las huellas lleva un resumen vacío, y esos se dan por
+buenos tal cual: descartar un corpus porque es anterior a la funcionalidad sería la peor
+apuesta.
 
 Un resultado adoptado lleva únicamente `finding_count` y `findings_cached`. `files_submitted`
 y `files_scanned` salen de la propia ejecución de semgrep, así que una muestra que esta vez

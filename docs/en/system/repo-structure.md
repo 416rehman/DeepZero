@@ -13,8 +13,15 @@ src/deepzero/
 ├── cli.py               # Click application interface
 ├── api/                 # Starlette REST endpoints
 ├── engine/              # Core execution and orchestration logic
-│   ├── backends/        # Pluggable LLM backends, resolved by model scheme
-│   └── report.py        # Builds the browsable report from run state
+│   ├── pipeline.py      # Loads and validates a pipeline.yaml, derives the corpus key
+│   ├── runner.py        # Drives the stages over the corpus, breadth-first
+│   ├── stage.py         # Processor base classes, StageSpec, the stage input digest
+│   ├── state.py         # StateStore, RunState, SampleState
+│   ├── registry.py      # Resolves a processor reference to a class
+│   ├── report.py        # Builds the browsable report from run state
+│   ├── ui.py            # Live terminal dashboard for a running pipeline
+│   ├── context.py       # Writes each sample's context.md for LLM consumption
+│   └── backends/        # Pluggable LLM backends, resolved by model scheme
 └── stages/              # Standard library processors
 
 processors/              # Contributed and reference processors
@@ -31,6 +38,9 @@ pipelines/               # Pipeline declarations and logic
 docs/                    # Jekyll-based GitHub Pages documentation
 tests/                   # Pytest validation suite
 ```
+
+The `engine/` listing names the modules the rest of these pages discuss, so a
+cross-reference can be followed back to a file. The package holds a few more.
 
 Each pipeline directory holds its `pipeline.yaml`, the Jinja prompt templates its LLM
 stages render, and the semgrep rules its scan stage loads. Nothing outside that

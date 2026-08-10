@@ -13,8 +13,15 @@ src/deepzero/
 ├── cli.py               # Interfaz de la aplicación Click
 ├── api/                 # Endpoints REST de Starlette
 ├── engine/              # Lógica principal de ejecución y orquestación
-│   ├── backends/        # Backends de LLM intercambiables, resueltos por el prefijo del modelo
-│   └── report.py        # Genera el informe navegable a partir del estado de la ejecución
+│   ├── pipeline.py      # Carga y valida un pipeline.yaml, y deriva la clave de corpus
+│   ├── runner.py        # Lleva las etapas sobre el corpus, en anchura
+│   ├── stage.py         # Clases base de procesador, StageSpec, el resumen de entradas de la etapa
+│   ├── state.py         # StateStore, RunState, SampleState
+│   ├── registry.py      # Resuelve una referencia de procesador a una clase
+│   ├── report.py        # Genera el informe navegable a partir del estado de la ejecución
+│   ├── ui.py            # Panel de terminal en vivo para una canalización en marcha
+│   ├── context.py       # Escribe el context.md de cada muestra para consumo del LLM
+│   └── backends/        # Backends de LLM intercambiables, resueltos por el prefijo del modelo
 └── stages/              # Procesadores de la biblioteca estándar
 
 processors/              # Procesadores de referencia y contribuidos
@@ -31,6 +38,9 @@ pipelines/               # Declaraciones de canalización y lógica
 docs/                    # Documentación de GitHub Pages basada en Jekyll
 tests/                   # Conjunto de validación de Pytest
 ```
+
+El listado de `engine/` nombra los módulos de los que hablan el resto de estas páginas, para
+que una referencia cruzada pueda seguirse hasta un archivo. El paquete contiene algunos más.
 
 Cada directorio de canalización contiene su `pipeline.yaml`, las plantillas de prompt Jinja
 que renderizan sus etapas de LLM y las reglas de semgrep que carga su etapa de análisis. Para

@@ -32,7 +32,7 @@ L'intégrité des données est gérée par le `StateStore` (défini dans `engine
         <!-- Temp Node -->
         <g transform="translate(320, 120)">
             <rect x="0" y="-40" width="140" height="80" fill="var(--bg-secondary)" stroke="var(--border)" stroke-width="2" stroke-dasharray="4 4" rx="8"/>
-            <text x="70" y="-5" font-family="JetBrains Mono, monospace" font-size="14" font-weight="bold" text-anchor="middle" fill="var(--text-secondary)">state.json.tmp</text>
+            <text x="70" y="-5" font-family="JetBrains Mono, monospace" font-size="14" font-weight="bold" text-anchor="middle" fill="var(--text-secondary)">state.tmp</text>
             <text x="70" y="15" font-family="Inter, sans-serif" font-size="12" text-anchor="middle" fill="var(--text-tertiary)">Tampon</text>
         </g>
         
@@ -57,17 +57,29 @@ L'intégrité des données est gérée par le `StateStore` (défini dans `engine
 
 ### Échanges Atomiques (`atomic_replace`)
 
-Au lieu d'écrire directement dans les artefacts attendus (par ex., `state.json`), la couche de persistance rassemble les données dans des tampons temporaires `.tmp`. Une fois la sérialisation terminée, une opération `os.replace` écrase de force l'inode atomique de destination. Un mécanisme de réessai avec temporisation (retry-backoff) intercepte activement les verrous `PermissionError` déclenchés par les heuristiques EDR/Antivirus de l'hôte lors de l'analyse des binaires nouvellement créés.
+Au lieu d'écrire directement dans les artefacts attendus (par ex., `state.json`), la couche de persistance rassemble les données dans des tampons temporaires `.tmp`. Le tampon reprend le nom de la destination en remplaçant son suffixe plutôt qu'en le prolongeant : `state.json` est donc préparé sous le nom `state.tmp`. Une fois la sérialisation terminée, une opération `os.replace` écrase de force l'inode atomique de destination. Un mécanisme de réessai avec temporisation (retry-backoff) intercepte activement les verrous `PermissionError` déclenchés par les heuristiques EDR/Antivirus de l'hôte lors de l'analyse des binaires nouvellement créés.
 
 ### Versionnage des Schémas
 
-Tous les objets d'état sont marqués avec une `STATE_VERSION` interne. Si le moteur détecte une dérive de schéma lors de la désérialisation (par exemple, la lecture d'un JSON v1 sous un environnement d'exécution v2), il rend explicitement l'objet d'état obsolète au lieu d'induire des bugs de mutation imprévisibles.
+L'état des échantillons est la partie qui est à la fois marquée et contrôlée. `state.json` est
+écrit avec un champ `_version` portant la `STATE_VERSION` interne, et au chargement tout ce qui
+est plus ancien est refusé : lire un JSON v1 sous un environnement d'exécution v2 ne renvoie
+rien du tout, au lieu d'induire des bugs de mutation imprévisibles en interprétant un
+enregistrement sous un schéma qui ne le décrit plus.
+
+Les deux autres fichiers ne sont pas contrôlés. `run_manifest.json` porte le même champ
+`_version`, mais rien ne le relit, car le manifeste est un résumé dérivé réécrit à partir des
+échantillons chaque fois qu'ils sont enregistrés. `run.json` n'est ni marqué ni vérifié : il est
+chargé en filtrant le JSON à travers les propres noms de champs de `RunState` et en écartant
+tout ce qui n'est pas reconnu, de sorte qu'un enregistrement écrit par une version antérieure se
+charge avec les champs dont il dispose, le reste restant à ses valeurs par défaut.
 
 ### Hiérarchie de l'Espace de Travail
 
 ```text
 work/<pipeline_name>/<corpus_key>/
-├── run.json             # `RunState` sérialisé : Métriques d'exécution et métadonnées du pipeline
+├── run.json             # `RunState` sérialisé : métriques d'exécution, métadonnées du pipeline,
+│                        #   la conclusion portant sur tout le corpus et le registre de vivacité de l'exécution
 ├── pipeline.yaml        # Instantané immuable de la configuration YAML du pipeline lors de l'initialisation
 ├── run_manifest.json    # Vue d'ensemble macro agrégée de tous les échantillons, lue par `status` et `interactive`
 ├── report/              # Rapport HTML consultable, reconstruit à mesure que les résultats arrivent
@@ -78,16 +90,40 @@ work/<pipeline_name>/<corpus_key>/
         └── ...          # Artefacts spécifiques au processeur
 ```
 
+Deux parties de `RunState` méritent d'être nommées au-delà des métriques. `conclusion` porte une détection à propos du corpus plutôt qu'à propos d'un échantillon en particulier : quel modèle se trouve derrière un point d'accès, combien de bugs distincts représente un tas de plantages, si une portée est correctement configurée. Elle est écrite via `ctx.conclude(...)` par une étape qui voit tous les échantillons, et reste vide pour les nombreux pipelines dont toutes les réponses sont par échantillon. À côté d'elle, `host`, `pid`, `pid_token` et `heartbeat_at` enregistrent qui écrit l'exécution : un statut `running` n'est qu'une affirmation tant que le processus qui la porte n'a pas été vérifié, et une exécution tuée n'a jamais l'occasion de retirer cette affirmation elle-même ; ce sont donc ces quatre champs qui permettent à un autre processus de distinguer une exécution vivante d'une exécution abandonnée.
+
 ### Cloisonnement par Corpus
 
 Le segment `<corpus_key>` est ce qui sépare deux cibles traitées par un même pipeline. Il est dérivé de la cible de l'exécution : son nom de base, augmenté d'une courte empreinte du chemin absolu résolu, de sorte qu'il soit à la fois lisible et sans ambiguïté. Sous Windows, la casse du chemin est d'abord normalisée, car `C:\Drivers` et `c:\drivers` désignent le même corpus.
 
 Sans ce segment, pointer le même pipeline vers un second corpus reviendrait à reprendre dans le magasin d'échantillons du premier : des échantillons ne correspondant plus à rien sur le disque seraient considérés comme déjà analysés, et l'exécution rapporterait des résultats pour un corpus qui ne lui a jamais été soumis. Avec lui, chaque corpus dispose de son propre état, de son propre manifeste et de son propre rapport, et chacun reprend indépendamment.
 
-Un même chemin résolu produit toujours la même clé : une nouvelle exécution retombe donc là où elle s'était arrêtée. Tout ce que contient ce répertoire est dérivé. `report/` en particulier ne contient rien que l'état de l'exécution ne contienne déjà, et le supprimer coûte une reconstruction, pas une exécution.
+Un même chemin résolu produit toujours la même clé : une nouvelle exécution retombe donc là où elle s'était arrêtée. Presque tout ce que contient ce répertoire est dérivé, et supprimer `report/` coûte normalement une reconstruction, pas une exécution.
+
+Il y a une exception, et elle n'est pas récupérable. `report/marks.json` contient les marques de relecture : pour chaque échantillon, si un lecteur l'a examiné et l'a jugé tenant ou non tenant, ainsi qu'une note. C'est ce que le lecteur a vérifié, ce qu'aucune étape ne peut savoir, et cela n'existe donc nulle part dans l'état de l'exécution. Ce fichier est justement réenregistré à côté du rapport afin qu'il s'affiche pour quiconque l'ouvre au lieu d'être bloqué dans le navigateur d'une seule personne, et il est relu à chaque reconstruction. Supprimer `report/` le détruit, tout comme `run --clean`, qui retire l'ensemble du répertoire du corpus avant de démarrer.
 
 ### Le Registre `history`
 
 Le dictionnaire `SampleState.history` associe strictement les noms des étapes des processeurs aux instances de `StageOutput`. Les structures de données de sortie sont strictement isolées et cloisonnées par des espaces de noms. Un processeur en aval qui extrait des métriques d'un map en amont interrogera : `history["upstream_processor"].data.get("metric")` (voir [Construire des Processeurs Personnalisés]({{ '/fr/extensibility/building-custom.html' | relative_url }})).
 
 Ce cloisonnement par espaces de noms empêche définitivement les collisions de champs entre des techniques d'analyse heuristique divergentes.
+
+### Empreintes des Entrées d'une Étape
+
+Chaque `StageOutput` porte également un `input_digest` : une empreinte de tout ce qui détermine
+ce que cette étape produit, c'est-à-dire son processeur, sa configuration, et tout fichier que
+cette configuration désigne, tel qu'un prompt, un ensemble de règles ou un script d'analyse. Elle
+est enregistrée à l'achèvement de l'étape et comparée lorsqu'une exécution reprise se demande si
+cette étape est déjà faite.
+
+Là où les deux empreintes sont présentes et diffèrent, le résultat stocké décrit des entrées que
+le pipeline n'a plus : il compte donc comme périmé plutôt que comme fait, et l'étape est
+relancée. C'est ce qui permet à une exécution reprise de déterminer d'elle-même quels résultats
+tiennent toujours, au lieu de laisser au lecteur le soin de se rappeler ce qu'il a modifié. Là où
+l'une des deux empreintes est vide, la question ne peut pas être posée, et une question sans
+réponse ne justifie pas de jeter un travail qui a pu prendre des heures : les résultats écrits
+avant que l'empreinte ne soit enregistrée sont donc retenus plutôt que refaits.
+
+Le corpus lui-même ne fait pas partie de l'empreinte. Il est déjà cloisonné par le répertoire de
+travail, et lire chaque échantillon pour décider s'il faut lire chaque échantillon coûterait plus
+cher que l'étape que la vérification protège.

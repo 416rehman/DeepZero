@@ -121,13 +121,15 @@ report:
   title: Source repository audit
   entity: repository
   entity_plural: repositories
-  target_label: organisation
+  target_label: repository list
   classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
   lexicon:
     negative: Not exploitable
 ```
+
+`target_label` 称呼的是本次运行的目标，而报告放在它旁边的取值，是本次运行所指向的那份清单或检出目录。因此把它叫作组织，就会去称呼一个报告头部并没有显示的东西：一份清单可以列出分属好几个所有者的仓库。
 
 `vulnerable_when` 被收窄是有一个值得知道的原因的。评估的回答是 `[VULNERABLE]` 或 `[NOT EXPLOITABLE]`，而默认的肯定项列表中含有 `exploitab`，否定裁决里恰好就有它。参阅 [裁决如何匹配]({{ '/zh-CN/reference/pipeline-yaml.html' | relative_url }})。`vulnerable_when` 和 `safe_when` 是 `positive_when` 与 `negative_when` 的旧名称，含义完全一致。
 

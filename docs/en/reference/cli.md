@@ -18,6 +18,9 @@ deepzero run ./targets -p pipelines/source_audit/pipeline.yaml --preflight
 # Execute with state cleanup (fresh run)
 deepzero run ./targets -p pipelines/loldrivers/pipeline.yaml --clean
 
+# List every run on disk, whatever produced it
+deepzero runs
+
 # Build a browsable HTML report and open it
 deepzero report -p loldrivers --open
 
@@ -49,6 +52,7 @@ on every command.
 | --------- | ----------- |
 | `run` | Execute a pipeline against a target. Resumes automatically if state exists. |
 | `report` | Build a browsable HTML report from a run's results. Safe to run while the run is going. |
+| `runs` | List every run on disk, whatever pipeline or corpus produced it. |
 | `status` | Show current pipeline run status, verdicts, and stage metrics. |
 | `validate` | Perform dry-run validation of a pipeline's schema, processor imports, and prompts. |
 | `list-processors` | List all built-in and dynamically registered processor types. |
@@ -195,13 +199,20 @@ deepzero report -w work/loldrivers/drivers-1a2b3c4d
 | `--open` | off | Open the report in a browser when it is finished. |
 | `-v, --verbose` | off | Verbose logging. |
 
-One of `--pipeline` or `--work-dir` is required.
+Neither flag is required. Given both, `--work-dir` is the one that decides. Given
+neither, `report` searches `work`, which is the directory of that literal name rather
+than the pipeline's `work_dir` setting. One run under it is taken, and named. Several are
+listed in a numbered table and, at a terminal, it asks which one by number. A caller with
+nowhere to read an answer from is shown the same list and the `deepzero report -w <run>`
+line that names one exactly, and exits 1, because a prompt in a script would hang it. No
+runs at all says so and exits 1.
 
-The report is derived entirely from run state, so it holds no information the run
-directory does not. Delete the report directory and run the command again and you get
-it back. It is also safe to build while a run is going: it reads the state files and
-writes nothing the runner depends on, so it describes the run as of the moment it was
-built.
+The report is derived from run state, so deleting the report directory and running the
+command again gets it back. The one thing that does not come back is `report/marks.json`,
+which holds what a reader marked as checked and is the only thing under that directory
+no stage can produce. It is also safe to build while a run is going: it reads the state
+files and writes nothing the runner depends on, so it describes the run as of the moment
+it was built.
 
 It writes:
 
@@ -229,6 +240,36 @@ it, so the block is recovered by name. A run can outlive the pipeline that made 
 though, and when that pipeline no longer loads the report falls back to the default
 wording rather than refusing to build. See
 [the report block]({{ '/en/reference/pipeline-yaml.html' | relative_url }}).
+
+### `runs`
+
+```bash
+deepzero runs
+deepzero runs -w work --open
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-w, --work-dir` | `work` | Root to search. Every directory under it holding a `run.json` counts as a run, at any depth. |
+| `--open` | off | Build the newest run's report and open it in a browser. |
+| `-v, --verbose` | off | Verbose logging. |
+
+Prints a table of every run on disk, whatever pipeline or corpus produced it, newest
+first: the pipeline that wrote it, the corpus directory, the run's status, how many
+samples ingest discovered, whether a report has been built, and when the state was last
+written. It then prints the `deepzero report -w <newest run> --open` line, so the run at the top
+of the table can be opened without typing the path out.
+
+What is searched for is the `run.json` marker file, at any depth, rather than the
+`<work dir>/<pipeline>/<corpus>/` shape. A run always lands in that shape, but only
+relative to its own root, and `-w` on `run` can put that root anywhere: matching on
+shape from here would leave out every run whose root is not the one being searched.
+
+The report column says `built` or `not built`. That is a fact about the directory rather
+than about the results: a report is derived from run state, so `not built` means one
+command away, not lost.
+
+It exits 1 when the root is not a directory, and when it is one but holds no runs.
 
 ### `status`
 
@@ -299,6 +340,12 @@ lines matching its argument, in the vocabulary the pipeline that wrote the run d
 there is more than one. The default is literally `work`, which is the root above the
 pipeline directories and resolves to no run at all; the REPL says so and answers without
 run context rather than pretending to have loaded one, so point `-w` at the run you mean.
+
+`report` does find a run under a bare `work` and this does not, which is a real
+difference rather than a typo in one of them: `report` searches the tree for run
+directories, while `interactive` resolves one level and takes the most recent corpus
+under whatever it was given. A conversation is worth the certainty of being told to name
+the run; a report is cheap to rebuild against another one.
 
 ### `serve` and the REST API
 

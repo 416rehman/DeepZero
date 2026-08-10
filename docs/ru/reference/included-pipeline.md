@@ -121,13 +121,15 @@ report:
   title: Source repository audit
   entity: repository
   entity_plural: repositories
-  target_label: organisation
+  target_label: repository list
   classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
   lexicon:
     negative: Not exploitable
 ```
+
+`target_label` называет цель запуска, а значение, которое отчет ставит рядом с ним, представляет собой манифест или каталог с рабочими копиями, на который был направлен запуск, поэтому назвать это организацией значило бы назвать то, чего заголовок не показывает: один манифест может перечислять репозитории нескольких владельцев.
 
 `vulnerable_when` сужен по причине, о которой стоит знать. Оценка отвечает `[VULNERABLE]` либо `[NOT EXPLOITABLE]`, а список положительных значений по умолчанию включает `exploitab`, которое содержится в отрицательном вердикте. См. [Как сопоставляется вердикт]({{ '/ru/reference/pipeline-yaml.html' | relative_url }}). `vulnerable_when` и `safe_when` являются прежними написаниями `positive_when` и `negative_when` и означают то же самое.
 

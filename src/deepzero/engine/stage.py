@@ -45,6 +45,12 @@ class GlobalConfig(TypedDict, total=False):
     settings: dict[str, Any]
     knowledge: dict[str, Any]
     model: str
+    # where the pipeline was loaded from. A config value naming a file that
+    # ships with the pipeline (a blocklist, a rule set, a template) can only be
+    # resolved against something, and the working directory is whatever the
+    # reader happened to be in. setup() receives this config and no context, so
+    # without it such a path is only ever cwd-relative.
+    pipeline_dir: str
 
 
 class ProcessorType(str, Enum):

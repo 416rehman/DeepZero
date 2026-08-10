@@ -111,6 +111,7 @@ class PipelineDefinition:
             "settings": self.settings,
             "knowledge": self.knowledge,
             "model": self.model,
+            "pipeline_dir": str(self.pipeline_dir),
         }
 
 

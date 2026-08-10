@@ -30,18 +30,31 @@ class HashExclude(MapProcessor):
         self._seen_hashes: set[str] = set()
         self._seen_lock = threading.Lock()
 
-    def _resolve_hash_file(self) -> Path | None:
+    def _resolve_hash_file(self, pipeline_dir: str | None = None) -> Path | None:
+        """where the blocklist is, tried the way a reader would expect.
+
+        A relative path is resolved against the working directory first, which is
+        how the shipped pipelines reference theirs, and then against the pipeline
+        that declared it. Without the second, a pipeline could not carry its own
+        blocklist: the file sits beside the yaml, and whether it resolved
+        depended on which directory the command was run from.
+        """
         hash_file = str(self.config.get("hash_file", "") or "")
         if not hash_file:
             return None
         path = Path(hash_file)
-        return path if path.is_absolute() else Path.cwd() / path
+        if path.is_absolute():
+            return path
+        cwd_path = Path.cwd() / path
+        if cwd_path.exists() or not pipeline_dir:
+            return cwd_path
+        return Path(pipeline_dir) / path
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         # a hash_file that is not there excludes nothing at all, and the run
         # still completes, so it has to be reported before the run rather than
         # left as one warning in the log of a corpus that came back untouched
-        path = self._resolve_hash_file()
+        path = self._resolve_hash_file(str(ctx.pipeline_dir))
         if path is not None and not path.exists():
             return [f"hash_file does not exist: {path}"]
         return []
@@ -54,7 +67,7 @@ class HashExclude(MapProcessor):
             self._exclude_hashes.add(str(h).strip().lower())
 
         # hash file (one per line)
-        path = self._resolve_hash_file()
+        path = self._resolve_hash_file(global_config.get("pipeline_dir"))
         if path is not None:
             if path.exists():
                 from_file = 0

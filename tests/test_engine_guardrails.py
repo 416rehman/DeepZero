@@ -153,3 +153,66 @@ class TestOpeningAStoreIsNotAWrite:
         from deepzero.engine.state import StateStore
 
         assert StateStore(tmp_path / "nothing").list_samples() == []
+
+
+class TestAPipelineCanShipItsOwnFiles:
+    """A pipeline that carries a blocklist, a rule set or a template beside its
+    yaml has to be able to name it. setup() sees only the global config, so
+    without the pipeline's own directory in there the only thing a relative path
+    could resolve against was whichever directory the command was run from."""
+
+    def test_a_blocklist_beside_the_pipeline_is_found_from_anywhere(self, tmp_path, monkeypatch):
+        from deepzero.engine.stage import StageSpec
+        from deepzero.stages.hash_filter import HashExclude
+
+        pipeline = tmp_path / "mypipe"
+        pipeline.mkdir()
+        (pipeline / "blocklist.txt").write_text("aaaa\nbbbb\n", encoding="utf-8")
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        h = HashExclude(
+            StageSpec(name="x", processor="hash_exclude", config={"hash_file": "blocklist.txt"})
+        )
+        h.setup({"pipeline_dir": str(pipeline)})
+        assert h._exclude_hashes == {"aaaa", "bbbb"}
+
+    def test_the_working_directory_still_wins_when_the_file_is_there(self, tmp_path, monkeypatch):
+        """the shipped pipelines reference their files relative to the repository
+        root, so that resolution must keep working."""
+        from deepzero.engine.stage import StageSpec
+        from deepzero.stages.hash_filter import HashExclude
+
+        pipeline = tmp_path / "mypipe"
+        pipeline.mkdir()
+        (pipeline / "blocklist.txt").write_text("frompipeline\n", encoding="utf-8")
+        here = tmp_path / "here"
+        here.mkdir()
+        (here / "blocklist.txt").write_text("fromcwd\n", encoding="utf-8")
+        monkeypatch.chdir(here)
+
+        h = HashExclude(
+            StageSpec(name="x", processor="hash_exclude", config={"hash_file": "blocklist.txt"})
+        )
+        h.setup({"pipeline_dir": str(pipeline)})
+        assert h._exclude_hashes == {"fromcwd"}
+
+    def test_the_pipeline_directory_reaches_a_processor_setup(self):
+        """the engine has to actually put it in the global config, or the above
+        only works because the test passed it by hand."""
+        from pathlib import Path
+
+        from deepzero.engine.pipeline import PipelineDefinition
+
+        cfg = PipelineDefinition(
+            name="p",
+            description="",
+            model="",
+            settings={},
+            knowledge={},
+            stage_specs=[],
+            pipeline_dir=Path("/somewhere/mypipe"),
+            raw_yaml="",
+        ).to_global_config()
+        assert "mypipe" in cfg["pipeline_dir"]

@@ -6,7 +6,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypedDict, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Protocol,
+    TypedDict,
+    runtime_checkable,
+)
 
 if TYPE_CHECKING:
     from deepzero.engine.state import StateStore
@@ -126,6 +134,21 @@ class ProcessorEntry:
         return output.data.get(key, default)
 
 
+def _conclusion_not_available(**_: Any) -> None:
+    """what ctx.conclude does in a lane that cannot soundly reach a conclusion.
+
+    A conclusion is about the whole corpus, so only a stage that sees the whole
+    corpus can author one. A map stage runs once per sample, across a thread
+    pool: several of them writing a corpus verdict would be a race whose winner
+    is whichever sample finished last. Rather than let that be written and read
+    back as an answer, the call does nothing and says why.
+    """
+    logging.getLogger("deepzero.processor").warning(
+        "ctx.conclude() is only available to a reduce or bulk_map stage, which are "
+        "the ones that see every sample at once. The call was ignored."
+    )
+
+
 @dataclass
 class ProcessorContext:
     # pipeline directory root (for resolving relative paths in config)
@@ -140,6 +163,12 @@ class ProcessorContext:
     progress: ProgressReporter = field(default_factory=_NullProgressReporter)
     # optional event to monitor for graceful or forced interruptions natively
     shutdown_event: threading.Event | None = None
+
+    # record a finding about the corpus rather than about one sample. Available
+    # to reduce and bulk_map stages, which see every sample in one call; in a map
+    # stage it does nothing and says so, because a per-sample lane cannot speak
+    # for the whole corpus without racing itself.
+    conclude: Callable[..., None] = _conclusion_not_available
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         # shorthand to grab a pipeline setting

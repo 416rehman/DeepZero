@@ -292,3 +292,100 @@ class TestAPipelineCanLiveAnywhere:
             assert "somepipe" in str(exc)
         else:
             raise AssertionError("a missing processor must not resolve")
+
+
+class TestAConclusionAboutTheWholeCorpus:
+    """Some questions only have an answer in aggregate: which model sits behind
+    an endpoint, how many distinct bugs a pile of crashes is, whether a scope is
+    configured correctly. Every one of those was homeless: a stage could record
+    against a sample and nowhere else, so the answer had to be attributed to an
+    arbitrary member of the set it was actually about."""
+
+    def _corpus(self, tmp_path, stage_cls, kind):
+        import pathlib
+
+        from deepzero.engine.runner import PipelineRunner
+        from deepzero.engine.stage import IngestProcessor, Sample, StageSpec
+        from deepzero.engine.state import RunState, StateStore
+
+        class Two(IngestProcessor):
+            def process(self, ctx, target):
+                return [
+                    Sample(sample_id=f"s{i}", source_path=pathlib.Path("."), filename=f"s{i}")
+                    for i in range(2)
+                ]
+
+        store = StateStore(tmp_path / "work")
+        spec = StageSpec(name=kind, processor=kind)
+        PipelineRunner(
+            Two(StageSpec(name="discover", processor="two")),
+            [(spec, stage_cls(spec))],
+            store,
+            tmp_path,
+            {},
+        ).run(pathlib.Path("."), RunState(run_id="r", pipeline="p"))
+        return store
+
+    def test_a_reduce_stage_can_author_one(self, tmp_path):
+        from deepzero.engine.stage import ReduceProcessor
+
+        class Concluder(ReduceProcessor):
+            def process(self, ctx, entries):
+                ctx.conclude(headline="the corpus is one thing", probes=len(entries))
+                return [e.sample_id for e in entries]
+
+        store = self._corpus(tmp_path, Concluder, "reduce")
+        conclusion = store.load_run().conclusion
+        assert conclusion["headline"] == "the corpus is one thing"
+        assert conclusion["probes"] == 2
+        assert conclusion["stage"] == "reduce"
+
+    def test_a_bulk_stage_can_author_one(self, tmp_path):
+        from deepzero.engine.stage import BulkMapProcessor, ProcessorResult
+
+        class Concluder(BulkMapProcessor):
+            def process(self, ctx, entries):
+                ctx.conclude(headline="seen all at once")
+                return [ProcessorResult.ok() for _ in entries]
+
+        store = self._corpus(tmp_path, Concluder, "batch")
+        assert store.load_run().conclusion["headline"] == "seen all at once"
+
+    def test_a_map_stage_cannot(self, tmp_path):
+        """a per-sample lane runs across a thread pool, so several of them
+        writing a corpus verdict is a race whose winner is whichever sample
+        finished last. The call does nothing rather than recording that."""
+        from deepzero.engine.stage import MapProcessor, ProcessorResult
+
+        class Concluder(MapProcessor):
+            def process(self, ctx, entry):
+                ctx.conclude(headline="I speak for everyone")
+                return ProcessorResult.ok()
+
+        store = self._corpus(tmp_path, Concluder, "map")
+        assert store.load_run().conclusion == {}
+
+    def test_a_run_that_concluded_nothing_carries_nothing(self, tmp_path):
+        from deepzero.engine.stage import MapProcessor, ProcessorResult
+
+        class Quiet(MapProcessor):
+            def process(self, ctx, entry):
+                return ProcessorResult.ok()
+
+        store = self._corpus(tmp_path, Quiet, "map")
+        assert store.load_run().conclusion == {}
+
+    def test_an_older_run_without_the_field_still_loads(self, tmp_path):
+        """runs written before this existed must not become unreadable."""
+        import json
+
+        from deepzero.engine.state import StateStore
+
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "run.json").write_text(
+            json.dumps({"run_id": "old", "pipeline": "p", "status": "completed"}), encoding="utf-8"
+        )
+        loaded = StateStore(work).load_run()
+        assert loaded is not None
+        assert loaded.conclusion == {}

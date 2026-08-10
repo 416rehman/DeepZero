@@ -111,6 +111,29 @@ class PipelineRunner:
         except Exception as exc:  # noqa: BLE001 - a view refresh must never fail a run
             log.debug("progress hook failed: %s", exc)
 
+    def _conclusion_writer(self, spec: StageSpec):
+        """the ctx.conclude a corpus-wide stage gets.
+
+        Recorded on the run rather than on any sample, because that is what it is
+        about, and saved as soon as it is written so an interrupted run still
+        carries the conclusion it had already reached.
+        """
+
+        def conclude(**fields: Any) -> None:
+            run_state = getattr(self, "_active_run_state", None)
+            if run_state is None:
+                log.warning("%s concluded before a run was open; ignored", spec.name)
+                return
+            entry = {k: v for k, v in fields.items() if v is not None}
+            entry["stage"] = spec.name
+            run_state.conclusion = {**run_state.conclusion, **entry}
+            try:
+                self.state_store.save_run(run_state)
+            except OSError as exc:
+                log.warning("could not record the conclusion from %s: %s", spec.name, exc)
+
+        return conclude
+
     def _digest_for(self, spec: StageSpec) -> str:
         """this stage's input fingerprint, computed once per run.
 
@@ -827,6 +850,7 @@ class PipelineRunner:
             llm=self.llm,
             progress=_UIProgressAdapter(self.dashboard, spec.name),
             shutdown_event=self._shutdown_event,
+            conclude=self._conclusion_writer(spec),
         )
         entries = [self._make_entry(state, spec) for state in active]
         results, error = self._invoke_stage(spec, lambda: processor.process(ctx, entries))
@@ -891,6 +915,7 @@ class PipelineRunner:
             llm=self.llm,
             progress=_UIProgressAdapter(self.dashboard, spec.name),
             shutdown_event=self._shutdown_event,
+            conclude=self._conclusion_writer(spec),
         )
         results, error = self._invoke_stage(spec, lambda: processor.process(ctx, entries))
 

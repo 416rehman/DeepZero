@@ -257,6 +257,12 @@ class RunState:
     status: RunStatus = RunStatus.PENDING
     stages: list[str] = field(default_factory=list)
     stats: dict[str, Any] = field(default_factory=dict)
+    # a finding about the corpus rather than about any one sample. Some questions
+    # only have an answer in aggregate: which model is behind an endpoint, how
+    # many distinct bugs a pile of crashes represents, whether a scope is
+    # configured correctly. Written by a stage that sees every sample, and empty
+    # for the many pipelines whose answers are all per-sample.
+    conclusion: dict[str, Any] = field(default_factory=dict)
 
     # who is writing this run. a status of "running" is only a claim until the
     # process behind it can be checked, and a killed run never gets to withdraw

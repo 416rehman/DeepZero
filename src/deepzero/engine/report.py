@@ -372,6 +372,41 @@ def _read_json(path: Path) -> Any | None:
         return None
 
 
+def _conclusion_panel(run: dict[str, Any]) -> str:
+    """what a stage concluded about the corpus, if one did.
+
+    Placed above the per-sample counts because it is the answer to a different
+    question, and often the one that was actually asked: which model is behind
+    this endpoint, how many distinct bugs these crashes are. A page that leads
+    with a table of samples buries it.
+    """
+    conclusion = run.get("conclusion") or {}
+    if not isinstance(conclusion, dict) or not conclusion:
+        return ""
+    headline = str(conclusion.get("headline") or conclusion.get("verdict") or "")
+    if not headline:
+        return ""
+    detail = str(conclusion.get("detail") or "")
+    stage = str(conclusion.get("stage") or "")
+    shown = {
+        k: v
+        for k, v in conclusion.items()
+        if k not in ("headline", "detail", "stage", "verdict") and v not in (None, "", [], {})
+    }
+    facts = "".join(
+        f"<div><div class='lbl'>{_esc(str(k))}</div><dd>{_esc(str(v))}</dd></div>"
+        for k, v in list(shown.items())[:6]
+    )
+    return (
+        "<section class='conclusion'>"
+        f"<div class='lbl'>what this run concluded{f' ({_esc(stage)})' if stage else ''}</div>"
+        f"<p class='head'>{_esc(headline)}</p>"
+        + (f"<p class='detail'>{_esc(detail)}</p>" if detail else "")
+        + (f"<dl class='plate'>{facts}</dl>" if facts else "")
+        + "</section>"
+    )
+
+
 def _normalize_finding(raw: Any) -> dict[str, Any] | None:
     """accept whatever shape a processor emits and pull out the common fields."""
     if not isinstance(raw, dict):
@@ -641,6 +676,9 @@ def collect(
             "started_at": str(getattr(run, "started_at", "") or ""),
             "heartbeat_at": str(getattr(run, "heartbeat_at", "") or ""),
             "stages": list(getattr(run, "stages", []) or []),
+            # a stage that saw every sample may have reached a finding about the
+            # corpus rather than about any one of them
+            "conclusion": dict(getattr(run, "conclusion", {}) or {}),
         }
         if run
         else {},
@@ -748,6 +786,13 @@ h1 .qty{color:var(--faint);font-weight:400;letter-spacing:-.02em}
 /* readout: the two outcomes worth acting on at full size, then the shape of
    the whole corpus, then the ones that only need acknowledging. */
 .readout{margin:var(--s5) 0 0;padding-top:var(--s5);border-top:1px solid var(--rule)}
+/* a conclusion about the corpus answers a different question from the counts
+   below it, so it is set apart rather than folded into them */
+.conclusion{margin:var(--s5) 0 0;padding:var(--s4) var(--s5);border-left:2px solid var(--review);
+  background:var(--review-wash)}
+.conclusion .head{margin:var(--s2) 0 0;font-size:1.15em;font-weight:600;color:var(--ink)}
+.conclusion .detail{margin:var(--s2) 0 0;color:var(--body)}
+.conclusion .plate{margin:var(--s4) 0 0}
 .ticks{display:flex;flex-wrap:wrap;gap:var(--s4) var(--s7)}
 .tick{cursor:help}
 .tick b{display:block;color:var(--ink);letter-spacing:-.04em;
@@ -1830,6 +1875,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     <span class="id">{_esc(run.get("run_id", "") or "")}</span></div>
   <h1>{_esc(title)} <span class="qty">{_count(t["samples"])}</span></h1>
   <dl class="plate">{plate}</dl>
+  {_conclusion_panel(run)}
   {readout}
   {note}{trunc}
   <div class="files">

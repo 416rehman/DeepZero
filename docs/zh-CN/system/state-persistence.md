@@ -69,7 +69,7 @@ order: 1
 work/<pipeline_name>/<corpus_key>/
 ├── run.json             # 序列化的 `RunState`: 执行指标和流水线元数据
 ├── pipeline.yaml        # 初始化期间流水线 YAML 配置的不可变快照
-├── run_manifest.json    # 所有样本的宏观综合总览 (由 Starlette API 使用)
+├── run_manifest.json    # 所有样本的宏观综合总览，由 `status` 和 `interactive` 读取
 ├── report/              # 可浏览的 HTML 报告，随结果产生而重建
 └── samples/
     └── <sample_id>/     # 隔离的沙盒

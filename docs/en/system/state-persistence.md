@@ -69,7 +69,7 @@ All state objects are tagged with an internal `STATE_VERSION`. If the engine enc
 work/<pipeline_name>/<corpus_key>/
 ├── run.json             # Serialized `RunState`: Execution metrics and pipeline metadata
 ├── pipeline.yaml        # Immutable snapshot of the pipeline YAML config during initialization
-├── run_manifest.json    # Aggregated macro-overview of all samples (used by Starlette API)
+├── run_manifest.json    # Aggregated macro-overview of all samples, read by `status` and `interactive`
 ├── report/              # Browsable HTML report, rebuilt as results land
 └── samples/
     └── <sample_id>/     # Isolated sandbox

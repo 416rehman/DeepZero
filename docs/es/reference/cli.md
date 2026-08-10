@@ -69,6 +69,7 @@ deepzero run <TARGET> -p <pipeline> [opciones]
 | `-w, --work-dir` | el ajuste `work_dir` de la canalización | Sustituye la raíz bajo la que se construye el directorio de la ejecución. |
 | `--clean` | desactivado | Borra permanentemente los datos de ejecuciones anteriores y empieza de cero. |
 | `--preflight` | desactivado | Verifica que el backend LLM está autenticado antes de ejecutar. Hace una llamada mínima. |
+| `--redo` | ninguna | Vuelve a ejecutar la etapa que se nombre y todas las posteriores, conservando el trabajo anterior y borrando la salida que esas etapas habían registrado. Se puede repetir. |
 | `--retry-timeouts` | desactivado | Vuelve a intentar las muestras que agotaron el tiempo, conservando todos los demás resultados. |
 | `--timeout-multiplier` | `2.0` | Cuánto más tiempo conceder al reintentar una etapa que agotó el suyo. |
 | `-v, --verbose` | desactivado | Registro detallado, incluidas las trazas del propio código de DeepZero. |
@@ -107,6 +108,8 @@ Solo se ejecuta cuando la canalización configura un modelo. Una canalización s
 
 Una etapa que alcanza su `timeout` registra la muestra como que agotó el tiempo, no como fallida. Eso es una afirmación sobre el presupuesto, no sobre la muestra: las que lo agotan son las más grandes, que en la mayoría de los corpus son justamente las que merece la pena mirar, y archivarlas junto a los errores reales sesga la ejecución en contra de ellas sin decirlo.
 
+El presupuesto acota cuánto espera la etapa, no cuánto dura el trabajo. El hilo del procesador se abandona en lugar de matarse, así que un proceso externo que hubiera lanzado sigue corriendo después de que la etapa haya seguido adelante. Consulte [`timeout`]({{ '/es/reference/pipeline-yaml.html' | relative_url }}).
+
 Una ejecución reanudada no las reintenta por su cuenta, porque el presupuesto que se quedó corto lo sigue estando. Pídalo:
 
 ```bash
@@ -114,6 +117,20 @@ deepzero run <target> -p <pipeline> --retry-timeouts
 ```
 
 Esto olvida únicamente las etapas que agotaron el tiempo y les concede `--timeout-multiplier` (2x de forma predeterminada) más margen. Todos los demás resultados que produjo la ejecución se conservan, así que un reintento cuesta el tiempo que necesitan esas etapas y nada más. Las etapas que no declaran ningún tiempo límite quedan intactas. El informe las agrupa aparte y muestra el presupuesto que superó cada una.
+
+#### Volver a ejecutar una sola etapa
+
+Editar un prompt, un conjunto de reglas o la configuración de un escáner invalida los resultados de esa etapa y nada de lo anterior. Volver a descompilar un corpus entero para rehacerle una pregunta costaría horas sin motivo, así que nombre la etapa:
+
+```bash
+deepzero run <target> -p <pipeline> --redo assess
+```
+
+Cada muestra olvida esa etapa y todas las posteriores, y conserva todo lo anterior. Las etapas posteriores se van también porque consumieron una salida que está a punto de cambiar: una evaluación escrita a partir de hallazgos que ya no existen dejaría a una muestra describiendo dos ejecuciones distintas. Una muestra que una etapa obsoleta había filtrado vuelve a la ejecución, de modo que un conjunto de reglas más estrecho es libre de llegar a un veredicto distinto sobre ella.
+
+La salida que esas etapas registraron se va con el estado. Varios procesadores tratan su propio archivo en disco como una caché y lo adoptan en lugar de rehacer el trabajo, así que olvidar solo el estado haría que la etapa readoptara el archivo viejo y lo registrara como recién hecho, que es peor que no volver a ejecutar nada. Por eso `--redo` borra cada artefacto que las etapas descartadas habían registrado, e indica cuántos archivos ha retirado. Un artefacto registrado fuera del propio directorio de la muestra se deja en paz, porque no le corresponde borrarlo a esta ejecución.
+
+`--redo` se puede repetir y arranca desde la primera de las etapas nombradas. Un nombre de etapa que no existe se rechaza, enumerando los nombres reales de las etapas de la canalización, en lugar de tratarse como si no hubiera nada que hacer. Si ninguna muestra había llegado a ninguna de las etapas nombradas, lo dice y no cambia nada.
 
 ### `report`
 
@@ -125,7 +142,7 @@ deepzero report -w work/loldrivers/drivers-1a2b3c4d
 | Opción | Predeterminado | Descripción |
 |------|---------|-------------|
 | `-p, --pipeline` | ninguno | Nombre o ruta de la canalización. Se resuelve al corpus más reciente de esa canalización. |
-| `-w, --work-dir` | ninguno | Un directorio de ejecución que leer directamente. Tiene prioridad sobre `--pipeline`. |
+| `-w, --work-dir` | ninguno | Un directorio de ejecución, o la raíz de una canalización, en cuyo caso se lee el corpus más reciente y se dice cuál es. Tiene prioridad sobre `--pipeline`. |
 | `-o, --out` | `<work_dir>/report` | Dónde escribir el informe. |
 | `--open` | desactivado | Abre el informe en el navegador al terminar. |
 | `-v, --verbose` | desactivado | Registro detallado. |
@@ -142,13 +159,13 @@ Escribe:
 | `items/<id>.html` | Una página por cada muestra que merezca lectura, con enlaces a sus artefactos |
 | `inventory.csv` | Cada muestra, una fila, para una hoja de cálculo |
 | `findings.jsonl` | Cada hallazgo, un objeto JSON por línea |
-| `report.json` | Solo los totales del resumen, para consumo automático |
+| `report.json` | Los totales del resumen para consumo automático, más el vocabulario con el que se nombran |
 
 Una muestra recibe página propia cuando hay algo que leer en ella: hallazgos, una evaluación, un error o una etapa que agotó el tiempo. Las demás siguen estando en el CSV, y el índice indica cuándo se ha recortado un listado y dónde está el resto.
 
 Resolver por nombre de canalización elige el corpus más reciente, y lo advierte cuando la canalización ha visto más de uno, nombrando los otros. La ejecución más nueva no siempre es aquella por la que se pregunta, y responder en silencio sobre un corpus distinto es el fallo que conviene evitar. Pase `--work-dir` para nombrar uno con exactitud.
 
-Cómo llama la canalización a sus muestras, a sus desenlaces y a aquello contra lo que se apuntó viene de su bloque `report:`, así que `--work-dir` por sí solo renderiza con los valores predeterminados: el bloque se lee de la definición de la canalización, no del directorio de la ejecución. Consulte [el bloque report]({{ '/es/reference/pipeline-yaml.html' | relative_url }}).
+Cómo llama la canalización a sus muestras, a sus desenlaces y a aquello contra lo que se apuntó viene del bloque `report:`, que vive en la definición de la canalización y no en el directorio de la ejecución. `--work-dir` lo obtiene igualmente: la ejecución registra qué canalización la escribió, así que el bloque se recupera por ese nombre. Ahora bien, una ejecución puede sobrevivir a la canalización que la produjo, y cuando esa canalización ya no carga, el informe recae en el vocabulario predeterminado en lugar de negarse a generarse. Consulte [el bloque report]({{ '/es/reference/pipeline-yaml.html' | relative_url }}).
 
 ### `status`
 
@@ -159,10 +176,10 @@ deepzero status -p loldrivers
 | Opción | Predeterminado | Descripción |
 |------|---------|-------------|
 | `-p, --pipeline` | ninguno | Nombre o ruta de la canalización. Se resuelve al corpus más reciente de esa canalización. |
-| `-w, --work-dir` | ninguno | Un directorio de ejecución que leer directamente. Tiene prioridad sobre `--pipeline`. |
+| `-w, --work-dir` | ninguno | Un directorio de ejecución, o la raíz de una canalización, en cuyo caso se lee el corpus más reciente y se dice cuál es. Tiene prioridad sobre `--pipeline`. |
 | `-v, --verbose` | desactivado | Registro detallado. |
 
-Es obligatorio indicar uno de los dos. Imprime el identificador de la ejecución, el destino, el modelo, las marcas de tiempo, una tabla por etapa con los recuentos de completadas, filtradas y fallidas, y los totales de veredictos de las muestras.
+Es obligatorio indicar uno de los dos. Imprime el identificador de la ejecución, el destino, el modelo, las marcas de tiempo, una tabla por etapa con los recuentos de completadas, filtradas, fallidas y fuera de tiempo, y los totales de veredictos de las muestras. Lo que agotó el tiempo tiene columna propia, para que una etapa en la que todo agotó el tiempo no se lea como una etapa a la que no llegó nada, que es justo lo contrario de lo que pasó.
 
 ### `validate`
 
@@ -171,6 +188,8 @@ deepzero validate <PIPELINE_REF>
 ```
 
 Carga la canalización, resuelve cada procesador, ejecuta el `validate()` propio de cada uno y contrasta cada prompt con los valores que producen realmente las etapas anteriores. No admite opciones. Ejecútelo antes de una ejecución larga: es el sitio más barato para encontrar un binario ausente, un conjunto de reglas ilegible o un prompt que nombra algo que ninguna etapa registra.
+
+Sale con código 1 cuando informa de un error y con 0 en caso contrario, así que puede usarse como control previo a un commit. Las advertencias, como una canalización que no configura ningún modelo, se imprimen pero no hacen fallar el comando: describen una canalización que va a arrancar, no una que no puede.
 
 ### `list-processors`
 
@@ -192,11 +211,13 @@ deepzero interactive -w work/loldrivers/drivers-1a2b3c4d
 
 | Opción | Predeterminado | Descripción |
 |------|---------|-------------|
-| `-m, --model` | `openai/gpt-4o` | Modelo para la conversación. Cualquier cadena de modelo que acepten los backends. |
+| `-m, --model` | `claude-code/claude-opus-5` | Modelo para la conversación. Cualquier cadena de modelo que acepten los backends. |
 | `-w, --work-dir` | `work` | Directorio de ejecución del que cargar el contexto. |
 | `-v, --verbose` | desactivado | Registro detallado. |
 
-Una REPL que carga el estado de una ejecución en el prompt de sistema para poder hacerle preguntas. `/status`, `/clear`, `/help` y `/quit` se atienden localmente; todo lo demás va al modelo. Tenga en cuenta que el directorio de trabajo predeterminado es literalmente `work`, no un directorio de ejecución resuelto, así que apunte `-w` a la ejecución que quiera.
+Una REPL que carga el estado de una ejecución en el prompt de sistema para poder hacerle preguntas. `/status`, `/findings [filtro]`, `/clear`, `/help` y `/quit` se atienden localmente; todo lo demás va al modelo, y un `/palabra` que no se reconozca se señala en lugar de facturarse como un turno de conversación. `/findings` enumera todos los hallazgos que registró la ejecución, restringidos a las líneas que coinciden con su argumento, en el vocabulario que declaró la canalización que escribió la ejecución.
+
+`-w` acepta un directorio de ejecución o la raíz de una canalización, y nombra el corpus que eligió cuando hay más de uno. El valor predeterminado es literalmente `work`, que es la raíz por encima de los directorios de canalización y no se resuelve a ninguna ejecución; la REPL lo dice y responde sin contexto de ejecución en lugar de fingir que ha cargado uno, así que apunte `-w` a la ejecución que quiera.
 
 ### `serve` y la API REST
 
@@ -204,21 +225,23 @@ Una REPL que carga el estado de una ejecución en el prompt de sistema para pode
 |------|---------|-------------|
 | `--host` | `127.0.0.1` | Host de escucha. Cualquier valor distinto del bucle local imprime una advertencia, porque el servidor queda entonces accesible desde la red. |
 | `--port` | `8420` | Puerto de escucha. |
-| `-w, --work-dir` | `work` | Directorio de trabajo que servir. |
+| `-w, --work-dir` | `work` | Directorio de trabajo que servir. Un directorio de ejecución, o la raíz de una canalización, en cuyo caso se sirve el corpus más reciente y se dice cuál es. |
 
-Requiere el extra: `pip install deepzero[serve]`.
+Requiere el extra: `pip install deepzero[serve]`, que trae Starlette y uvicorn.
 
 > [!WARNING]
 > **Función experimental / en desarrollo**
 > El servidor de API REST está incompleto, es muy inestable y **no debería usarse**. Se proporciona estrictamente para desarrollo local experimental.
 
-Inicia una API REST de FastAPI/Starlette de solo lectura para consultar el estado de la ejecución y los datos de las muestras.
+Inicia una API REST de Starlette de solo lectura para consultar el estado de la ejecución y los datos de las muestras. Sirve exactamente una ejecución, y por eso el directorio de trabajo se resuelve a un único corpus antes de imprimir la URL, y no después de que una petición vuelva vacía.
 
 | Endpoint | Método | Descripción |
 |----------|--------|-------------|
-| `/api/health` | GET | Comprobación de estado |
-| `/api/runs` | GET | Enumera las ejecuciones de canalización disponibles en el directorio de trabajo |
-| `/api/run` | GET | Obtiene el estado global y las métricas de la ejecución actual |
-| `/api/samples` | GET | Enumera las muestras (filtrables por `?verdict=`, `?stage=`, `?status=`) |
+| `/api/health` | GET | Comprobación de estado, y el directorio de trabajo que se está sirviendo |
+| `/api/runs` | GET | La ejecución servida como lista de un elemento, o una lista vacía |
+| `/api/run` | GET | Estado completo de esa ejecución, o 404 |
+| `/api/samples` | GET | Enumera las muestras (filtrables por `?verdict=`, `?classification=`, `?stage=`, `?status=`) |
 | `/api/samples/{sample_id}` | GET | Estado completo de la muestra con los datos históricos de la canalización |
 | `/api/samples/{sample_id}/artifacts/{name}` | GET | Lee un artefacto de archivo concreto generado por un procesador |
+
+`verdict` es por dónde salió una muestra de la canalización y `classification` es lo que una etapa concluyó sobre ella. Los dos viajan en la respuesta, así que cada uno filtra el campo del que toma el nombre. `stage` coincide con la etapa actual de la muestra; `status` conserva una muestra cuando cualquier etapa de su historial lleva ese estado. Un identificador de muestra que contenga un separador de rutas se rechaza, porque el identificador se convierte en una ruta del sistema de archivos y este servidor puede quedar escuchando en todas las interfaces.

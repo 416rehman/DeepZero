@@ -27,7 +27,7 @@ Un pipeline de référence BYOVD (Bring Your Own Vulnerable Driver) est maintenu
 | `kernel_filter` | `metadata_filter` | Restreint aux pilotes en mode noyau exposant des surfaces IOCTL, et déduplique sur le hachage |
 | `loldrivers_filter` | `loldrivers_filter/loldrivers_filter.py` | Exclut les entités connues répertoriées via loldrivers.io |
 | `decompile` | `ghidra_decompile/ghidra_decompile.py` | Exécute la décompilation Ghidra sans interface graphique (headless) |
-| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | Analyse statique en masse sur le code source C exporté |
+| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | Analyse statique en masse sur le code source C exporté. Un pilote dont rien n'est signalé s'arrête ici (`min_findings: 1`) |
 | `rank_by_findings` | `top_k` | Ordonne chaque pilote survivant par nombre de détections, du pire au meilleur |
 | `assess` | `generic_llm` | Effectue le rendu de `assessment.j2` pour chaque pilote et enregistre le verdict |
 
@@ -122,11 +122,16 @@ report:
   entity: repository
   entity_plural: repositories
   target_label: organisation
+  classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
+  lexicon:
+    negative: Not exploitable
 ```
 
-`vulnerable_when` est restreint pour une raison qu'il vaut la peine de connaître. L'évaluation répond `[VULNERABLE]` ou `[NOT EXPLOITABLE]`, et la liste des positifs par défaut inclut `exploitab`, que contient le verdict négatif. Consultez [Comment un verdict est mis en correspondance]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}).
+`vulnerable_when` est restreint pour une raison qu'il vaut la peine de connaître. L'évaluation répond `[VULNERABLE]` ou `[NOT EXPLOITABLE]`, et la liste des positifs par défaut inclut `exploitab`, que contient le verdict négatif. Consultez [Comment un verdict est mis en correspondance]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}). `vulnerable_when` et `safe_when` sont les anciennes graphies de `positive_when` et `negative_when` et signifient toujours la même chose.
+
+L'unique redéfinition du lexique est là parce qu'un dépôt n'atteint l'évaluation que si l'analyse a signalé quelque chose. Rien dans la catégorie négative n'est du code intouché : c'est un dépôt dont les détections ont été lues et dont aucune n'a abouti. « Clear », le mot par défaut pour cette catégorie, dit le contraire.
 
 Ses `columns` placent le nombre de détections, les fichiers analysés, le nombre de fichiers source, le langage principal et la révision en regard de chaque dépôt. Les fichiers analysés méritent leur place : un dépôt sans détection et un dépôt dont semgrep n'a jamais ouvert les fichiers affichent tous deux zéro détection, et un seul des deux constitue un résultat.
 
@@ -140,3 +145,5 @@ Vérifiez tout cela, pour l'un ou l'autre pipeline, avant de vous engager dans u
 ```bash
 deepzero validate pipelines/source_audit/pipeline.yaml
 ```
+
+Elle sort avec le code 1 si elle signale une erreur : elle peut donc conditionner un commit, et pas seulement être lue.

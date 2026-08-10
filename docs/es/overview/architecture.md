@@ -97,7 +97,7 @@ El motor de orquestación de DeepZero opera en un estricto gráfico de procesami
 El modelo de datos pasa por estas abstracciones a medida que una muestra avanza:
 
 1. **`Sample`**: La estructura base emitida por un `IngestProcessor`. Vincula una ruta física (`source_path`) a un `sample_id` único (normalmente un hash SHA-256 o un UUID determinista) e inicializa el diccionario `data` de la muestra.
-2. **`SampleState`**: El registro persistente que mantiene el `StateStore`. Rastrea el veredicto (`verdict`) de la muestra (`PENDING`, `ACTIVE`, `FILTERED`, `FAILED`, `COMPLETED`) y mantiene un `history` que asocia cada procesador con su `StageOutput`.
+2. **`SampleState`**: El registro persistente que mantiene el `StateStore`. Rastrea el veredicto (`verdict`) de la muestra (`PENDING`, `ACTIVE`, `FILTERED`, `FAILED`, `TIMED_OUT`, `COMPLETED`) y mantiene un `history` que asocia cada procesador con su `StageOutput`. `TIMED_OUT` se mantiene aparte de `FAILED` porque no dice nada sobre la muestra, y es el único desenlace que un presupuesto mayor puede cambiar.
 3. **`ProcessorEntry`**: La fachada generada dinámicamente, eficiente en memoria, que se pasa a los procesadores Map/BulkMap/Reduce. Incorpora un mecanismo de carga diferida (`_store`) que solo recupera del disco los datos históricos de ejecución cuando se accede a `.history` o a `.upstream_data()`.
 
 ### Paradigmas de Procesamiento
@@ -111,8 +111,9 @@ Los procesadores determinan la topología de ejecución y el modelo de concurren
 
 #### `MapProcessor` (1 → 1)
 - **Firma:** `process(ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult`
-- **Concurrencia:** Reparto entre hilos. Se configura con el campo `parallel:` del YAML de la canalización.
+- **Concurrencia:** Reparto entre hilos. Se configura con el campo `parallel:` del YAML de la canalización. `parallel: 0` se ajusta automáticamente, acotado por `max_workers` y por lo que el procesador devuelva en `max_parallelism()`.
 - **Restricciones:** Debe ser estrictamente seguro para hilos. Evite el estado mutable compartido.
+- **Presupuesto:** `timeout:` acota cuánto espera la etapa por una muestra, no cuánto dura el trabajo. El hilo de trabajo se abandona, nunca se mata, así que un procesador que lance un proceso externo debería acotar ese proceso por su cuenta.
 
 #### `BulkMapProcessor` (N → N)
 - **Firma:** `process(ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[ProcessorResult]`

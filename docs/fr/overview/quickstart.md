@@ -37,6 +37,8 @@ Ces exécutions sont longues. Les deux commandes suivantes coûtent peu, et tout
 deepzero validate pipelines/loldrivers/pipeline.yaml
 ```
 
+Elle sort avec le code 1 lorsqu'elle signale une erreur : elle fonctionne donc comme un hook de commit ou une étape d'intégration continue, et pas seulement comme quelque chose à lire.
+
 ```bash
 # un unique appel minimal, pour confirmer que le backend LLM est bien connecté
 deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight

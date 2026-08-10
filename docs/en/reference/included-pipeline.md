@@ -32,7 +32,7 @@ A reference BYOVD (Bring Your Own Vulnerable Driver) pipeline is maintained in
 | `kernel_filter` | `metadata_filter` | Constrains to kernel-mode drivers exposing IOCTL surfaces, and deduplicates on hash |
 | `loldrivers_filter` | `loldrivers_filter/loldrivers_filter.py` | Excludes known entities cataloged via loldrivers.io |
 | `decompile` | `ghidra_decompile/ghidra_decompile.py` | Executes Ghidra headless decompilation |
-| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | Bulk static analysis against the exported C source |
+| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | Bulk static analysis against the exported C source. A driver with nothing flagged stops here (`min_findings: 1`) |
 | `rank_by_findings` | `top_k` | Orders every surviving driver by finding count, worst first |
 | `assess` | `generic_llm` | Renders `assessment.j2` per driver and records the verdict |
 
@@ -175,14 +175,24 @@ report:
   entity: repository
   entity_plural: repositories
   target_label: organisation
+  classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
+  lexicon:
+    negative: Not exploitable
 ```
 
 `vulnerable_when` is narrowed for a reason worth knowing about. The assessment answers
 `[VULNERABLE]` or `[NOT EXPLOITABLE]`, and the default positive list includes
 `exploitab`, which the negative verdict contains. See
 [How a Verdict is Matched]({{ '/en/reference/pipeline-yaml.html' | relative_url }}).
+`vulnerable_when` and `safe_when` are the older spellings of `positive_when` and
+`negative_when` and still mean the same thing.
+
+The one lexicon override is there because a repository only reaches the assessment when
+the scan flagged something. Nothing in the negative bucket is untouched code: it is a
+repository whose findings were read and none of them reached. "Clear", the default word
+for that bucket, says the opposite.
 
 Its `columns` put finding count, files scanned, source file count, primary language and
 revision against each repository. Files scanned earns its place: a repository with no
@@ -199,3 +209,5 @@ Check all of it, for either pipeline, before committing to a long run:
 ```bash
 deepzero validate pipelines/source_audit/pipeline.yaml
 ```
+
+It exits 1 if it reports an error, so it can gate a commit rather than only being read.

@@ -40,7 +40,7 @@ stages:
   - name: decompile
     processor: ghidra_decompile/ghidra_decompile.py
     parallel: 4           # Limita la concurrencia a 4 JVM de Ghidra simultáneas
-    timeout: 300          # Impone un corte estricto de 300 segundos por muestra, vía process.py
+    timeout: 300          # Presupuesto por muestra: la etapa deja de esperar a los 300 segundos
     on_failure: skip      # Trata las excepciones en silencio en lugar de abortar (skip, retry, abort)
     max_retries: 2        # Número de reintentos permitidos
     config:
@@ -56,10 +56,59 @@ Cada etapa definida bajo la lista `stages:` acepta los siguientes atributos:
 | `name` | string | `stage_N` | Nombre único para la etapa dentro de la canalización |
 | `processor` | string | requerido | El registro de referencia al procesador (ver más abajo) |
 | `config` | dict | `{}` | Configuración inyectada al procesador |
-| `parallel` | int | `4` | Concurrencia máxima para procesadores Map. `0` se ajusta automáticamente a `os.cpu_count()` |
-| `timeout` | int | `0` | Tiempo límite por muestra, en segundos (0 = sin límite) |
+| `parallel` | int | `4` | Concurrencia para procesadores Map. `0` se ajusta automáticamente, dentro de los topes de más abajo |
+| `timeout` | int | `0` | Presupuesto por muestra, en segundos, para etapas Map (0 = sin presupuesto) |
 | `on_failure` | string | `skip` | Define el comportamiento ante fallos: `skip`, `retry` o `abort` |
 | `max_retries` | int | `0` | Número de reintentos cuando `on_failure: retry` |
+| `limit` | int | `0` | Va dentro de `config` y lo lee el motor: recorta el corpus superviviente después de esta etapa (0 = conservarlo todo) |
+
+#### `parallel`
+
+`parallel: 0` significa automático, no ilimitado. El ejecutor parte de `os.cpu_count()` y lo
+baja dos veces: hasta el techo que el procesador declara en `max_parallelism()` y hasta el
+ajuste `max_workers` de la canalización, el que sea menor de los dos. Un procesador que lanza
+una JVM o una herramienta externa por muestra declara ese techo precisamente para que un
+`parallel: 0` predeterminado no pueda agotar la máquina, y la ejecución deja constancia de qué
+tope aplicó. Un `parallel: N` explícito se respeta tal como está escrito y no lo acota ninguno
+de los dos.
+
+#### `timeout`
+
+`timeout` es el presupuesto que recibe una muestra en una etapa Map. Cuando se agota, la etapa
+deja de esperar, registra esa muestra como que agotó el tiempo y pasa a la siguiente.
+
+Lo que no hace es matar nada. Nada en Python puede detener un hilo que ya está en marcha, así
+que el hilo de trabajo del procesador se abandona en lugar de terminarse: un proceso externo
+que hubiera lanzado sigue corriendo hasta que acaba por su cuenta, y la memoria que retenga
+ese hilo sigue retenida hasta que regrese. El presupuesto acota cuánto espera la *etapa*, no
+cuánto dura el trabajo. Un procesador que invoque una herramienta externa debería pasarle
+también un límite a esa herramienta, que es lo que hace `semgrep_scanner` con su propia clave
+de configuración `timeout`.
+
+Solo cubre las etapas Map. Las etapas reduce y bulk_map son una única invocación para todo el
+corpus en lugar de una por muestra, y ninguna de las dos se ejecuta bajo este presupuesto.
+
+Agotar el tiempo no es un fallo, así que `on_failure: retry` no lo reintenta, y una ejecución
+reanudada lo deja estar porque el presupuesto que se quedó corto lo sigue estando. Pedir otro
+intento es para lo que sirve [`--retry-timeouts`]({{ '/es/reference/cli.html' | relative_url }}).
+
+#### `limit`
+
+`limit` va dentro del bloque `config` de una etapa, pero quien lo lee es el motor y no el
+procesador, así que puede ponerse en cualquier etapa con independencia de lo que ese
+procesador acepte, y un procesador que declare un `Config` tipado no avisará de que la clave
+le resulta desconocida.
+
+Una vez terminada la etapa, toda muestra que siga activa más allá de las primeras `limit`
+queda marcada como filtrada en esa etapa y no participa en el resto de la ejecución. El
+recuento es sobre el corpus superviviente entero, no sobre las muestras que tocó esa única
+etapa.
+
+El orden es aquel en el que la ejecución lleva el corpus en ese momento, y eso es lo que hace
+que `limit` merezca la pena en una etapa reduce, o en la siguiente. Una etapa reduce devuelve
+a sus supervivientes ordenados, el ejecutor adopta esa ordenación antes de que ocurra el
+recorte, y `limit` conserva entonces los mejor situados en lugar de un trozo arbitrario. En
+una etapa sin ninguna ordenación detrás, conserva las muestras que casualmente vayan primero.
 
 ### Campos de Nivel Superior
 
@@ -125,7 +174,7 @@ Todo prompt puede usar estos valores:
 Más allá de esos, un prompt puede usar lo que registraron las etapas **anteriores a él**. Cada procesador declara esos nombres en su atributo `provides`, y son de dos clases:
 
 - **Claves de datos**: cualquier cosa que el procesador ponga en `data`, como `device_name` o `finding_count`. Disponible directamente bajo ese nombre, y también dentro de `history`.
-- **Artefactos**: un archivo que el procesador escribió, alcanzable por su ruta con los separadores y la extensión incorporados al nombre. `decompiled/dispatch_ioctl.c` pasa a ser `decompiled_dispatch_ioctl_c`. El JSON se analiza como objeto; `.c`, `.h`, `.txt`, `.md`, `.py`, `.yaml` y `.yml` llegan como texto. Los demás tipos de archivo no se exponen. Todo lo que exceda el presupuesto de contexto se trunca, y un JSON demasiado grande se omite con una advertencia en lugar de analizarse.
+- **Artefactos**: un archivo que el procesador escribió, alcanzable por su ruta con los separadores y la extensión incorporados al nombre. `decompiled/dispatch_ioctl.c` pasa a ser `decompiled_dispatch_ioctl_c`. El JSON se analiza como objeto, y una larga lista de sufijos de código, marcado y texto plano llega como texto; una etapa que necesite otro conjunto lo declara en `text_extensions`, dentro de su propio `config`, que sustituye esa lista en lugar de ampliarla. Nada más se expone. El texto que excede el presupuesto de contexto, `max_context_tokens` por cuatro caracteres, se trunca y lo indica, y un archivo JSON mayor que ese presupuesto se omite con una advertencia en lugar de analizarse.
 
 Un valor solo está disponible para las etapas *posteriores* a la que lo registra, así que un prompt no puede alcanzar la salida de su propia etapa.
 
@@ -135,7 +184,7 @@ Para ver qué ofrece una canalización concreta, ejecute:
 deepzero validate <pipeline>
 ```
 
-Un prompt que nombre algo que ninguna etapa anterior produce se informa como error, enumerando lo que sí estaba disponible, y esa misma comprobación hace fallar la ejecución si se llega a ella. Esto importa porque, de lo contrario, un nombre desconocido se renderizaría como nada: se le pediría al modelo que juzgara un contenido vacío, y el veredicto volvería seguro de sí mismo y sin significado.
+Un prompt que nombre algo que ninguna etapa anterior produce se informa como error, enumerando lo que sí estaba disponible. El renderizado en tiempo de ejecución es igual de estricto en esto, así que una etapa que llegue ahí de todos modos falla en esa muestra en lugar de dejar pasar el prompt. Esto importa porque, de lo contrario, un nombre desconocido se renderizaría como nada: se le pediría al modelo que juzgara un contenido vacío, y el veredicto volvería seguro de sí mismo y sin significado.
 
 ### El Bloque report
 
@@ -236,16 +285,19 @@ Nada más cambia. El informe sigue ordenando, filtrando, agrupando y exportando 
 
 Una canalización registra lo que concluyó. Que una persona haya comprobado de verdad esa conclusión es una afirmación aparte, y solo puede hacerla quien lee, así que el informe lleva las marcas que va añadiendo durante la lectura.
 
-En la página de cualquier resultado hay tres. Los rótulos de la interfaz del informe están en inglés:
+En la página de cualquier resultado hay dos, porque una revisión o bien llegó a una respuesta o bien no. Los rótulos de la interfaz del informe están en inglés:
 
 | Marca | Significa |
 |------|-----------|
-| **confirmed** | comprobado, y se sostiene |
-| **did not hold up** | comprobado, y no se sostiene: un resultado terminado, con una respuesta definitiva |
-| **something outstanding** | mirado, pero algo sigue sin demostrarse |
+| **Confirmed** | comprobado, y se sostiene |
+| **Refuted** | comprobado, y no se sostuvo |
 
-Las dos últimas abren una nota para anotar qué ejecutó, sobre qué, y qué ocurrió, de modo que otra persona pueda repetir el intento. Qué cuenta como pendiente queda a criterio de quien lee, ya sea reproducir un fallo, demostrar una precondición o leer un diff, porque desde el lado del informe todas tienen la misma forma de trabajo sin terminar.
+Cualquiera de las dos abre una nota para anotar qué ejecutó, sobre qué, y qué ocurrió, de modo que otra persona pueda repetir el intento. La nota pertenece a la marca: un resultado sin marca no tiene dónde ponerla, así que una revisión que no resolvió nada se registra dejando el resultado en paz y no anotando hasta dónde llegó.
 
-Las marcas aparecen junto a cada fila del índice y se puede filtrar por ellas, incluida **Unreviewed**, que es la lista de resultados que nadie ha mirado todavía. El resumen cuenta cada una, de modo que una ejecución puede leerse como lo que realmente se sabe y no solo como lo que se afirmó: un resultado que no se sostuvo nunca se confunde con uno que nadie ha examinado.
+Todo lo que no lleva ninguna de las dos cuenta como **Unreviewed**, tanto si nadie lo abrió como si alguien lo abrió y no pudo resolverlo. Antes eran dos controles distintos, y uno junto al otro se leían como lo mismo.
+
+Refuted no se funde deliberadamente con Unreviewed. Es trabajo terminado, con una respuesta definitiva, y un resultado que no se sostuvo nunca debería parecerse a uno que nadie ha examinado.
+
+Las marcas aparecen junto a cada fila del índice y se puede filtrar por ellas, incluida Unreviewed, que da la lista de resultados sobre los que nadie se ha pronunciado todavía. El resumen cuenta los tres estados, de modo que una ejecución puede leerse como lo que realmente se sabe y no solo como lo que se afirmó.
 
 El informe es un archivo, así que las marcas viven en el navegador. **export marks** las escribe en `marks.json`; guarde ese archivo junto a `index.html` y pasan a formar parte del informe: se renderizan para cualquiera que lo abra y se incluyen en `inventory.csv` como `review` y `review_note`. Las marcas se indexan por canalización y destino, no por ruta de archivo, así que volver a ejecutar sobre el mismo corpus las conserva.

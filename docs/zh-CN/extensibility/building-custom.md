@@ -27,6 +27,10 @@ order: 2
 3. **`process(...)`**: 核心操作。其函数签名随处理器类型 (ProcessorType) 而变化。
 4. **`teardown() -> None`**: 在流水线完成或发生致命中断时执行。
 
+对于单个样本开销很大的 Map 处理器，还有一个钩子值得覆写：
+
+5. **`max_parallelism() -> int | None`**: 自动并发的上限。它只在阶段声明了 `parallel: 0` 时生效；显式写出的 `parallel: N` 始终按原样采纳。当每个样本都要付出一个 JVM、一个容器或几个 GB 内存的代价时，请返回一个整数，好让保持默认设置的流水线不至于把机器榨干。默认值 `None` 表示没有上限。
+
 ### 定义处理器配置
 
 利用名为 `Config` 的内嵌 `@dataclass` 来严格定义并验证被接受的 YAML 配置。引擎会解析 [流水线 YAML]({{ '/zh-CN/reference/pipeline-yaml.html' | relative_url }}) 字典并实例化你的 `Config` 对象，通过标准 Python [`dataclasses`](https://docs.python.org/3/library/dataclasses.html) 自动对 `${ENV_VARS}` 环境变量进行展开。
@@ -67,6 +71,9 @@ Map/BulkMap 处理器必须返回有着严格格式的 `ProcessorResult`：
 - **`.ok(data={...}, artifacts={...})`**: 标记执行结果为 `COMPLETED`。`data` 字典存放在该处理器历史记录的命名空间下。`artifacts` 会将键映射至相对文件路径。
 - **`.filter(reason="...", data={...})`**: 静默终止样本处理。`SampleState.verdict` 状态更变为 `FILTERED`。
 - **`.fail(error="...")`**: 由于发生了致命的意外错误而终止处理。`SampleState.verdict` 更变为 `FAILED`。
+- **`.timed_out(budget)`**: 这份工作是耗尽了时间，而不是出了差错。`SampleState.verdict` 更变为 `TIMED_OUT`，并且预算会随之一起带走，好让报告能说明应该改给它多少。当处理器自己在执行某个预算时，请返回它；阶段级的 `timeout:` 则会自行产出这个结果。
+
+Map 处理器还可以覆写 **`should_skip(ctx, entry) -> str | None`**，返回一条理由来声明这份工作已经做过了，通常是因为它自己的输出文件已经在磁盘上。被跳过的样本计为通过，并继续走向下游。这样做时请把那份输出记录为产物：`deepzero run --redo` 之所以要删除已记录的产物，正是为了让缓存下来的文件无法被重新采纳，而一个本次运行从未记录过的文件，会比描述它的那份状态活得更久。
 
 ### 声明后续阶段可以使用的内容
 

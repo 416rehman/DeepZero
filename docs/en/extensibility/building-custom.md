@@ -27,6 +27,10 @@ Processors implement specific lifecycle hooks invoked by the engine:
 3. **`process(...)`**: The core operation. Signature varies by ProcessorType.
 4. **`teardown() -> None`**: Executed upon pipeline completion or fatal interruption.
 
+One more is worth overriding on a Map processor that is expensive per sample:
+
+5. **`max_parallelism() -> int | None`**: A ceiling on auto concurrency. It applies only when the stage declares `parallel: 0`; an explicit `parallel: N` is always honoured as written. Return an int when each sample costs a JVM, a container or a few gigabytes of memory, so a pipeline left at the default cannot exhaust the machine. `None`, the default, means no ceiling.
+
 ### Defining Processor Configuration
 
 Use an embedded `@dataclass` named `Config` to strictly define and validate accepted YAML configurations. The engine parses the [Pipeline YAML]({{ '/en/reference/pipeline-yaml.html' | relative_url }}) dictionary and instantiates your `Config` object, fully expanding `${ENV_VARS}` automatically using standard Python [`dataclasses`](https://docs.python.org/3/library/dataclasses.html).
@@ -67,6 +71,14 @@ Map/BulkMap processors must return a strictly formatted `ProcessorResult`:
 - **`.ok(data={...}, artifacts={...})`**: Flags execution as `COMPLETED`. The `data` dict is namespaced to the processor's history block. `artifacts` maps keys to relative file paths.
 - **`.filter(reason="...", data={...})`**: Terminates sample processing silently. `SampleState.verdict` mutates to `FILTERED`.
 - **`.fail(error="...")`**: Terminates processing due to a fatal, unexpected error. `SampleState.verdict` mutates to `FAILED`.
+- **`.timed_out(budget)`**: The work ran out of time rather than going wrong. `SampleState.verdict` mutates to `TIMED_OUT`, and the budget travels with it so the report can say what to give it instead. Return this from a processor enforcing its own budget; the stage-level `timeout:` produces it on its own.
+
+A Map processor can also override **`should_skip(ctx, entry) -> str | None`**, returning
+a reason to declare the work already done, typically because its own output file is
+already on disk. A skipped sample counts as passed and carries on downstream. Record
+that output as an artifact when you do this: `deepzero run --redo` deletes recorded
+artifacts precisely so a cached file cannot be re-adopted, and a file the run never
+recorded outlives the state describing it.
 
 ### Declaring What Later Stages Can Use
 

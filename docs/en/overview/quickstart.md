@@ -39,6 +39,9 @@ hours:
 deepzero validate pipelines/loldrivers/pipeline.yaml
 ```
 
+It exits 1 when it reports an error, so it works as a commit hook or a CI step rather
+than only as something to read.
+
 ```bash
 # one tiny call, to confirm the LLM backend is actually signed in
 deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight

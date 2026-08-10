@@ -27,6 +27,10 @@ Los procesadores implementan enlaces concretos que el motor invoca:
 3. **`process(...)`**: La operación principal. La firma varía según el tipo de procesador.
 4. **`teardown() -> None`**: Se ejecuta al completarse la canalización o ante una interrupción fatal.
 
+Hay uno más que merece la pena redefinir en un procesador Map que resulte caro por muestra:
+
+5. **`max_parallelism() -> int | None`**: Un techo para la concurrencia automática. Solo se aplica cuando la etapa declara `parallel: 0`; un `parallel: N` explícito se respeta siempre tal como está escrito. Devuelva un entero cuando cada muestra cueste una JVM, un contenedor o unos cuantos gigabytes de memoria, de modo que una canalización dejada en el valor predeterminado no pueda agotar la máquina. `None`, el valor predeterminado, significa que no hay techo.
+
 ### Definiciones de Configuración
 
 Utilice una `@dataclass` incrustada llamada `Config` para definir y validar estrictamente las configuraciones YAML aceptadas. El motor analizará el [YAML de la Canalización]({{ '/es/reference/pipeline-yaml.html' | relative_url }}) y creará una instancia de su objeto `Config`, expandiendo por completo las `${ENV_VARS}` de forma automática mediante las [`dataclasses`](https://docs.python.org/3/library/dataclasses.html) estándar de Python.
@@ -67,6 +71,9 @@ Los procesadores Map/BulkMap deben devolver un `ProcessorResult` estrictamente f
 - **`.ok(data={...}, artifacts={...})`**: Marca la ejecución como `COMPLETED`. El diccionario `data` queda en el espacio de nombres del bloque de historial del procesador. `artifacts` asocia claves a rutas de archivo relativas.
 - **`.filter(reason="...", data={...})`**: Interrumpe en silencio el procesamiento de la muestra. `SampleState.verdict` pasa a `FILTERED`.
 - **`.fail(error="...")`**: Interrumpe el procesamiento por un error fatal e inesperado. `SampleState.verdict` pasa a `FAILED`.
+- **`.timed_out(budget)`**: El trabajo agotó el tiempo, en lugar de salir mal. `SampleState.verdict` pasa a `TIMED_OUT`, y el presupuesto viaja con él para que el informe pueda decir cuánto habría que concederle en su lugar. Devuélvalo desde un procesador que imponga su propio presupuesto; el `timeout:` de la etapa lo produce por su cuenta.
+
+Un procesador Map puede además redefinir **`should_skip(ctx, entry) -> str | None`**, devolviendo un motivo para declarar que el trabajo ya está hecho, normalmente porque su propio archivo de salida ya está en disco. Una muestra omitida cuenta como aprobada y sigue hacia las etapas posteriores. Registre esa salida como artefacto cuando haga esto: `deepzero run --redo` borra los artefactos registrados precisamente para que un archivo en caché no pueda readoptarse, y un archivo que la ejecución nunca registró sobrevive al estado que lo describe.
 
 ### Declarar lo que Podrán Usar las Etapas Posteriores
 

@@ -97,7 +97,7 @@ Le moteur d'orchestration de DeepZero fonctionne sur un graphe de traitement str
 Le modèle de données transite à travers ces abstractions à mesure qu'un échantillon progresse :
 
 1. **`Sample`** : La structure de base produite par un `IngestProcessor`. Elle relie un `source_path` physique à un `sample_id` unique (généralement un hachage SHA-256 ou un UUID déterministe) et initialise le dictionnaire `data` de l'échantillon.
-2. **`SampleState`** : L'enregistrement persistant maintenu par le `StateStore`. Il suit le `verdict` de l'échantillon (`PENDING`, `ACTIVE`, `FILTERED`, `FAILED`, `COMPLETED`) et maintient un historique (`history`) qui associe les instances de `StageOutput` à chaque processeur.
+2. **`SampleState`** : L'enregistrement persistant maintenu par le `StateStore`. Il suit le `verdict` de l'échantillon (`PENDING`, `ACTIVE`, `FILTERED`, `FAILED`, `TIMED_OUT`, `COMPLETED`) et maintient un historique (`history`) qui associe les instances de `StageOutput` à chaque processeur. `TIMED_OUT` est tenu à l'écart de `FAILED` parce qu'il ne dit rien de l'échantillon, et parce que c'est la seule issue qu'un budget plus long puisse changer.
 3. **`ProcessorEntry`** : L'interface générée dynamiquement, économe en mémoire, transmise aux processeurs Map/BulkMap/Reduce. Elle injecte un mécanisme de chargement différé (lazy-load via `_store`) qui ne récupère les données d'exécution historiques du disque que lorsque `.history` ou `.upstream_data()` est accédé.
 
 ### Paradigmes de Traitement
@@ -111,8 +111,9 @@ Les processeurs dictent la topologie d'exécution et les modèles de concurrence
 
 #### `MapProcessor` (1 → 1)
 - **Signature de Type :** `process(ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult`
-- **Concurrence :** Déploiement via des threads (Threaded fan-out). Configuré via le champ `parallel:` dans le YAML du pipeline.
+- **Concurrence :** Déploiement via des threads (Threaded fan-out). Configuré via le champ `parallel:` dans le YAML du pipeline. `parallel: 0` s'adapte automatiquement, borné par `max_workers` et par ce que le processeur renvoie depuis `max_parallelism()`.
 - **Contraintes :** Doit être strictement thread-safe (sécurisé pour les threads). Évitez les états mutables partagés.
+- **Budget :** `timeout:` borne le temps que l'étape passe à attendre un échantillon, pas la durée du travail. Le thread de travail est abandonné, jamais tué : un processeur qui démarre un processus externe devrait donc borner ce processus lui-même.
 
 #### `BulkMapProcessor` (N → N)
 - **Signature de Type :** `process(ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[ProcessorResult]`

@@ -40,7 +40,7 @@ stages:
   - name: decompile
     processor: ghidra_decompile/ghidra_decompile.py
     parallel: 4           # Restricts concurrency mapping to 4 concurrent Ghidra JVMs
-    timeout: 300          # Enforces a strict 300-second kill clock per sample via process.py
+    timeout: 300          # Per-sample budget: the stage stops waiting after 300 seconds
     on_failure: skip      # Handles exceptions silently rather than aborting (skip, retry, abort)
     max_retries: 2        # Retry logic execution constraint
     config:
@@ -56,10 +56,57 @@ Every stage defined under the `stages:` array accepts the following attributes:
 | `name` | string | `stage_N` | Unique stage name within the pipeline |
 | `processor` | string | required | Processor reference (see below) |
 | `config` | dict | `{}` | Processor-specific configuration |
-| `parallel` | int | `4` | Concurrency for Map processors. `0` auto-scales to `os.cpu_count()` |
-| `timeout` | int | `0` | Per-sample timeout in seconds (0 = no timeout) |
+| `parallel` | int | `4` | Concurrency for Map processors. `0` auto-scales, within the caps below |
+| `timeout` | int | `0` | Per-sample budget in seconds for Map stages (0 = no budget) |
 | `on_failure` | string | `skip` | Defines fault-tolerance behavior: `skip`, `retry`, or `abort` |
 | `max_retries` | int | `0` | Retry count when `on_failure: retry` |
+| `limit` | int | `0` | Sits inside `config`, read by the engine: truncate the surviving corpus after this stage (0 = keep everything) |
+
+#### `parallel`
+
+`parallel: 0` means auto rather than unlimited. The runner starts from `os.cpu_count()`
+and then lowers it twice: to the ceiling the processor declares in `max_parallelism()`,
+and to the pipeline's `max_workers` setting, whichever is smaller. A processor that
+spawns one JVM or one external tool per sample declares that ceiling precisely so a
+default `parallel: 0` cannot exhaust the machine, and the run logs which cap it applied.
+An explicit `parallel: N` is honoured exactly as written and is capped by neither.
+
+#### `timeout`
+
+`timeout` is the budget one sample gets in a Map stage. When it runs out the stage stops
+waiting, records that sample as having run out of time, and moves on to the next one.
+
+What it does not do is kill anything. Nothing in Python can stop a thread that is
+already running, so the processor's own worker thread is abandoned rather than
+terminated: an external process it started keeps running until it ends on its own, and
+whatever memory that thread holds is held until it returns. The budget bounds how long
+the *stage* waits, not how long the work takes. A processor that shells out should pass
+a limit to the tool as well, which is what `semgrep_scanner` does with its own `timeout`
+config key.
+
+Only Map stages are covered. Reduce and bulk-map stages are one invocation for the whole
+corpus rather than one per sample, and neither runs under this budget.
+
+Running out of time is not a failure, so `on_failure: retry` does not retry it, and a
+resumed run leaves it alone because the budget that was too short still is. Asking for
+another attempt is what [`--retry-timeouts`]({{ '/en/reference/cli.html' | relative_url }})
+is for.
+
+#### `limit`
+
+`limit` goes inside a stage's `config` block, but the engine reads it rather than the
+processor, so it can be set on any stage regardless of what that processor accepts, and
+a processor declaring a typed `Config` will not warn that the key is unknown to it.
+
+Once the stage finishes, every still-active sample past the first `limit` of them is
+marked filtered at that stage and takes no further part in the run. The count is over
+the whole surviving corpus, not over the samples this one stage touched.
+
+Order is the order the run is currently carrying the corpus in, which is what makes
+`limit` worth setting on a reduce stage or the one after it. A reduce returns its
+survivors ranked, the runner adopts that ranking before the truncation happens, and
+`limit` then keeps the highest-ranked rather than an arbitrary slice. On a stage with
+no ranking behind it, it keeps whichever samples happen to come first.
 
 ### Top-Level Fields
 
@@ -146,14 +193,16 @@ Every prompt can use these:
 Beyond those, a prompt can use whatever the stages **before it** recorded. Each
 processor declares those names in its `provides` attribute, and there are two kinds:
 
-- **Data keys** — anything the processor puts in `data`, such as `device_name` or
+- **Data keys**: anything the processor puts in `data`, such as `device_name` or
   `finding_count`. Available under that name directly, and under `history`.
-- **Artifacts** — a file the processor wrote, reachable by its path with the
+- **Artifacts**: a file the processor wrote, reachable by its path with the
   separators and the extension folded into the name. `decompiled/dispatch_ioctl.c`
-  becomes `decompiled_dispatch_ioctl_c`. JSON is parsed into an object; `.c`, `.h`,
-  `.txt`, `.md`, `.py`, `.yaml` and `.yml` arrive as text. Other file types are not
-  exposed. Anything over the context budget is truncated, and oversized JSON is
-  skipped with a warning rather than parsed.
+  becomes `decompiled_dispatch_ioctl_c`. JSON is parsed into an object, and a long
+  list of source, markup and plain-text suffixes arrives as text; a stage that needs
+  a different set declares `text_extensions` in its own `config`, which replaces the
+  list rather than adding to it. Nothing else is exposed. Text beyond the context
+  budget, `max_context_tokens` times four characters, is truncated and says so, and
+  a JSON file larger than that budget is skipped with a warning rather than parsed.
 
 A value is only available to stages *after* the one recording it, so a prompt cannot
 reach its own stage's output.
@@ -165,10 +214,11 @@ deepzero validate <pipeline>
 ```
 
 A prompt naming something no earlier stage produces is reported as an error listing
-what was available instead, and the same check fails the run if it is reached. This
-matters because an unknown name would otherwise render as nothing: the model would be
-asked to judge an empty payload, and the verdict would come back confident and
-meaningless.
+what was available instead. Rendering at run time is strict about the same thing, so a
+stage that gets there anyway fails on that sample rather than sending the prompt
+through. This matters because an unknown name would otherwise render as nothing: the
+model would be asked to judge an empty payload, and the verdict would come back
+confident and meaningless.
 
 ### The Report Block
 
@@ -271,6 +321,15 @@ The remaining outcomes are named by the engine and are not configurable, because
 describe what the engine did rather than what the pipeline was looking for: "Errored",
 "Ran out of time", "Unclear verdict" and "Filtered out".
 
+Every key is read on its own, so declaring one leaves the rest at their defaults. A key
+that is not one of the seven above is ignored, as is one left empty, and a `lexicon:`
+written as a value rather than as a block falls back to the defaults wholesale rather
+than failing the report a long run has just earned.
+
+The wording that ends up in force is written into `report.json` next to the counts, as
+`bucket_labels`, `entity`, `entity_plural` and `target_label`, so anything rendering its
+own headings from that file names each outcome the way the HTML does.
+
 This is what takes the tool outside vulnerability research. A pipeline auditing
 dependency licences has the same three outcomes and not one of the default words for
 them, so it says what they are:
@@ -301,24 +360,30 @@ A pipeline records what it concluded. Whether a person has actually checked that
 conclusion is a separate claim, and only the reader can make it, so the report
 carries marks they add while reading.
 
-On any result's page there are three:
+On any result's page there are two, because a review either reached an answer or it
+did not:
 
 | Mark | Means |
 |------|-------|
-| **confirmed** | checked, and it holds |
-| **did not hold up** | checked, and it does not — a finished result with a definite answer |
-| **outstanding** | looked at, but something is still unproven |
+| **Confirmed** | checked, and it holds |
+| **Refuted** | checked, and it did not hold up |
 
-The last two open a note for what you ran, on what, and what happened, so someone
-else can repeat the attempt. What counts as outstanding is left to the reader —
-reproducing a crash, proving a precondition, reading a diff — because from the
-report's side they are all the same shape of unfinished work.
+Either one opens a note for what you ran, on what, and what happened, so someone else
+can repeat the attempt. The note belongs to the mark: a result with no mark on it has
+nowhere to put one, so a review that settled nothing is recorded by leaving the result
+alone rather than by writing down where it got to.
 
-Marks appear against each row in the index and can be filtered on, including
-**Unreviewed**, which is the list of results nobody has looked at yet. The summary
-counts each of them, so a run can be read as what is actually known rather than only
-what was alleged: a result that did not hold up is never mistaken for one nobody has
+Anything carrying neither mark counts as **Unreviewed**, whether nobody opened it or
+somebody opened it and could not settle it. Those two were once separate controls, and
+side by side they read as the same thing.
+
+Refuted is deliberately not folded into unreviewed. It is finished work with a definite
+answer, and a result that did not hold up should never look like one nobody has
 examined.
+
+Marks appear against each row in the index and can be filtered on, Unreviewed included,
+which gives the list of results nobody has ruled on yet. The summary counts all three,
+so a run can be read as what is actually known rather than only what was alleged.
 
 The report is a file, so marks live in the browser. **Export marks** writes them out
 as `marks.json`; save that next to `index.html` and they become part of the report:

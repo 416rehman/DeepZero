@@ -69,6 +69,7 @@ deepzero run <TARGET> -p <pipeline> [options]
 | `-w, --work-dir` | le réglage `work_dir` du pipeline | Remplace la racine sous laquelle le répertoire d'exécution est construit. |
 | `--clean` | désactivé | Supprime définitivement les données de l'exécution précédente et repart de zéro. |
 | `--preflight` | désactivé | Vérifie que le backend LLM est authentifié avant l'exécution. Effectue un unique appel minimal. |
+| `--redo` | aucun | Réexécute une étape nommée et toutes celles qui la suivent, en conservant le travail antérieur et en supprimant la sortie que ces étapes avaient enregistrée. Répétable. |
 | `--retry-timeouts` | désactivé | Retente les échantillons qui ont manqué de temps, en conservant tous les autres résultats. |
 | `--timeout-multiplier` | `2.0` | De combien allonger le délai lors d'une nouvelle tentative sur une étape qui a manqué de temps. |
 | `-v, --verbose` | désactivé | Journalisation détaillée, y compris les traces d'appels issues du code de DeepZero lui-même. |
@@ -107,6 +108,8 @@ Elle ne s'exécute que lorsque le pipeline configure un modèle. Un pipeline san
 
 Une étape qui atteint son `timeout` enregistre l'échantillon comme ayant manqué de temps plutôt que comme ayant échoué. C'est une affirmation sur le budget, pas sur l'échantillon : ceux qui l'atteignent sont les plus volumineux, c'est-à-dire, dans la plupart des corpus, ceux qui méritent d'être examinés, et les classer avec de véritables erreurs biaise discrètement l'exécution à leur détriment.
 
+Le budget borne le temps que l'étape passe à attendre, pas la durée du travail. Le thread du processeur est abandonné plutôt que tué : un processus externe qu'il a lancé tourne donc encore une fois que l'étape est passée à la suite. Consultez [`timeout`]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}).
+
 Une exécution reprise ne les retente pas d'elle-même, car le budget qui était trop court l'est toujours. Demandez-le :
 
 ```bash
@@ -114,6 +117,20 @@ deepzero run <target> -p <pipeline> --retry-timeouts
 ```
 
 Cela n'oublie que les étapes qui ont manqué de temps et leur accorde `--timeout-multiplier` (2x par défaut) de plus. Tous les autres résultats produits par l'exécution sont conservés : une nouvelle tentative coûte donc le temps nécessaire à ces étapes et rien d'autre. Les étapes qui ne déclarent aucun délai ne sont pas touchées. Le rapport les regroupe séparément et indique le budget que chacune a dépassé.
+
+#### Réexécuter une seule étape
+
+Modifier un prompt, un ensemble de règles ou la configuration d'un scanneur invalide les résultats de cette étape, et rien de ce qui la précède. Décompiler un corpus une seconde fois pour lui reposer une question coûterait des heures sans raison : nommez plutôt l'étape.
+
+```bash
+deepzero run <target> -p <pipeline> --redo assess
+```
+
+Chaque échantillon oublie cette étape et toutes les suivantes, et conserve tout ce qui précède. Les étapes suivantes partent aussi parce qu'elles ont consommé une sortie sur le point de changer : une évaluation rédigée à partir de détections qui n'existent plus laisserait un même échantillon décrire deux exécutions différentes. Un échantillon qu'une étape désormais obsolète avait filtré rejoint l'exécution, de sorte qu'un ensemble de règles restreint est libre de rendre un verdict différent à son sujet.
+
+La sortie que ces étapes avaient enregistrée part avec l'état. Plusieurs processeurs traitent leur propre fichier sur le disque comme un cache et l'adoptent au lieu de refaire le travail : n'oublier que l'état conduirait donc l'étape à réadopter le fichier périmé et à l'enregistrer comme s'il venait d'être produit, ce qui est pire que de ne rien réexécuter du tout. `--redo` supprime donc chaque artefact que les étapes abandonnées avaient enregistré, et indique combien de fichiers il a retirés. Un artefact enregistré hors du répertoire propre à l'échantillon est laissé intact, car il n'appartient pas à cette exécution.
+
+`--redo` est répétable et démarre à la plus précoce des étapes nommées. Un nom d'étape inconnu est refusé, avec la liste des noms d'étapes réels du pipeline, plutôt que d'être traité comme n'ayant rien à faire. Si aucun échantillon n'avait atteint l'une des étapes nommées, la commande le dit et ne change rien.
 
 ### `report`
 
@@ -125,7 +142,7 @@ deepzero report -w work/loldrivers/drivers-1a2b3c4d
 | Drapeau | Défaut | Description |
 |---------|---------|-------------|
 | `-p, --pipeline` | aucun | Nom ou chemin du pipeline. Se résout vers le corpus le plus récent de ce pipeline. |
-| `-w, --work-dir` | aucun | Un répertoire d'exécution à lire directement. Prioritaire sur `--pipeline`. |
+| `-w, --work-dir` | aucun | Un répertoire d'exécution, ou la racine d'un pipeline, auquel cas le corpus le plus récent est lu et nommé. Prioritaire sur `--pipeline`. |
 | `-o, --out` | `<work_dir>/report` | Où écrire le rapport. |
 | `--open` | désactivé | Ouvre le rapport dans un navigateur une fois terminé. |
 | `-v, --verbose` | désactivé | Journalisation détaillée. |
@@ -142,13 +159,13 @@ Il écrit :
 | `items/<id>.html` | Une page par échantillon méritant d'être lu, avec des liens vers les artefacts de cet échantillon |
 | `inventory.csv` | Chaque échantillon, une ligne, pour un tableur |
 | `findings.jsonl` | Chaque détection, un objet JSON par ligne |
-| `report.json` | Totaux de synthèse uniquement, pour une machine |
+| `report.json` | Totaux de synthèse pour une machine, ainsi que le vocabulaire dans lequel ils sont nommés |
 
 Un échantillon obtient sa propre page lorsqu'il y a quelque chose à y lire : des détections, une évaluation, une erreur, ou une étape qui a manqué de temps. Les autres figurent toujours dans le CSV, et l'index signale lorsqu'une liste a été plafonnée et où trouver le reste.
 
 La résolution par nom de pipeline retient le corpus le plus récent, et le signale lorsque le pipeline en a vu plusieurs, en nommant les autres. L'exécution la plus récente n'est pas toujours celle sur laquelle porte la question, et répondre silencieusement à propos d'un autre corpus est l'échec qu'il faut éviter. Passez `--work-dir` pour en désigner un précisément.
 
-La manière dont le pipeline nomme ses échantillons, ses issues et ce vers quoi il a été pointé provient du bloc `report:` du pipeline. `--work-dir` seul effectue donc le rendu avec les valeurs par défaut : le bloc est lu depuis la définition du pipeline, et non depuis le répertoire d'exécution. Consultez [le bloc report]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}).
+La manière dont le pipeline nomme ses échantillons, ses issues et ce vers quoi il a été pointé provient du bloc `report:` du pipeline, qui réside dans la définition du pipeline et non dans le répertoire d'exécution. `--work-dir` l'obtient tout de même : l'exécution enregistre quel pipeline l'a produite, et le bloc est donc récupéré par son nom. Une exécution peut cependant survivre au pipeline qui l'a créée, et lorsque ce pipeline ne se charge plus, le rapport retombe sur la formulation par défaut plutôt que de refuser d'être construit. Consultez [le bloc report]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}).
 
 ### `status`
 
@@ -159,10 +176,10 @@ deepzero status -p loldrivers
 | Drapeau | Défaut | Description |
 |---------|---------|-------------|
 | `-p, --pipeline` | aucun | Nom ou chemin du pipeline. Se résout vers le corpus le plus récent de ce pipeline. |
-| `-w, --work-dir` | aucun | Un répertoire d'exécution à lire directement. Prioritaire sur `--pipeline`. |
+| `-w, --work-dir` | aucun | Un répertoire d'exécution, ou la racine d'un pipeline, auquel cas le corpus le plus récent est lu et nommé. Prioritaire sur `--pipeline`. |
 | `-v, --verbose` | désactivé | Journalisation détaillée. |
 
-L'un des deux est requis. Affiche l'identifiant de l'exécution, la cible, le modèle, les horodatages, un tableau par étape des nombres d'échantillons terminés, filtrés et en échec, ainsi que les totaux des verdicts.
+L'un des deux est requis. Affiche l'identifiant de l'exécution, la cible, le modèle, les horodatages, un tableau par étape des nombres d'échantillons terminés, filtrés, en échec et ayant manqué de temps, ainsi que les totaux des verdicts. « Manqué de temps » dispose de sa propre colonne, afin qu'une étape où tout a manqué de temps ne se lise pas comme une étape que rien n'a atteinte, ce qui est l'exact contraire de ce qui s'est produit.
 
 ### `validate`
 
@@ -171,6 +188,8 @@ deepzero validate <PIPELINE_REF>
 ```
 
 Charge le pipeline, résout chaque processeur, exécute le `validate()` propre à chaque processeur, et vérifie chaque prompt par rapport aux valeurs que les étapes qui le précèdent produisent réellement. Cette commande n'accepte aucun drapeau. Lancez-la avant une longue exécution : c'est l'endroit le moins coûteux pour découvrir un binaire manquant, un ensemble de règles illisible ou un prompt nommant quelque chose qu'aucune étape n'enregistre.
+
+Elle sort avec le code 1 lorsqu'elle signale une erreur, et 0 sinon : elle peut donc conditionner un commit. Les avertissements, comme un pipeline qui ne configure aucun modèle, sont affichés mais ne font pas échouer la commande : ils décrivent un pipeline qui démarrera, pas un pipeline incapable de démarrer.
 
 ### `list-processors`
 
@@ -192,11 +211,13 @@ deepzero interactive -w work/loldrivers/drivers-1a2b3c4d
 
 | Drapeau | Défaut | Description |
 |---------|---------|-------------|
-| `-m, --model` | `openai/gpt-4o` | Modèle pour la conversation. N'importe quelle chaîne de modèle acceptée par les backends. |
+| `-m, --model` | `claude-code/claude-opus-5` | Modèle pour la conversation. N'importe quelle chaîne de modèle acceptée par les backends. |
 | `-w, --work-dir` | `work` | Répertoire d'exécution depuis lequel charger le contexte. |
 | `-v, --verbose` | désactivé | Journalisation détaillée. |
 
-Une REPL qui charge l'état d'une exécution dans le prompt système afin de pouvoir lui poser des questions. `/status`, `/clear`, `/help` et `/quit` sont traités localement ; tout le reste part vers le modèle. Notez que le répertoire de travail par défaut est littéralement `work`, et non un répertoire d'exécution résolu : pointez donc `-w` vers l'exécution que vous visez.
+Une REPL qui charge l'état d'une exécution dans le prompt système afin de pouvoir lui poser des questions. `/status`, `/findings [filtre]`, `/clear`, `/help` et `/quit` sont traités localement ; tout le reste part vers le modèle, et un `/mot` non reconnu est signalé plutôt que facturé comme un tour de conversation. `/findings` liste chaque détection enregistrée par l'exécution, restreinte aux lignes correspondant à son argument, dans le vocabulaire déclaré par le pipeline qui a produit l'exécution.
+
+`-w` accepte un répertoire d'exécution ou la racine d'un pipeline, en nommant le corpus retenu lorsqu'il y en a plusieurs. La valeur par défaut est littéralement `work`, c'est-à-dire la racine située au-dessus des répertoires de pipelines, qui ne se résout à aucune exécution : la REPL le dit et répond sans contexte d'exécution plutôt que de faire comme si elle en avait chargé un. Pointez donc `-w` vers l'exécution que vous visez.
 
 ### `serve` et l'API REST
 
@@ -204,21 +225,23 @@ Une REPL qui charge l'état d'une exécution dans le prompt système afin de pou
 |---------|---------|-------------|
 | `--host` | `127.0.0.1` | Hôte d'écoute. Toute valeur autre que la boucle locale affiche un avertissement, car le serveur devient alors accessible depuis le réseau. |
 | `--port` | `8420` | Port d'écoute. |
-| `-w, --work-dir` | `work` | Répertoire de travail à servir. |
+| `-w, --work-dir` | `work` | Répertoire de travail à servir. Un répertoire d'exécution, ou la racine d'un pipeline, auquel cas le corpus le plus récent est servi et nommé. |
 
-Nécessite l'extra : `pip install deepzero[serve]`.
+Nécessite l'extra : `pip install deepzero[serve]`, qui installe Starlette et uvicorn.
 
 > [!WARNING]
 > **Fonctionnalité Expérimentale / En cours de développement**
 > Le serveur API REST est actuellement incomplet, très instable, et **ne doit pas être utilisé**. Il est fourni strictement pour le développement expérimental en local.
 
-Démarre une API REST FastAPI/Starlette en lecture seule pour interroger l'état d'exécution et les données des échantillons.
+Démarre une API REST Starlette en lecture seule pour interroger l'état d'exécution et les données des échantillons. Elle sert exactement une exécution, ce qui explique que le répertoire de travail soit résolu vers un corpus unique avant l'affichage de l'URL, plutôt qu'après qu'une requête est revenue vide.
 
 | Point d'accès | Méthode | Description |
 |----------|--------|-------------|
-| `/api/health` | GET | Vérification de l'état de santé |
-| `/api/runs` | GET | Lister les exécutions de pipeline disponibles dans le répertoire de travail |
-| `/api/run` | GET | Récupérer l'état global et les métriques de l'exécution actuelle |
-| `/api/samples` | GET | Lister les échantillons (filtrables via `?verdict=`, `?stage=`, `?status=`) |
+| `/api/health` | GET | Vérification de l'état de santé, et le répertoire de travail servi |
+| `/api/runs` | GET | L'exécution servie sous forme de liste à un élément, ou une liste vide |
+| `/api/run` | GET | L'état complet de cette exécution, ou 404 |
+| `/api/samples` | GET | Lister les échantillons (filtrables via `?verdict=`, `?classification=`, `?stage=`, `?status=`) |
 | `/api/samples/{sample_id}` | GET | État complet de l'échantillon avec l'historique des données du pipeline |
 | `/api/samples/{sample_id}/artifacts/{name}` | GET | Lire un artefact de fichier spécifique généré par un processeur |
+
+`verdict` est l'endroit où un échantillon a quitté le pipeline, et `classification` est ce qu'une étape a conclu à son sujet. Les deux voyagent dans la réponse, et chacun filtre donc le champ dont il porte le nom. `stage` correspond à l'étape courante de l'échantillon ; `status` retient un échantillon dès qu'une étape de son historique porte ce statut. Un identifiant d'échantillon contenant un séparateur de chemin est refusé, car cet identifiant devient un chemin sur le système de fichiers et ce serveur peut être lié à toutes les interfaces.

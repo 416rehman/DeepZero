@@ -32,7 +32,7 @@ Vulnerable Driver).
 | `kernel_filter` | `metadata_filter` | Restringe a controladores en modo kernel que exponen superficies IOCTL, y deduplica por hash |
 | `loldrivers_filter` | `loldrivers_filter/loldrivers_filter.py` | Excluye entidades conocidas catalogadas en loldrivers.io |
 | `decompile` | `ghidra_decompile/ghidra_decompile.py` | Ejecuta la descompilación de Ghidra sin interfaz gráfica |
-| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | Análisis estático en masa sobre el código fuente en C exportado |
+| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | Análisis estático en masa sobre el código fuente en C exportado. Un controlador en el que no se señala nada se detiene aquí (`min_findings: 1`) |
 | `rank_by_findings` | `top_k` | Ordena todos los controladores supervivientes por número de hallazgos, los peores primero |
 | `assess` | `generic_llm` | Renderiza `assessment.j2` para cada controlador y registra el veredicto |
 
@@ -176,14 +176,24 @@ report:
   entity: repository
   entity_plural: repositories
   target_label: organisation
+  classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
+  lexicon:
+    negative: Not exploitable
 ```
 
 `vulnerable_when` se restringe por una razón que conviene conocer. La evaluación responde
 `[VULNERABLE]` o `[NOT EXPLOITABLE]`, y la lista de positivos predeterminada incluye
 `exploitab`, que el veredicto negativo contiene. Consulte
 [Cómo se Compara un Veredicto]({{ '/es/reference/pipeline-yaml.html' | relative_url }}).
+`vulnerable_when` y `safe_when` son la forma antigua de escribir `positive_when` y
+`negative_when`, y siguen significando lo mismo.
+
+La única sustitución del léxico está ahí porque un repositorio solo llega a la evaluación
+cuando el análisis señaló algo. Nada de lo que hay en el grupo negativo es código sin tocar:
+es un repositorio cuyos hallazgos se leyeron y ninguno llegaba a ninguna parte. "Clear", la
+palabra predeterminada para ese grupo, dice lo contrario.
 
 Sus `columns` colocan junto a cada repositorio el número de hallazgos, los archivos analizados,
 el número de archivos de código, el lenguaje principal y la revisión. Los archivos analizados
@@ -201,3 +211,6 @@ ejecución larga:
 ```bash
 deepzero validate pipelines/source_audit/pipeline.yaml
 ```
+
+Sale con código 1 si informa de un error, así que puede usarse como control previo a un
+commit y no solo como algo que leer.

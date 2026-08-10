@@ -37,6 +37,8 @@ cp .env.example .env
 deepzero validate pipelines/loldrivers/pipeline.yaml
 ```
 
+Команда выходит с кодом 1, когда сообщает об ошибке, поэтому годится как хук коммита или шаг CI, а не только как то, что читают глазами.
+
 ```bash
 # один крошечный вызов, чтобы убедиться, что бэкенд LLM действительно авторизован
 deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight

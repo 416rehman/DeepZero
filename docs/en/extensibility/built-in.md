@@ -28,8 +28,12 @@ seconds is worth checking against the names its upstream actually provides.
 
 These live in `processors/` and are referenced by path, so they are read as ordinary
 external processors rather than as privileged built-ins. They are the ones the
-[included pipelines]({{ '/en/reference/included-pipeline.html' | relative_url }}) use, and
-each carries a README next to its source with its full configuration.
+[included pipelines]({{ '/en/reference/included-pipeline.html' | relative_url }}) use.
+`ghidra_decompile`, `git_ingest` and `loldrivers_filter` declare their accepted keys as a
+`Config` dataclass, so the source is the list of them and a key misspelled in a pipeline is
+reported rather than ignored. `pe_ingest` and `semgrep_scanner` read the raw config dict,
+where a misspelled key is neither read nor reported. Each carries a README beside its
+source describing what it emits and the behaviour a reader would be surprised by.
 
 | Path | Type | Functionality |
 | ---- | ---- | ------------- |
@@ -53,23 +57,67 @@ and a rerun keeps its results.
 
 ### `semgrep_scanner`
 
-Two config values decide what gets scanned, and they are what let one scanner serve both
-shipped pipelines:
-
 | Field | Default | Meaning |
 |-------|---------|---------|
+| `rules_dir` | none, required | Directory of semgrep rules to load. |
 | `target_dir` | `decompiled` | Subdirectory of the sample's own work directory to scan. Set it to `""` and the sample's own path is scanned instead. |
-| `extensions` | `.c`, `.h`, `.cpp`, `.py` | Which files are handed to semgrep. |
+| `extensions` | `.c`, `.h`, `.cpp`, `.py` | Which files are handed to semgrep. A leading dot is added if it is missing, and a single string is accepted for a one-entry list. |
+| `batch_size` | `200` | Samples per semgrep invocation. `0` or less puts the whole stage in one run. |
+| `timeout` | `300` | Seconds allowed for one batch's semgrep process. |
+| `min_findings` | `0` | Filter out a sample with fewer findings than this. `0` filters nothing. |
 
-The default suits a pipeline that decompiles first and writes C beside each sample. A
+`target_dir` and `extensions` are what let one scanner serve both shipped pipelines. The
+defaults suit a pipeline that decompiles first and writes C beside each sample. A
 pipeline whose samples are already source, a repository checkout for instance, sets
 `target_dir: ""` and widens `extensions` to whatever it actually ingested.
+
+`rules_dir` is resolved against the working directory first, then against the pipeline
+directory, and both `validate()` and the scan itself resolve it the same way, because
+resolving them differently once let validation pass while the scan ran with no rules
+loaded. A `rules_dir` that does not exist when the stage runs fails every sample in it
+rather than scanning with nothing loaded and reporting a clean corpus.
+
+#### A findings.json already on disk is adopted, not rescanned
+
+This is the surprising one. Before scanning anything, the processor looks for
+`findings.json` in each sample's own directory. If it is there and it parses, those
+findings are taken as the result, the sample is recorded with `findings_cached: true`,
+and semgrep is never asked about it. If the file is unreadable the sample is rescanned
+instead.
+
+That is what stops an interrupted run from repeating batches it had already finished.
+It also means editing the rules and running again changes nothing on its own: the old
+file is still there, so the old findings are reported back. `deepzero run --redo <stage>`
+is the way to force a real rescan, and it works because `findings.json` is recorded as
+an artifact on every path that writes one, including the filtered path, so `--redo` can
+find the file and delete it.
+
+An adopted result carries `finding_count` and `findings_cached` only. `files_submitted`
+and `files_scanned` come from the semgrep run itself, so a sample that was never scanned
+this time has neither.
+
+#### Batching, and the failures worth knowing about
+
+Samples are scanned in batches rather than in one run, so a batch that times out or
+comes back unreadable costs only its own samples instead of discarding a whole corpus
+after the work has already been done. A batch that exceeds `timeout` records every
+sample in it as failed.
 
 `extensions` and the rules have to agree. A file whose extension is not listed is never
 handed to semgrep, however many rules would have matched it, and that failure is silent:
 the scan reports zero findings, which is indistinguishable from a clean tree. This is
 why the source audit pipeline records `files_scanned` alongside `finding_count`.
 
-Samples are scanned in batches (`batch_size`, default 200) rather than in one run, so a
-batch that times out or comes back unreadable costs only its own samples instead of
-discarding a whole corpus after the work has already been done.
+Two more results are refused rather than reported as clean, because both look exactly
+like a clean corpus from the outside: semgrep coming back with load errors and no
+results at all, and semgrep listing none of the files that were submitted to it. Both
+fail the batch and say so.
+
+A sample whose `target_dir` is not on disk fails on its own, before any batch is built,
+and the message asks whether the stage that produces that directory runs before this
+one, which is the usual answer.
+
+`min_findings` filters a sample at this stage rather than failing it, so it leaves the
+run with a recorded reason and its `findings.json` still attached. The shipped pipelines
+both set `min_findings: 1`, which is what stops a sample nothing was flagged on from
+costing a model call downstream.

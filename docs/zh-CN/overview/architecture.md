@@ -97,7 +97,7 @@ DeepZero 的编排引擎在由 [流水线]({{ '/zh-CN/reference/pipeline-yaml.ht
 当一个样本在抽象流程中进展时，数据模型会经历以下转换：
 
 1. **`Sample`**: 由 `IngestProcessor` 生成的基础结构体。它将物理路径 `source_path` 绑定到唯一的 `sample_id` (通常是 SHA-256 哈希值或确定性的 UUID) 并初始化样本的 `data` 字典。
-2. **`SampleState`**: 由 `StateStore` 维护的持久化记录。它跟踪样本的裁决状态 `verdict` (`PENDING`, `ACTIVE`, `FILTERED`, `FAILED`, `COMPLETED`)，并维护一个映射了每个处理器 `StageOutput` 实例的 `history` (历史记录)。
+2. **`SampleState`**: 由 `StateStore` 维护的持久化记录。它跟踪样本的裁决状态 `verdict` (`PENDING`, `ACTIVE`, `FILTERED`, `FAILED`, `TIMED_OUT`, `COMPLETED`)，并维护一个映射了每个处理器 `StageOutput` 实例的 `history` (历史记录)。`TIMED_OUT` 与 `FAILED` 分开，是因为它并没有对样本本身说任何事情，而且它是唯一一种加长预算就能改变的结果。
 3. **`ProcessorEntry`**: 动态生成的、具有内存效率的封装，用于传入 Map/BulkMap/Reduce 处理器。它注入了一种惰性加载机制 (`_store`)，仅当访问 `.history` 或 `.upstream_data()` 时，才会从磁盘中调取历史执行数据。
 
 ### 处理范式
@@ -111,8 +111,9 @@ DeepZero 的编排引擎在由 [流水线]({{ '/zh-CN/reference/pipeline-yaml.ht
 
 #### `MapProcessor` (1 → 1)
 - **类型签名:** `process(ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult`
-- **并发:** 线程级扇出分配。通过流水线 YAML 中的 `parallel:` 字段进行配置。
+- **并发:** 线程级扇出分配。通过流水线 YAML 中的 `parallel:` 字段进行配置。`parallel: 0` 表示自动缩放，并受 `max_workers` 以及处理器 `max_parallelism()` 返回值的双重约束。
 - **约束:** 必须是严格的线程安全。避免共享可变状态。
+- **预算:** `timeout:` 约束的是阶段在一个样本上等多久，而不是这份工作跑多久。工作线程只会被撇下，绝不会被杀掉，因此会启动外部进程的处理器应当自己去约束那个进程。
 
 #### `BulkMapProcessor` (N → N)
 - **类型签名:** `process(ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[ProcessorResult]`

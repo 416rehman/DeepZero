@@ -69,7 +69,7 @@ order: 1
 work/<pipeline_name>/<corpus_key>/
 ├── run.json             # シリアライズされた `RunState`：実行メトリクスとパイプラインのメタデータ
 ├── pipeline.yaml        # 初期化時のパイプライン YAML 設定の不変スナップショット
-├── run_manifest.json    # 全サンプルを集約した全体像（Starlette API が使用）
+├── run_manifest.json    # 全サンプルを集約した全体像。`status` と `interactive` が読む
 ├── report/              # 閲覧可能な HTML レポート。結果が届くたびに再構築される
 └── samples/
     └── <sample_id>/     # 分離されたサンドボックス

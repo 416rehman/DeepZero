@@ -69,7 +69,7 @@ Todos los objetos de estado llevan una etiqueta interna `STATE_VERSION`. Si el m
 work/<pipeline_name>/<corpus_key>/
 ├── run.json             # `RunState` serializado: métricas de ejecución y metadatos de la canalización
 ├── pipeline.yaml        # Copia inmutable de la configuración YAML en el momento de la inicialización
-├── run_manifest.json    # Panorámica agregada de todas las muestras (la usa la API de Starlette)
+├── run_manifest.json    # Panorámica agregada de todas las muestras, que leen `status` e `interactive`
 ├── report/              # Informe HTML navegable, reconstruido a medida que llegan resultados
 └── samples/
     └── <sample_id>/     # Espacio aislado

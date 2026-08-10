@@ -97,7 +97,7 @@ DeepZero's orchestration engine operates on a strictly directional processing gr
 The data model transitions across these abstractions as a sample progresses:
 
 1. **`Sample`**: The foundational struct yielded by an `IngestProcessor`. It binds a physical `source_path` to a unique `sample_id` (typically a SHA-256 hash or deterministic UUID) and initializes the sample's `data` dict.
-2. **`SampleState`**: The persistent record maintained by the `StateStore`. Tracks the sample's `verdict` (`PENDING`, `ACTIVE`, `FILTERED`, `FAILED`, `COMPLETED`) and maintains a `history` mapping of `StageOutput` instances per processor.
+2. **`SampleState`**: The persistent record maintained by the `StateStore`. Tracks the sample's `verdict` (`PENDING`, `ACTIVE`, `FILTERED`, `FAILED`, `TIMED_OUT`, `COMPLETED`) and maintains a `history` mapping of `StageOutput` instances per processor. `TIMED_OUT` is kept apart from `FAILED` because it says nothing about the sample, and it is the one outcome a longer budget can change.
 3. **`ProcessorEntry`**: The dynamically generated, memory-efficient facade passed into Map/BulkMap/Reduce processors. It injects a lazy-load mechanism (`_store`) which only retrieves historical execution data from disk when `.history` or `.upstream_data()` is accessed.
 
 ### Processing Paradigms
@@ -111,8 +111,9 @@ Processors dictate execution topology and concurrency models. All inherit from t
 
 #### `MapProcessor` (1 → 1)
 - **Type Signature:** `process(ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult`
-- **Concurrency:** Threaded fan-out. Configured via the `parallel:` field in pipeline YAML.
+- **Concurrency:** Threaded fan-out. Configured via the `parallel:` field in pipeline YAML. `parallel: 0` auto-scales, bounded by `max_workers` and by whatever the processor returns from `max_parallelism()`.
 - **Constraints:** Must be strictly thread-safe. Avoid shared mutable state.
+- **Budget:** `timeout:` bounds how long the stage waits on one sample, not how long the work runs. The worker thread is abandoned, never killed, so a processor that starts an external process should bound that process itself.
 
 #### `BulkMapProcessor` (N → N)
 - **Type Signature:** `process(ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[ProcessorResult]`

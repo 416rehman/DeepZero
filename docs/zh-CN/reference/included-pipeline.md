@@ -27,7 +27,7 @@ DeepZero 自带两条完整的流水线。它们既是拿来直接运行的，�
 | `kernel_filter` | `metadata_filter` | 约束为暴露了 IOCTL 攻击面的内核态驱动程序，并按哈希去重 |
 | `loldrivers_filter` | `loldrivers_filter/loldrivers_filter.py` | 排除 loldrivers.io 目录中已知的实体 |
 | `decompile` | `ghidra_decompile/ghidra_decompile.py` | 执行 Ghidra 无头反编译 |
-| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | 针对导出的 C 源码进行大规模静态分析 |
+| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | 针对导出的 C 源码进行大规模静态分析。什么都没被标记出来的驱动程序到此为止 (`min_findings: 1`) |
 | `rank_by_findings` | `top_k` | 把每个存活下来的驱动程序按发现数量排序，最差的排在最前 |
 | `assess` | `generic_llm` | 为每个驱动程序渲染 `assessment.j2` 并记录裁决 |
 
@@ -122,11 +122,16 @@ report:
   entity: repository
   entity_plural: repositories
   target_label: organisation
+  classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
+  lexicon:
+    negative: Not exploitable
 ```
 
-`vulnerable_when` 被收窄是有一个值得知道的原因的。评估的回答是 `[VULNERABLE]` 或 `[NOT EXPLOITABLE]`，而默认的肯定项列表中含有 `exploitab`，否定裁决里恰好就有它。参阅 [裁决如何匹配]({{ '/zh-CN/reference/pipeline-yaml.html' | relative_url }})。
+`vulnerable_when` 被收窄是有一个值得知道的原因的。评估的回答是 `[VULNERABLE]` 或 `[NOT EXPLOITABLE]`，而默认的肯定项列表中含有 `exploitab`，否定裁决里恰好就有它。参阅 [裁决如何匹配]({{ '/zh-CN/reference/pipeline-yaml.html' | relative_url }})。`vulnerable_when` 和 `safe_when` 是 `positive_when` 与 `negative_when` 的旧名称，含义完全一致。
+
+之所以只覆写词汇表中的这一项，是因为一个仓库只有在扫描标记出了东西之后才会走到评估阶段。落在否定一类里的绝不会是没人碰过的代码：那是一个其发现被读过、但其中没有一条能够触及的仓库。而该类别的默认词汇“Clear”说的恰恰是反面的意思。
 
 它的 `columns` 会在每个仓库旁边放上发现数量、已扫描文件数、源文件数、主要语言和修订版本。已扫描文件数值得占据一席之地：一个没有发现的仓库，和一个 semgrep 根本没打开过其文件的仓库，都显示为零发现，而其中只有一个算是结果。
 
@@ -140,3 +145,5 @@ report:
 ```bash
 deepzero validate pipelines/source_audit/pipeline.yaml
 ```
+
+报告出错误时它以 1 退出，因此可以用它来把关一次提交，而不只是拿来看看。

@@ -27,6 +27,10 @@ Les processeurs implémentent des hooks de cycle de vie spécifiques appelés pa
 3. **`process(...)`** : L'opération principale. La signature varie selon le `ProcessorType`.
 4. **`teardown() -> None`** : Exécuté à la fin du pipeline ou en cas d'interruption fatale.
 
+Un cinquième mérite d'être redéfini sur un processeur Map coûteux par échantillon :
+
+5. **`max_parallelism() -> int | None`** : Un plafond sur la concurrence automatique. Il ne s'applique que lorsque l'étape déclare `parallel: 0` ; un `parallel: N` explicite est toujours honoré tel qu'il est écrit. Renvoyez un entier lorsque chaque échantillon coûte une JVM, un conteneur ou quelques gigaoctets de mémoire, afin qu'un pipeline laissé à sa valeur par défaut ne puisse pas épuiser la machine. `None`, la valeur par défaut, signifie aucun plafond.
+
 ### Définir la Configuration du Processeur
 
 Utilisez une `@dataclass` embarquée nommée `Config` pour définir strictement et valider les configurations YAML acceptées. Le moteur analyse le dictionnaire du [YAML du Pipeline]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}) et instancie votre objet `Config`, en développant complètement les `${ENV_VARS}` automatiquement à l'aide des [`dataclasses`](https://docs.python.org/3/library/dataclasses.html) Python standards.
@@ -67,6 +71,9 @@ Les processeurs Map/BulkMap doivent renvoyer un `ProcessorResult` strictement fo
 - **`.ok(data={...}, artifacts={...})`** : Signale que l'exécution est `COMPLETED` (Terminée). Le dictionnaire `data` est placé dans l'espace de noms du bloc historique du processeur. `artifacts` associe des clés à des chemins de fichiers relatifs.
 - **`.filter(reason="...", data={...})`** : Interrompt silencieusement le traitement de l'échantillon. `SampleState.verdict` mute en `FILTERED`.
 - **`.fail(error="...")`** : Interrompt le traitement en raison d'une erreur fatale et inattendue. `SampleState.verdict` mute en `FAILED`.
+- **`.timed_out(budget)`** : Le travail a manqué de temps plutôt que mal tourné. `SampleState.verdict` mute en `TIMED_OUT`, et le budget voyage avec lui afin que le rapport puisse indiquer ce qu'il faudrait lui accorder à la place. Renvoyez ceci depuis un processeur qui applique son propre budget ; le `timeout:` au niveau de l'étape le produit de lui-même.
+
+Un processeur Map peut également redéfinir **`should_skip(ctx, entry) -> str | None`** et renvoyer une raison pour déclarer le travail déjà fait, typiquement parce que son propre fichier de sortie est déjà sur le disque. Un échantillon ainsi ignoré compte comme réussi et poursuit vers l'aval. Enregistrez cette sortie comme artefact lorsque vous procédez ainsi : `deepzero run --redo` supprime les artefacts enregistrés précisément pour qu'un fichier mis en cache ne puisse pas être réadopté, et un fichier que l'exécution n'a jamais enregistré survit à l'état qui le décrit.
 
 ### Déclarer ce que les Étapes Suivantes Peuvent Utiliser
 

@@ -37,6 +37,8 @@ cp .env.example .env
 deepzero validate pipelines/loldrivers/pipeline.yaml
 ```
 
+报告出错误时它以 1 退出，因此它可以充当一个提交钩子或一个 CI 步骤，而不只是拿来看看。
+
 ```bash
 # 发起一次极小的调用，确认 LLM 后端确实已登录
 deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight

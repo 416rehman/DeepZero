@@ -97,7 +97,7 @@ DeepZero オーケストレーションエンジンは、[パイプライン]({{
 データモデルは、サンプルが進むにつれて以下の抽象化を経て遷移します：
 
 1. **`Sample`**: `IngestProcessor` によって出力される基本構造。物理的な `source_path` を一意の `sample_id`（通常は SHA-256 ハッシュまたは決定論的な UUID）に束縛し、そのサンプルの `data` 辞書を初期化します。
-2. **`SampleState`**: `StateStore` によって維持される永続的なレコード。判定（`PENDING`、`ACTIVE`、`FILTERED`、`FAILED`、`COMPLETED`）を追跡し、プロセッサごとの `StageOutput` インスタンスを対応付けた `history` を保持します。
+2. **`SampleState`**: `StateStore` によって維持される永続的なレコード。判定（`PENDING`、`ACTIVE`、`FILTERED`、`FAILED`、`TIMED_OUT`、`COMPLETED`）を追跡し、プロセッサごとの `StageOutput` インスタンスを対応付けた `history` を保持します。`TIMED_OUT` を `FAILED` と分けているのは、それがサンプルについて何も語っていないからであり、予算を延ばせば変わりうる唯一の結果だからです。
 3. **`ProcessorEntry`**: Map / BulkMap / Reduce プロセッサに渡される、動的に生成されるメモリ効率の良いファサード。遅延ロードの仕組み（`_store`）を注入しており、`.history` または `.upstream_data()` にアクセスされたときにだけ過去の実行データをディスクから取得します。
 
 ### 処理パラダイム
@@ -111,8 +111,9 @@ DeepZero オーケストレーションエンジンは、[パイプライン]({{
 
 #### `MapProcessor` (1 → 1)
 - **型シグネチャ:** `process(ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult`
-- **並行性:** スレッドによるファンアウト。パイプライン YAML の `parallel:` フィールドで設定します。
+- **並行性:** スレッドによるファンアウト。パイプライン YAML の `parallel:` フィールドで設定します。`parallel: 0` は自動調整で、`max_workers` と、プロセッサが `max_parallelism()` から返す値の両方に縛られます。
 - **制約:** 厳密にスレッドセーフでなければなりません。共有される可変状態は避けてください。
+- **予算:** `timeout:` が縛るのは、1 つのサンプルについてステージが待つ長さであって、作業が走る長さではありません。ワーカースレッドは強制終了されるのではなく放置されるため、外部プロセスを起動するプロセッサは、そのプロセッサ自身がそのプロセスに制限を課すべきです。
 
 #### `BulkMapProcessor` (N → N)
 - **型シグネチャ:** `process(ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[ProcessorResult]`

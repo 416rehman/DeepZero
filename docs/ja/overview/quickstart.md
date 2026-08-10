@@ -37,6 +37,8 @@ cp .env.example .env
 deepzero validate pipelines/loldrivers/pipeline.yaml
 ```
 
+エラーを報告したときは終了コード 1 を返すため、読むためだけのものではなく、コミットフックや CI のステップとしても機能します。
+
 ```bash
 # LLM バックエンドが実際にサインイン済みかを、ごく小さな呼び出し 1 回で確認する
 deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight

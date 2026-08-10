@@ -27,7 +27,7 @@ DeepZero には完全なパイプラインが 2 つ同梱されています。�
 | `kernel_filter` | `metadata_filter` | IOCTL 表面を公開するカーネルモードドライバーに絞り込み、ハッシュで重複を排除 |
 | `loldrivers_filter` | `loldrivers_filter/loldrivers_filter.py` | loldrivers.io に登録されている既知のエンティティを除外 |
 | `decompile` | `ghidra_decompile/ghidra_decompile.py` | Ghidra を使ったヘッドレスデコンパイルの実行 |
-| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | 出力された C ソースコードに対する一括静的解析 |
+| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | 出力された C ソースコードに対する一括静的解析。何も指摘されなかったドライバーはここで止まります（`min_findings: 1`） |
 | `rank_by_findings` | `top_k` | 生き残ったすべてのドライバーを検出結果の件数順に、多い方から並べ替え |
 | `assess` | `generic_llm` | ドライバーごとに `assessment.j2` をレンダリングし、判定を記録 |
 
@@ -122,11 +122,16 @@ report:
   entity: repository
   entity_plural: repositories
   target_label: organisation
+  classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
+  lexicon:
+    negative: Not exploitable
 ```
 
-`vulnerable_when` を絞り込んでいるのには、知っておく価値のある理由があります。評価は `[VULNERABLE]` または `[NOT EXPLOITABLE]` を返しますが、デフォルトの肯定側リストには `exploitab` が含まれており、これは否定側の判定に含まれています。[判定の照合方法]({{ '/ja/reference/pipeline-yaml.html' | relative_url }})を参照してください。
+`vulnerable_when` を絞り込んでいるのには、知っておく価値のある理由があります。評価は `[VULNERABLE]` または `[NOT EXPLOITABLE]` を返しますが、デフォルトの肯定側リストには `exploitab` が含まれており、これは否定側の判定に含まれています。[判定の照合方法]({{ '/ja/reference/pipeline-yaml.html' | relative_url }})を参照してください。`vulnerable_when` と `safe_when` は `positive_when` と `negative_when` の古い綴りであり、意味は今も同じです。
+
+`lexicon` の上書きが 1 つだけあるのは、リポジトリがスキャンで何かを指摘されたときにしか評価に到達しないからです。否定側の区分に入るものは、手つかずのコードではありません。検出結果が読まれ、そのどれもが到達しなかったリポジトリです。この区分のデフォルトの言葉である「Clear」は、その逆のことを言ってしまいます。
 
 このパイプラインの `columns` は、検出結果の件数、スキャンされたファイル数、ソースファイル数、主要言語、リビジョンを各リポジトリに添えます。スキャンされたファイル数がそこにあるのには理由があります。検出結果のないリポジトリと、semgrep が 1 つもファイルを開かなかったリポジトリは、どちらも検出結果ゼロと表示されますが、結果と呼べるのはそのうち一方だけだからです。
 
@@ -140,3 +145,5 @@ report:
 ```bash
 deepzero validate pipelines/source_audit/pipeline.yaml
 ```
+
+エラーを報告したときは終了コード 1 を返すため、読むためだけのものではなく、コミットの門番としても使えます。

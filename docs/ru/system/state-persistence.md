@@ -69,7 +69,7 @@ order: 1
 work/<pipeline_name>/<corpus_key>/
 ├── run.json             # Сериализованный `RunState`: метрики выполнения и метаданные конвейера
 ├── pipeline.yaml        # Неизменяемый снимок YAML конфигурации на момент инициализации
-├── run_manifest.json    # Сводный обзор всех образцов (используется API Starlette)
+├── run_manifest.json    # Сводный обзор всех образцов, читается `status` и `interactive`
 ├── report/              # HTML-отчет, перестраиваемый по мере появления результатов
 └── samples/
     └── <sample_id>/     # Изолированная песочница

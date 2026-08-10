@@ -70,7 +70,7 @@ deepzero run <TARGET> -p <pipeline> [options]
 | `-w, --work-dir` | pipeline's `work_dir` setting | Replaces the root the run directory is built under. |
 | `--clean` | off | Permanently delete previous run data and start fresh. |
 | `--preflight` | off | Verify the LLM backend is authenticated before running. Makes one tiny call. |
-| `--redo` | none | Re-run a named stage and everything after it, keeping the earlier work. Repeatable. |
+| `--redo` | none | Re-run a named stage and everything after it, keeping the earlier work and deleting the output those stages recorded. Repeatable. |
 | `--retry-timeouts` | off | Attempt the samples that ran out of time again, keeping every other result. |
 | `--timeout-multiplier` | `2.0` | How much longer to allow when retrying a stage that ran out of time. |
 | `-v, --verbose` | off | Verbose logging, including tracebacks from DeepZero's own code. |
@@ -134,6 +134,11 @@ than as having failed. That is a statement about the budget, not about the sampl
 the ones that hit it are the largest, which in most corpora are the ones worth
 looking at, and filing them with genuine errors quietly biases a run away from them.
 
+The budget bounds how long the stage waits, not how long the work takes. The processor's
+thread is abandoned rather than killed, so an external process it started is still
+running after the stage has moved on. See
+[`timeout`]({{ '/en/reference/pipeline-yaml.html' | relative_url }}).
+
 A resumed run does not retry them on its own, because the budget that was too short
 still is. Ask for it:
 
@@ -162,9 +167,18 @@ assessment written from findings that no longer exist would leave one sample
 describing two different runs. A sample an obsolete stage filtered out rejoins the
 run, so a narrowed rule set is free to reach a different verdict about it.
 
+The output those stages recorded goes with the state. Several processors treat their
+own file on disk as a cache and adopt it instead of doing the work again, so forgetting
+the state alone would have the stage re-adopt the stale file and record it as fresh,
+which is worse than not redoing at all. `--redo` therefore deletes each artifact the
+dropped stages had recorded, and says how many files it removed. An artifact recorded
+outside the sample's own directory is left alone, because it is not this run's to
+delete.
+
 `--redo` is repeatable and starts from the earliest stage named. An unknown stage
 name is rejected, with the pipeline's actual stage names listed, rather than being
-treated as nothing to do.
+treated as nothing to do. If no sample had reached any of the named stages, it says so
+and changes nothing.
 
 ### `report`
 
@@ -176,7 +190,7 @@ deepzero report -w work/loldrivers/drivers-1a2b3c4d
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-p, --pipeline` | none | Pipeline name or path. Resolves to that pipeline's most recent corpus. |
-| `-w, --work-dir` | none | A run directory to read directly. Takes precedence over `--pipeline`. |
+| `-w, --work-dir` | none | A run directory, or a pipeline's root, in which case the most recent corpus is read and named. Takes precedence over `--pipeline`. |
 | `-o, --out` | `<work_dir>/report` | Where to write the report. |
 | `--open` | off | Open the report in a browser when it is finished. |
 | `-v, --verbose` | off | Verbose logging. |
@@ -197,7 +211,7 @@ It writes:
 | `items/<id>.html` | One page per sample worth reading, linking to that sample's artifacts |
 | `inventory.csv` | Every sample, one row, for a spreadsheet |
 | `findings.jsonl` | Every finding, one JSON object per line |
-| `report.json` | Summary totals only, for a machine |
+| `report.json` | Summary totals for a machine, plus the vocabulary they are named in |
 
 A sample gets a page of its own when there is something on it to read: findings, an
 assessment, an error, or a stage that ran out of time. The rest are still in the CSV,
@@ -209,9 +223,12 @@ asked about, and silently answering about a different corpus is the failure wort
 avoiding. Pass `--work-dir` to name one exactly.
 
 What the pipeline calls its samples, its outcomes and the thing it was pointed at comes
-from the pipeline's `report:` block, so `--work-dir` on its own renders with the
-defaults: the block is read from the pipeline definition, not from the run directory.
-See [the report block]({{ '/en/reference/pipeline-yaml.html' | relative_url }}).
+from the pipeline's `report:` block, which lives in the pipeline definition rather than
+in the run directory. `--work-dir` still gets it: the run records which pipeline wrote
+it, so the block is recovered by name. A run can outlive the pipeline that made it,
+though, and when that pipeline no longer loads the report falls back to the default
+wording rather than refusing to build. See
+[the report block]({{ '/en/reference/pipeline-yaml.html' | relative_url }}).
 
 ### `status`
 
@@ -222,11 +239,13 @@ deepzero status -p loldrivers
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-p, --pipeline` | none | Pipeline name or path. Resolves to that pipeline's most recent corpus. |
-| `-w, --work-dir` | none | A run directory to read directly. Takes precedence over `--pipeline`. |
+| `-w, --work-dir` | none | A run directory, or a pipeline's root, in which case the most recent corpus is read and named. Takes precedence over `--pipeline`. |
 | `-v, --verbose` | off | Verbose logging. |
 
 One of the two is required. Prints the run id, target, model, timestamps, a per-stage
-table of completed, filtered and failed counts, and the sample verdict totals.
+table of completed, filtered, failed and out-of-time counts, and the sample verdict
+totals. Out of time has a column of its own so a stage everything timed out in does not
+read as a stage nothing reached, which is the opposite of what happened.
 
 ### `validate`
 
@@ -238,6 +257,10 @@ Loads the pipeline, resolves every processor, runs each processor's own `validat
 and checks every prompt against the values the stages before it actually produce. It
 takes no flags. Run it before a long run: it is the cheapest place to find a missing
 binary, an unreadable ruleset or a prompt naming something no stage records.
+
+It exits 1 when it reports an error and 0 otherwise, so it can gate a commit. Warnings,
+such as a pipeline that configures no model, are printed but do not fail the command:
+they describe a pipeline that will start, not one that cannot.
 
 ### `list-processors`
 
@@ -262,14 +285,20 @@ deepzero interactive -w work/loldrivers/drivers-1a2b3c4d
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-m, --model` | `openai/gpt-4o` | Model for the conversation. Any model string the backends accept. |
+| `-m, --model` | `claude-code/claude-opus-5` | Model for the conversation. Any model string the backends accept. |
 | `-w, --work-dir` | `work` | Run directory to load context from. |
 | `-v, --verbose` | off | Verbose logging. |
 
 A REPL that loads a run's state into the system prompt so questions can be asked about
-it. `/status`, `/clear`, `/help` and `/quit` are handled locally; anything else goes to
-the model. Note that the default work directory is literally `work`, not a resolved run
-directory, so point `-w` at the run you mean.
+it. `/status`, `/findings [filter]`, `/clear`, `/help` and `/quit` are handled locally;
+anything else goes to the model, and an unrecognised `/word` is reported rather than
+billed as a chat turn. `/findings` lists every finding the run recorded, narrowed to the
+lines matching its argument, in the vocabulary the pipeline that wrote the run declared.
+
+`-w` accepts a run directory or a pipeline's root, naming the corpus it picked when
+there is more than one. The default is literally `work`, which is the root above the
+pipeline directories and resolves to no run at all; the REPL says so and answers without
+run context rather than pretending to have loaded one, so point `-w` at the run you mean.
 
 ### `serve` and the REST API
 
@@ -277,21 +306,30 @@ directory, so point `-w` at the run you mean.
 |------|---------|-------------|
 | `--host` | `127.0.0.1` | Bind host. Anything other than loopback prints a warning, because the server is then reachable from the network. |
 | `--port` | `8420` | Bind port. |
-| `-w, --work-dir` | `work` | Work directory to serve. |
+| `-w, --work-dir` | `work` | Work directory to serve. A run directory, or a pipeline's root, in which case the most recent corpus is served and named. |
 
-Requires the extra: `pip install deepzero[serve]`.
+Requires the extra: `pip install deepzero[serve]`, which brings in Starlette and uvicorn.
 
 > [!WARNING]
 > **WIP / Experimental Feature**
 > The REST API server is currently incomplete, highly unstable, and **should not be used**. It is provided strictly for experimental local development.
 
-Starts a read-only FastAPI/Starlette REST API for querying run state and sample data.
+Starts a read-only Starlette REST API for querying run state and sample data. It serves
+exactly one run, which is why the work directory is resolved to a single corpus before
+the URL is printed rather than after a request comes back empty.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/health` | GET | Health check |
-| `/api/runs` | GET | List available pipeline runs in the work directory |
-| `/api/run` | GET | Fetch global state and metrics for the current run |
-| `/api/samples` | GET | List samples (filterable by `?verdict=`, `?stage=`, `?status=`) |
+| `/api/health` | GET | Health check, and the work directory being served |
+| `/api/runs` | GET | The served run as a one-element list, or an empty one |
+| `/api/run` | GET | Full state for that run, or 404 |
+| `/api/samples` | GET | List samples (filterable by `?verdict=`, `?classification=`, `?stage=`, `?status=`) |
 | `/api/samples/{sample_id}` | GET | Full sample state with historical pipeline data |
 | `/api/samples/{sample_id}/artifacts/{name}` | GET | Read a specific file artifact generated by a processor |
+
+`verdict` is where a sample left the pipeline and `classification` is what a stage
+concluded about it. Both travel in the response, so each filters the field it is named
+after. `stage` matches the sample's current stage; `status` keeps a sample when any
+stage in its history carries that status. A sample id containing a path separator is
+rejected, because the id becomes a filesystem path and this server can be bound to
+every interface.

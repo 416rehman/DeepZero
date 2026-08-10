@@ -69,7 +69,7 @@ Tous les objets d'état sont marqués avec une `STATE_VERSION` interne. Si le mo
 work/<pipeline_name>/<corpus_key>/
 ├── run.json             # `RunState` sérialisé : Métriques d'exécution et métadonnées du pipeline
 ├── pipeline.yaml        # Instantané immuable de la configuration YAML du pipeline lors de l'initialisation
-├── run_manifest.json    # Vue d'ensemble macro agrégée de tous les échantillons (utilisé par l'API Starlette)
+├── run_manifest.json    # Vue d'ensemble macro agrégée de tous les échantillons, lue par `status` et `interactive`
 ├── report/              # Rapport HTML consultable, reconstruit à mesure que les résultats arrivent
 └── samples/
     └── <sample_id>/     # Bac à sable isolé (sandbox)

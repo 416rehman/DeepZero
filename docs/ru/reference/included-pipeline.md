@@ -27,7 +27,7 @@ order: 3
 | `kernel_filter` | `metadata_filter` | Ограничивает выборку драйверами режима ядра, предоставляющими поверхности IOCTL, и дедуплицирует по хешу |
 | `loldrivers_filter` | `loldrivers_filter/loldrivers_filter.py` | Исключает известные сущности, каталогизированные на loldrivers.io |
 | `decompile` | `ghidra_decompile/ghidra_decompile.py` | Выполняет безголовую декомпиляцию Ghidra |
-| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | Массовый статический анализ экспортированного исходного кода C |
+| `semgrep_scanner` | `semgrep_scanner/semgrep_scanner.py` | Массовый статический анализ экспортированного исходного кода C. Драйвер, на котором ничего не отмечено, останавливается здесь (`min_findings: 1`) |
 | `rank_by_findings` | `top_k` | Упорядочивает все уцелевшие драйверы по числу находок, худшие первыми |
 | `assess` | `generic_llm` | Рендерит `assessment.j2` по каждому драйверу и записывает вердикт |
 
@@ -122,11 +122,16 @@ report:
   entity: repository
   entity_plural: repositories
   target_label: organisation
+  classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
+  lexicon:
+    negative: Not exploitable
 ```
 
-`vulnerable_when` сужен по причине, о которой стоит знать. Оценка отвечает `[VULNERABLE]` либо `[NOT EXPLOITABLE]`, а список положительных значений по умолчанию включает `exploitab`, которое содержится в отрицательном вердикте. См. [Как сопоставляется вердикт]({{ '/ru/reference/pipeline-yaml.html' | relative_url }}).
+`vulnerable_when` сужен по причине, о которой стоит знать. Оценка отвечает `[VULNERABLE]` либо `[NOT EXPLOITABLE]`, а список положительных значений по умолчанию включает `exploitab`, которое содержится в отрицательном вердикте. См. [Как сопоставляется вердикт]({{ '/ru/reference/pipeline-yaml.html' | relative_url }}). `vulnerable_when` и `safe_when` являются прежними написаниями `positive_when` и `negative_when` и означают то же самое.
+
+Единственное переопределение словаря терминов стоит здесь потому, что репозиторий доходит до оценки, только если сканирование что-то отметило. В отрицательной корзине не бывает нетронутого кода: там репозиторий, чьи находки прочитали и ни одна из них никуда не привела. «Clear», слово для этой корзины по умолчанию, говорит обратное.
 
 Его `columns` выводят напротив каждого репозитория число находок, число просканированных файлов, число файлов исходного кода, основной язык и ревизию. Число просканированных файлов не зря занимает свое место: репозиторий без находок и репозиторий, файлы которого semgrep вообще не открывал, оба показывают ноль находок, и только один из них является результатом.
 
@@ -140,3 +145,5 @@ report:
 ```bash
 deepzero validate pipelines/source_audit/pipeline.yaml
 ```
+
+Команда выходит с кодом 1, если сообщает об ошибке, поэтому ею можно закрывать коммит, а не только читать ее вывод.

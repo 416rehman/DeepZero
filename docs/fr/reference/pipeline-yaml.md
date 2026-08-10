@@ -40,7 +40,7 @@ stages:
   - name: decompile
     processor: ghidra_decompile/ghidra_decompile.py
     parallel: 4           # Restreint la concurrence de mapping à 4 JVMs Ghidra simultanées
-    timeout: 300          # Impose une horloge de destruction stricte de 300 secondes par échantillon via process.py
+    timeout: 300          # Budget par échantillon : l'étape cesse d'attendre au bout de 300 secondes
     on_failure: skip      # Gère les exceptions de manière silencieuse plutôt que d'avorter (skip, retry, abort)
     max_retries: 2        # Contrainte d'exécution de la logique de réessai
     config:
@@ -56,10 +56,33 @@ Chaque étape définie sous le tableau `stages:` accepte les attributs suivants 
 | `name` | string | `stage_N` | Nom unique de l'étape au sein du pipeline |
 | `processor` | string | requis | Référence du processeur (voir ci-dessous) |
 | `config` | dict | `{}` | Configuration spécifique au processeur |
-| `parallel` | int | `4` | Concurrence pour les processeurs Map. `0` s'adapte automatiquement à `os.cpu_count()` |
-| `timeout` | int | `0` | Délai d'attente par échantillon en secondes (0 = pas de délai) |
+| `parallel` | int | `4` | Concurrence pour les processeurs Map. `0` s'adapte automatiquement, dans les limites décrites ci-dessous |
+| `timeout` | int | `0` | Budget par échantillon en secondes, pour les étapes Map (0 = aucun budget) |
 | `on_failure` | string | `skip` | Définit le comportement de tolérance aux pannes : `skip`, `retry`, ou `abort` |
 | `max_retries` | int | `0` | Nombre de réessais lorsque `on_failure: retry` |
+| `limit` | int | `0` | Se place dans `config`, lu par le moteur : tronque le corpus survivant après cette étape (0 = tout conserver) |
+
+#### `parallel`
+
+`parallel: 0` signifie automatique, et non illimité. L'exécuteur part de `os.cpu_count()` puis abaisse cette valeur deux fois : au plafond que le processeur déclare dans `max_parallelism()`, et au réglage `max_workers` du pipeline, en retenant le plus petit des deux. Un processeur qui lance une JVM ou un outil externe par échantillon déclare ce plafond précisément pour qu'un `parallel: 0` laissé par défaut ne puisse pas épuiser la machine, et l'exécution journalise le plafond qu'elle a appliqué. Un `parallel: N` explicite est honoré exactement tel qu'il est écrit, et n'est plafonné ni par l'un ni par l'autre.
+
+#### `timeout`
+
+`timeout` est le budget dont dispose un échantillon dans une étape Map. Lorsqu'il est épuisé, l'étape cesse d'attendre, enregistre cet échantillon comme ayant manqué de temps, et passe au suivant.
+
+Ce qu'il ne fait pas, c'est tuer quoi que ce soit. Rien en Python ne peut arrêter un thread déjà en cours d'exécution : le thread de travail du processeur est donc abandonné plutôt que terminé. Un processus externe qu'il a lancé continue de tourner jusqu'à ce qu'il s'achève de lui-même, et la mémoire que ce thread retient le reste jusqu'à ce qu'il rende la main. Le budget borne le temps que l'*étape* passe à attendre, pas la durée du travail. Un processeur qui délègue à un outil externe devrait transmettre une limite à cet outil également, ce que fait `semgrep_scanner` avec sa propre clé de configuration `timeout`.
+
+Seules les étapes Map sont couvertes. Les étapes reduce et bulk-map constituent une seule invocation pour l'ensemble du corpus plutôt qu'une invocation par échantillon, et ni l'une ni l'autre ne s'exécute sous ce budget.
+
+Manquer de temps n'est pas un échec : `on_failure: retry` ne le retente donc pas, et une exécution reprise le laisse en l'état, car le budget qui était trop court l'est toujours. Demander une nouvelle tentative, c'est le rôle de [`--retry-timeouts`]({{ '/fr/reference/cli.html' | relative_url }}).
+
+#### `limit`
+
+`limit` se place dans le bloc `config` d'une étape, mais c'est le moteur qui le lit, et non le processeur. Il peut donc être défini sur n'importe quelle étape, quelles que soient les clés que ce processeur accepte, et un processeur déclarant une `Config` typée n'avertira pas que cette clé lui est inconnue.
+
+Une fois l'étape terminée, chaque échantillon encore actif au-delà des `limit` premiers est marqué comme filtré à cette étape et ne participe plus à la suite de l'exécution. Le décompte porte sur l'ensemble du corpus survivant, et non sur les seuls échantillons que cette étape a traités.
+
+L'ordre est celui dans lequel l'exécution transporte le corpus à cet instant, et c'est ce qui rend `limit` intéressant sur une étape reduce, ou sur celle qui la suit. Une étape reduce renvoie ses survivants classés, l'exécuteur adopte ce classement avant que la troncature n'ait lieu, et `limit` conserve alors les mieux classés plutôt qu'une tranche arbitraire. Sur une étape derrière laquelle aucun classement n'a eu lieu, elle conserve les échantillons qui se présentent en premier, quels qu'ils soient.
 
 ### Champs de Premier Niveau
 
@@ -125,7 +148,7 @@ Chaque prompt peut utiliser ceci :
 Au-delà de cela, un prompt peut utiliser tout ce que les étapes **qui le précèdent** ont enregistré. Chaque processeur déclare ces noms dans son attribut `provides`, et il en existe deux sortes :
 
 - **Les clés de données**, c'est-à-dire tout ce que le processeur place dans `data`, comme `device_name` ou `finding_count`. Disponibles directement sous ce nom, ainsi que sous `history`.
-- **Les artefacts**, c'est-à-dire un fichier écrit par le processeur, atteignable par son chemin, séparateurs et extension incorporés au nom. `decompiled/dispatch_ioctl.c` devient `decompiled_dispatch_ioctl_c`. Le JSON est analysé en un objet ; `.c`, `.h`, `.txt`, `.md`, `.py`, `.yaml` et `.yml` arrivent sous forme de texte. Les autres types de fichiers ne sont pas exposés. Tout ce qui dépasse le budget de contexte est tronqué, et un JSON surdimensionné est ignoré avec un avertissement plutôt qu'analysé.
+- **Les artefacts**, c'est-à-dire un fichier écrit par le processeur, atteignable par son chemin, séparateurs et extension incorporés au nom. `decompiled/dispatch_ioctl.c` devient `decompiled_dispatch_ioctl_c`. Le JSON est analysé en un objet, et une longue liste de suffixes de code source, de balisage et de texte brut arrive sous forme de texte ; une étape qui a besoin d'un autre ensemble déclare `text_extensions` dans sa propre `config`, ce qui remplace la liste plutôt que de s'y ajouter. Rien d'autre n'est exposé. Le texte qui dépasse le budget de contexte, soit `max_context_tokens` multiplié par quatre caractères, est tronqué et le signale, et un fichier JSON plus volumineux que ce budget est ignoré avec un avertissement plutôt qu'analysé.
 
 Une valeur n'est disponible que pour les étapes situées *après* celle qui l'enregistre : un prompt ne peut donc pas atteindre la sortie de sa propre étape.
 
@@ -135,7 +158,7 @@ Pour voir ce qu'un pipeline donné propose, exécutez :
 deepzero validate <pipeline>
 ```
 
-Un prompt nommant quelque chose qu'aucune étape antérieure ne produit est signalé comme une erreur listant ce qui était disponible à la place, et la même vérification fait échouer l'exécution si elle est atteinte. Cela compte, car un nom inconnu ne produirait sinon rien au rendu : on demanderait au modèle de juger une charge utile vide, et le verdict reviendrait assuré et dénué de sens.
+Un prompt nommant quelque chose qu'aucune étape antérieure ne produit est signalé comme une erreur listant ce qui était disponible à la place. Le rendu au moment de l'exécution est strict sur le même point : une étape qui y parvient malgré tout échoue sur cet échantillon plutôt que de laisser partir le prompt. Cela compte, car un nom inconnu ne produirait sinon rien au rendu : on demanderait au modèle de juger une charge utile vide, et le verdict reviendrait assuré et dénué de sens.
 
 ### Le Bloc `report`
 
@@ -211,6 +234,10 @@ Le rapport dispose d'une catégorie pour la chose recherchée, d'une pour les d�
 
 Les issues restantes sont nommées par le moteur et ne sont pas configurables, car elles décrivent ce qu'a fait le moteur plutôt que ce que cherchait le pipeline : « Errored », « Ran out of time », « Unclear verdict » et « Filtered out ».
 
+Chaque clé est lue pour elle-même : en déclarer une laisse donc les autres à leur valeur par défaut. Une clé qui ne fait pas partie des sept ci-dessus est ignorée, tout comme une clé laissée vide, et un `lexicon:` écrit comme une valeur plutôt que comme un bloc retombe intégralement sur les valeurs par défaut, au lieu de faire échouer le rapport qu'une longue exécution vient tout juste de mériter.
+
+La formulation finalement en vigueur est écrite dans `report.json` à côté des décomptes, sous `bucket_labels`, `entity`, `entity_plural` et `target_label` : tout ce qui produit ses propres intitulés à partir de ce fichier nomme donc chaque issue comme le fait le HTML.
+
 C'est ce qui emmène l'outil au-delà de la recherche de vulnérabilités. Un pipeline auditant les licences des dépendances a les mêmes trois issues et pas un seul des mots par défaut pour les désigner : il dit donc ce qu'elles sont.
 
 ```yaml
@@ -236,16 +263,19 @@ Rien d'autre ne change. Le rapport classe, filtre, regroupe et exporte exactemen
 
 Un pipeline enregistre ce qu'il a conclu. Savoir si une personne a réellement vérifié cette conclusion est une affirmation distincte, que seul le lecteur peut formuler : le rapport porte donc des marques qu'il ajoute au fil de sa lecture.
 
-Sur la page de n'importe quel résultat, il y en a trois :
+Sur la page de n'importe quel résultat, il y en a deux, car une revue soit a abouti à une réponse, soit n'y est pas parvenue :
 
 | Marque | Signification |
 |--------|---------------|
-| **confirmed** | vérifié, et cela tient |
-| **did not hold up** | vérifié, et cela ne tient pas ; un résultat achevé, avec une réponse définitive |
-| **outstanding** | examiné, mais quelque chose reste à prouver |
+| **Confirmed** | vérifié, et cela tient |
+| **Refuted** | vérifié, et cela n'a pas tenu |
 
-Les deux dernières ouvrent une note où consigner ce que vous avez lancé, sur quoi, et ce qui s'est passé, afin que quelqu'un d'autre puisse répéter la tentative. Ce qui compte comme non résolu est laissé au lecteur, qu'il s'agisse de reproduire un plantage, de démontrer une précondition ou de lire un diff, car du point de vue du rapport ce sont toutes la même forme de travail inachevé.
+L'une comme l'autre ouvre une note où consigner ce que vous avez lancé, sur quoi, et ce qui s'est passé, afin que quelqu'un d'autre puisse répéter la tentative. La note appartient à la marque : un résultat qui n'en porte aucune n'a nulle part où en accueillir une, de sorte qu'une revue qui n'a rien tranché s'enregistre en laissant le résultat intact, plutôt qu'en notant où elle s'est arrêtée.
 
-Les marques apparaissent en regard de chaque ligne de l'index et peuvent servir de filtre, y compris **Unreviewed**, qui est la liste des résultats que personne n'a encore examinés. La synthèse compte chacune d'elles, de sorte qu'une exécution peut se lire comme ce qui est réellement établi plutôt que seulement comme ce qui a été avancé : un résultat qui n'a pas tenu n'est jamais confondu avec un résultat que personne n'a examiné.
+Tout ce qui ne porte ni l'une ni l'autre compte comme **Unreviewed**, que personne ne l'ait ouvert ou que quelqu'un l'ait ouvert sans pouvoir trancher. Ces deux cas relevaient autrefois de contrôles distincts, et côte à côte ils se lisent comme la même chose.
+
+Refuted n'est délibérément pas fondu dans Unreviewed. C'est un travail achevé, avec une réponse définitive, et un résultat qui n'a pas tenu ne devrait jamais ressembler à un résultat que personne n'a examiné.
+
+Les marques apparaissent en regard de chaque ligne de l'index et peuvent servir de filtre, Unreviewed compris, ce qui donne la liste des résultats sur lesquels personne n'a encore tranché. La synthèse compte les trois, de sorte qu'une exécution peut se lire comme ce qui est réellement établi plutôt que seulement comme ce qui a été avancé.
 
 Le rapport est un fichier, les marques vivent donc dans le navigateur. **export marks** les écrit sous forme de `marks.json` ; enregistrez ce fichier à côté de `index.html` et elles font alors partie du rapport : affichées pour quiconque l'ouvre, et incluses dans `inventory.csv` sous `review` et `review_note`. Les marques sont indexées sur le pipeline et la cible plutôt que sur le chemin du fichier : relancer l'analyse sur le même corpus les conserve donc.

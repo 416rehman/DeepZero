@@ -1,3 +1,14 @@
+# METHOD_NEITHER: the user's own address arrives as Irp->UserBuffer, at offset
+# 0x60 of the IRP. SystemBuffer, at 0x18, is METHOD_BUFFERED and belongs to
+# buffer_overflow.yaml; a rule for it here would match the same reads as
+# ghidra-no-input-length-validation and report every one of them twice, doubling
+# the finding count this pipeline ranks drivers by.
+#
+# Both rules below compare the offset instead of writing it into the pattern. An
+# ellipsis is not a valid operand of a binary expression, so `*(... + 0x60)`
+# parses and then matches nothing at all. Binding the base and the offset to
+# metavariables also sees through the cast ghidra emits, so both
+# `*(longlong *)(param_2 + 0x60)` and `*(param_2 + 0x60)` are recognised.
 rules:
   - id: ghidra-method-neither-no-probe
     languages: [c]
@@ -5,18 +16,32 @@ rules:
     message: >
       IOCTL handler accesses Irp->UserBuffer or raw user pointer
       without ProbeForRead/ProbeForWrite. This is a METHOD_NEITHER
-      boundary failure ΓÇö the driver treats a user-supplied address
+      boundary failure: the driver treats a user-supplied address
       as a valid kernel pointer without validation.
     metadata:
       vuln_class: "Arbitrary Kernel Memory R/W"
       cwe: "CWE-822"
       exploitability: "HIGH"
     patterns:
-      - pattern: $X = *(... + 0x60);
+      - pattern: $X = *($BASE + $OFF);
+      - metavariable-comparison:
+          metavariable: $OFF
+          comparison: $OFF == 0x60
+      # the probe has to be excluded at function scope. A bare call is a
+      # statement, and nothing is ever inside it, so excluding the call alone
+      # left a rule that never withheld a finding however the driver validated.
       - pattern-not-inside: |
-          ProbeForRead(...);
+          $RET $F(...) {
+            ...
+            ProbeForRead(...);
+            ...
+          }
       - pattern-not-inside: |
-          ProbeForWrite(...);
+          $RET $F(...) {
+            ...
+            ProbeForWrite(...);
+            ...
+          }
 
   - id: ghidra-user-buffer-direct-deref
     languages: [c]
@@ -28,21 +53,12 @@ rules:
     metadata:
       vuln_class: "Arbitrary Kernel Memory R/W"
       cwe: "CWE-822"
-    pattern: |
-      $BUF = *(... + 0x60);
-      ...
-      *$BUF = ...;
-
-  - id: ghidra-irp-systembuffer-no-length-check
-    languages: [c]
-    severity: WARNING
-    message: >
-      IOCTL uses SystemBuffer without checking InputBufferLength
-      or OutputBufferLength. May allow out-of-bounds access.
-    metadata:
-      vuln_class: "Arbitrary Kernel Memory R/W"
-      cwe: "CWE-120"
+      exploitability: "HIGH"
     patterns:
-      - pattern: $BUF = *(... + 0x18);
-      - pattern-not-inside: |
-          if (... < ...) { ... }
+      - pattern: |
+          $BUF = *($BASE + $OFF);
+          ...
+          *$BUF = ...;
+      - metavariable-comparison:
+          metavariable: $OFF
+          comparison: $OFF == 0x60

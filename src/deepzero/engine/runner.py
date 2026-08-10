@@ -9,7 +9,7 @@ import threading
 import time
 import traceback as tb_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from rich.console import Console
 
@@ -206,7 +206,7 @@ class PipelineRunner:
                     self.dashboard.stage_skip(spec.name)
                 continue
 
-            stage_stats = {"completed": 0, "filtered": 0, "failed": 0}
+            stage_stats = {"completed": 0, "filtered": 0, "failed": 0, "timed_out": 0}
 
             for s in active:
                 output = s.history.get(spec.name)
@@ -217,6 +217,8 @@ class PipelineRunner:
                         stage_stats["filtered"] += 1
                     elif output.status == StageStatus.FAILED:
                         stage_stats["failed"] += 1
+                    elif output.status == StageStatus.TIMED_OUT:
+                        stage_stats["timed_out"] += 1
                     elif output.status == StageStatus.COMPLETED:
                         stage_stats["completed"] += 1
 
@@ -232,6 +234,7 @@ class PipelineRunner:
                     passed=stage_stats["completed"],
                     filtered=stage_stats["filtered"],
                     failed=stage_stats["failed"],
+                    timed_out=stage_stats["timed_out"],
                     is_fully_cached=is_fully_cached,
                 )
 
@@ -258,17 +261,24 @@ class PipelineRunner:
             passed = stage_stats["completed"]
             filtered = stage_stats["filtered"]
             failed = stage_stats["failed"]
+            timed_out = stage_stats["timed_out"]
+            # running out of time is reported on its own rather than folded into
+            # either of the outcomes it is not: those samples neither passed nor
+            # went wrong, and a longer budget is what they are waiting on
             log.info(
-                "%s: %d passed, %d filtered, %d failed (%.1fs)",
+                "%s: %d passed, %d filtered, %d failed%s (%.1fs)",
                 spec.name,
                 passed,
                 filtered,
                 failed,
+                f", {timed_out} out of time" if timed_out else "",
                 elapsed,
             )
 
             if self.dashboard:
-                self.dashboard.stage_done(spec.name, passed, filtered, failed, elapsed)
+                self.dashboard.stage_done(
+                    spec.name, passed, filtered, failed, elapsed, timed_out=timed_out
+                )
                 self.dashboard.set_transient_status("syncing state to disk...")
 
             # sync barrier
@@ -455,20 +465,21 @@ class PipelineRunner:
 
     def _resolve_parallelism(self, spec: StageSpec, processor: Processor) -> int:
         # explicit `parallel: N` is honored as-is; `parallel: 0` auto-scales to
-        # cpu count but is clamped to the processor's declared ceiling (if any)
+        # cpu count but is clamped to whatever the pipeline's `max_workers`
+        # setting allows and to the processor's own declared ceiling (if any),
         # so heavy stages don't spawn one worker per core.
         parallelism = spec.parallel
         if parallelism > 0:
             return parallelism
         parallelism = os.cpu_count() or 4
-        ceiling = processor.max_parallelism()
-        if ceiling is not None and 0 < ceiling < parallelism:
-            log.info(
-                "%s: capping auto concurrency to %d workers (processor limit)", spec.name, ceiling
-            )
-            parallelism = ceiling
-        else:
-            log.debug("%s: auto-scaled to %d workers", spec.name, parallelism)
+        for ceiling, why in (
+            (processor.max_parallelism(), "processor limit"),
+            (self.default_max_workers, "max_workers setting"),
+        ):
+            if ceiling is not None and 0 < ceiling < parallelism:
+                log.info("%s: capping auto concurrency to %d workers (%s)", spec.name, ceiling, why)
+                parallelism = ceiling
+        log.debug("%s: auto-scaled to %d workers", spec.name, parallelism)
         return parallelism
 
     def _run_map(
@@ -562,6 +573,7 @@ class PipelineRunner:
                             passed=1 if outcome == "completed" else 0,
                             filtered=1 if outcome == "filtered" else 0,
                             failed=1 if outcome == "failed" else 0,
+                            timed_out=1 if outcome == "timed_out" else 0,
                         )
                     if len(dirty) >= 50 or time.monotonic() - last_flush > 10:
                         for s in dirty:
@@ -727,6 +739,44 @@ class PipelineRunner:
 
         return ProcessorResult.fail("processor max attempts exceeded")
 
+    def _invoke_stage(
+        self, spec: StageSpec, call: Callable[[], Any]
+    ) -> tuple[Any, Exception | None]:
+        """run a whole-corpus stage under its failure policy.
+
+        Reduce and bulk-map stages are one invocation for the entire corpus
+        rather than one per sample, so `on_failure: retry` and `max_retries`
+        apply to that invocation. Returns what the call produced, or the error
+        it ended on; deciding what a failure means for the samples is the
+        caller's, because a barrier and a batch answer that differently.
+        """
+        attempts = 0
+        max_attempts = spec.max_retries + 1 if spec.on_failure == FailurePolicy.RETRY else 1
+        last: Exception | None = None
+
+        while attempts < max_attempts:
+            attempts += 1
+            try:
+                return call(), None
+            except PROCESSOR_ERRORS as exc:
+                last = exc
+                if self._shutdown_event.is_set():
+                    return None, exc
+                if attempts < max_attempts:
+                    backoff = min(2**attempts, 30)
+                    log.warning(
+                        "[%s] stage failed (attempt %d/%d), retrying in %ds: %s",
+                        spec.name,
+                        attempts,
+                        max_attempts,
+                        backoff,
+                        exc,
+                    )
+                    if self._shutdown_event.wait(backoff):
+                        return None, exc
+
+        return None, last
+
     @staticmethod
     def _reorder(sample_states: dict[str, SampleState], order: list[str]) -> None:
         ranked = [sid for sid in order if sid in sample_states]
@@ -756,10 +806,21 @@ class PipelineRunner:
             shutdown_event=self._shutdown_event,
         )
         entries = [self._make_entry(state) for state in active]
-        try:
-            results = processor.process(ctx, entries)
-        except PROCESSOR_ERRORS as exc:
-            log.error("  reduce processor '%s' crashed: %s", spec.name, exc)
+        results, error = self._invoke_stage(spec, lambda: processor.process(ctx, entries))
+        if error is not None:
+            # a barrier decides who survives, so a barrier that did not run has
+            # nothing to apply: every active sample carries on, unranked. Said
+            # plainly, because a corpus meant to be cut to its best few arriving
+            # at the next stage whole is expensive and easy to miss in a log.
+            log.error(
+                "%s: reduce processor crashed (%s) - nothing was ranked or dropped, "
+                "all %d active samples continue",
+                spec.name,
+                error,
+                len(active),
+            )
+            if spec.on_failure == FailurePolicy.ABORT:
+                self._shutdown_event.set()
             return []
 
         kept_ids = set(results)
@@ -801,22 +862,26 @@ class PipelineRunner:
 
         log.info("%s: batch processing %d samples", spec.name, len(entries))
 
-        try:
-            ctx = ProcessorContext(
-                pipeline_dir=self.pipeline_dir,
-                global_config=self.global_config,
-                llm=self.llm,
-                progress=_UIProgressAdapter(self.dashboard, spec.name),
-                shutdown_event=self._shutdown_event,
-            )
-            results = processor.process(ctx, entries)
-        except PROCESSOR_ERRORS as exc:
+        ctx = ProcessorContext(
+            pipeline_dir=self.pipeline_dir,
+            global_config=self.global_config,
+            llm=self.llm,
+            progress=_UIProgressAdapter(self.dashboard, spec.name),
+            shutdown_event=self._shutdown_event,
+        )
+        results, error = self._invoke_stage(spec, lambda: processor.process(ctx, entries))
+
+        if error is not None:
+            # a crash immediately after ctrl+c is the shutdown reaching the
+            # external process, not the batch failing, so let the flag arrive
+            # before every sample is blamed for it
             if self._shutdown_event.wait(0.25):
                 return
-            log.error("  batch processor '%s' crashed: %s", spec.name, exc)
+            log.error("  batch processor '%s' crashed: %s", spec.name, error)
             for state in pending:
-                state.mark_stage_failed(spec.name, f"batch processor crashed: {exc}")
-                self.state_store.save_sample(state)
+                self._apply_result(
+                    state, spec, ProcessorResult.fail(f"batch processor crashed: {error}")
+                )
                 stage_stats["failed"] += 1
                 if self.dashboard:
                     self.dashboard.stage_update(spec.name, advance=1, failed=1)
@@ -829,21 +894,12 @@ class PipelineRunner:
 
             if i < len(results):
                 result = results[i]
-                if result.status == StageStatus.COMPLETED:
-                    state.mark_stage_completed(
-                        spec.name,
-                        verdict=result.verdict,
-                        artifacts=result.artifacts,
-                        data=result.data,
-                    )
-                else:
-                    state.mark_stage_failed(spec.name, result.error or "batch item failed")
             else:
-                state.mark_stage_failed(
-                    spec.name, "batch processor returned fewer results than entries"
-                )
+                result = ProcessorResult.fail("batch processor returned fewer results than entries")
 
-            self.state_store.save_sample(state)
+            # the same path a map stage's result takes, so a batch honors
+            # on_failure and records running out of time the same way
+            self._apply_result(state, spec, result)
             outcome = self._classify_outcome(state, spec.name)
             stage_stats[outcome] += 1
             if self.dashboard:
@@ -863,7 +919,7 @@ class PipelineRunner:
             return "failed"
         if output.status == StageStatus.COMPLETED and output.verdict == Verdict.FILTER:
             return "filtered"
-        if output.status in (StageStatus.FILTERED, StageStatus.FAILED):
+        if output.status in (StageStatus.FILTERED, StageStatus.FAILED, StageStatus.TIMED_OUT):
             return output.status.value
         return "completed"
 
@@ -877,12 +933,34 @@ class PipelineRunner:
         if timeout <= 0:
             return processor.process(ctx, entry)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(processor.process, ctx, entry)
+        outcome: dict[str, Any] = {}
+        finished = threading.Event()
+
+        def _call() -> None:
             try:
-                return future.result(timeout=timeout)
-            except concurrent.futures.TimeoutError:
-                raise TimeoutError(f"processor timed out after {timeout}s")
+                outcome["result"] = processor.process(ctx, entry)
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the calling thread
+                outcome["error"] = exc
+            finally:
+                finished.set()
+
+        # a bare daemon thread rather than a pool: nothing can stop a thread
+        # that is already running, so the only way to honor the budget is to
+        # stop waiting on it. A pool joins its worker on the way out, which
+        # would hand back "timed out after 30s" half an hour later, and a
+        # non-daemon thread would go on to hold the interpreter open at exit.
+        # The stage moves on and the sample is recorded as out of time.
+        worker = threading.Thread(
+            target=_call, name=f"deepzero-{entry.sample_id[:12]}", daemon=True
+        )
+        worker.start()
+        if not finished.wait(timeout):
+            raise TimeoutError(f"processor timed out after {timeout}s")
+
+        error = outcome.get("error")
+        if error is not None:
+            raise error
+        return outcome["result"]
 
     def _generate_context_files(self, sample_states: dict[str, SampleState]) -> None:
         active_items = [(sid, state) for sid, state in sample_states.items() if state.is_active()]
@@ -923,8 +1001,8 @@ class PipelineRunner:
             try:
                 processor.teardown()
             except (RuntimeError, ValueError, OSError, AttributeError) as e:
-                errors.append(f"{processor.name}: {e}")
-                log.warning("processor '%s' teardown error: %s", processor.name, e)
+                errors.append(f"{processor.spec.name}: {e}")
+                log.warning("processor '%s' teardown error: %s", processor.spec.name, e)
         try:
             self.ingest.teardown()
         except (RuntimeError, ValueError, OSError, AttributeError) as e:

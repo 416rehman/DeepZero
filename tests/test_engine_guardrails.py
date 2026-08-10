@@ -11,8 +11,8 @@ from __future__ import annotations
 import threading
 
 from deepzero.engine.stage import ProcessorContext, ProcessorEntry, StageSpec
-from deepzero.stages.filter import MetadataFilter
 from deepzero.engine.types import Verdict
+from deepzero.stages.filter import MetadataFilter
 
 
 def _ctx(tmp_path):
@@ -85,5 +85,43 @@ class TestDedupKeepsExactlyOne:
     def test_distinct_values_all_survive(self, tmp_path):
         f = self._filter()
         ctx = _ctx(tmp_path)
-        out = [f.process(_ctx(tmp_path), _entry(f"s{i}", f"v{i}")).verdict for i in range(5)]
+        out = [f.process(ctx, _entry(f"s{i}", f"v{i}")).verdict for i in range(5)]
         assert all(v == Verdict.CONTINUE for v in out)
+
+
+class TestReadingDoesNotCreate:
+    """Resolving a path for a sample that does not exist must not bring it into
+    being. The report resolves one per rendered row and the api resolves one per
+    request, and the cli will bind that api to every interface on request, so a
+    creating read is an unauthenticated way to fill a disk with empty
+    directories."""
+
+    def _store(self, tmp_path):
+        from deepzero.engine.state import StateStore
+
+        return StateStore(tmp_path / "work")
+
+    def test_loading_an_unknown_sample_leaves_nothing_behind(self, tmp_path):
+        store = self._store(tmp_path)
+        samples = tmp_path / "work" / "samples"
+        samples.mkdir(parents=True, exist_ok=True)
+        before = {p.name for p in samples.iterdir()}
+        for i in range(10):
+            assert store.load_sample(f"ghost-{i}") is None
+        assert {p.name for p in samples.iterdir()} == before
+
+    def test_asking_where_a_sample_would_live_is_not_a_write(self, tmp_path):
+        store = self._store(tmp_path)
+        samples = tmp_path / "work" / "samples"
+        samples.mkdir(parents=True, exist_ok=True)
+        path = store.sample_dir("never-seen", create=False)
+        assert not path.exists()
+
+    def test_saving_still_creates_what_it_needs(self, tmp_path):
+        """the guard must not break the write path it shares."""
+        from deepzero.engine.state import SampleState
+
+        store = self._store(tmp_path)
+        store.save_sample(SampleState(sample_id="real1", filename="a.bin"))
+        assert (tmp_path / "work" / "samples" / "real1" / "state.json").exists()
+        assert store.load_sample("real1") is not None

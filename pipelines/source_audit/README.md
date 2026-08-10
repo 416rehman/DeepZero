@@ -137,10 +137,12 @@ code: it belongs to the upstream project, if to anyone.
 
 ## Reading the report
 
-`report.columns` puts finding count, files scanned, source file count, primary
-language and revision against each repository. Files scanned earns its place: a
-repository with no findings and a repository whose files semgrep never opened both
-show zero above it, and only one of those is a result.
+`report.columns` names finding count, files scanned, source file count, primary
+language and revision, in the order they are worth reading. The summary page has room
+for the first few of them beside each repository's name; every one of them is on the
+repository's own page and in `inventory.csv`. Files scanned earns its place at the
+front: a repository with no findings and a repository whose files semgrep never opened
+both show zero findings, and only one of those is a result.
 
 The verdict a run records and what a person has checked are separate claims. Mark
 each repository you work through in the report itself, and export the marks so they

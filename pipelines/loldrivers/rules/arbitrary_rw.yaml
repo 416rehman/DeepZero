@@ -55,11 +55,23 @@ rules:
       vuln_class: "Arbitrary Kernel Memory R/W"
       cwe: "CWE-822"
       exploitability: "HIGH"
+    # the offset is compared rather than written into the pattern: an ellipsis
+    # is not a valid operand of a binary expression, so `*(... + 0x18)` parses
+    # and then matches nothing at all. Binding the base and the offset to
+    # metavariables also sees through the cast ghidra emits, so both
+    # `*(longlong *)(param_2 + 0x18)` and `*(param_2 + 0x18)` are recognised.
+    #
+    # The write has to be through the buffer that was read, not through any
+    # pointer that happens to follow it, or the rule reports every write in the
+    # dispatch routine and none of them is the one its message describes.
     patterns:
       - pattern: |
-          $BUF = *(... + 0x18);
+          $BUF = *($BASE + $OFF);
           ...
-          *$PTR = ...;
+          *$BUF = ...;
+      - metavariable-comparison:
+          metavariable: $OFF
+          comparison: $OFF == 0x18
 
   - id: ghidra-mmcopyvirtualmemory
     languages: [c]

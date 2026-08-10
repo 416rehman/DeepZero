@@ -4,10 +4,10 @@
 #   dir/file.py:ClassName    = specific class in that file
 #
 # processor types:
-#   ingest = discovers samples from a target source
-#   map    = 1:1 sample processing (filters, decompilers, LLM, commands)
-#   reduce = N:1 synchronization barrier (top-k selection, sorting, global ranking)
-#   batch  = N:batch external process (semgrep bulk scan)
+#   ingest   = discovers samples from a target source
+#   map      = 1:1 sample processing (filters, decompilers, LLM, commands)
+#   reduce   = N:1 synchronization barrier (top-k selection, sorting, global ranking)
+#   bulk_map = N samples through one external invocation (semgrep bulk scan)
 
 name: loldrivers
 description: windows kernel driver vulnerability research pipeline

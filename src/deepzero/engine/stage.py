@@ -186,7 +186,8 @@ class StageSpec:
     name: str
     # processor reference - bare name for built-in, dir/file.py for external
     processor: str
-    # processor config from yaml - parsed into a Config dataclass if the processor declares one
+    # processor config from yaml - parsed into a Config dataclass if the processor declares one.
+    # the engine reads ENGINE_CONFIG_KEYS out of it as well, whatever the processor accepts
     config: dict[str, Any] = field(default_factory=dict)
     # concurrency: how many samples to process in parallel (0 = auto/max hardware)
     parallel: int = 0
@@ -224,6 +225,10 @@ def template_key_for_artifact(relative_path: str) -> str:
 
 # available to every prompt regardless of which stages ran before it
 ALWAYS_PROVIDED: tuple[str, ...] = ("sample_name", "sample_path", "history", "config")
+
+# keys the engine itself reads out of a stage's `config` block. a processor is
+# not expected to declare them, and is not warned about them.
+ENGINE_CONFIG_KEYS: frozenset[str] = frozenset({"limit"})
 
 
 class Processor(ABC):
@@ -267,9 +272,21 @@ class Processor(ABC):
         self.global_config: GlobalConfig = {}
 
     def _parse_config(self, raw: dict) -> Any:
+        raw = raw or {}
         if self.Config is None:
             return raw
         valid = {f.name for f in fields(self.Config)}
+        unknown = sorted(set(raw) - valid - ENGINE_CONFIG_KEYS)
+        if unknown:
+            # a key this processor does not read does nothing at all, which is
+            # indistinguishable from it working until the run ends up wrong. a
+            # misspelling is the usual cause, so the accepted names go with it.
+            self.log.warning(
+                "config key(s) %s are not read by %s and were ignored - it accepts: %s",
+                ", ".join(unknown),
+                type(self).__name__,
+                ", ".join(sorted(valid)) or "no config fields",
+            )
         filtered = {k: v for k, v in raw.items() if k in valid}
         return self.Config(**filtered)
 

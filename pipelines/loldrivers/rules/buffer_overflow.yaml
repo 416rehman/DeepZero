@@ -1,3 +1,8 @@
+# Offsets into the IRP are compared rather than written into the pattern. An
+# ellipsis is not a valid operand of a binary expression, so `*(... + 0x18)`
+# parses and then matches nothing at all. Binding the base and the offset to
+# metavariables also sees through the cast ghidra emits, so both
+# `*(longlong *)(param_2 + 0x18)` and `*(param_2 + 0x18)` are recognised.
 rules:
   - id: ghidra-stack-buffer-no-length-check
     languages: [c]
@@ -27,8 +32,14 @@ rules:
     metadata:
       vuln_class: "Arbitrary Kernel Memory R/W"
       cwe: "CWE-200"
-    pattern: |
-      *(... + 0x38) = ...;
+    patterns:
+      - pattern: "*($BASE + $OFF) = ...;"
+      # every dispatch routine reports a length, and a length of zero says no
+      # bytes were returned, so it is the one value that cannot leak anything
+      - pattern-not: "*($BASE + $OFF) = 0;"
+      - metavariable-comparison:
+          metavariable: $OFF
+          comparison: $OFF == 0x38
 
   - id: ghidra-no-input-length-validation
     languages: [c]
@@ -41,7 +52,10 @@ rules:
       vuln_class: "Arbitrary Kernel Memory R/W"
       cwe: "CWE-120"
     patterns:
-      - pattern: $X = *(... + 0x18);
+      - pattern: $X = *($BASE + $OFF);
+      - metavariable-comparison:
+          metavariable: $OFF
+          comparison: $OFF == 0x18
       - pattern-not-inside: |
           if (... < ...) {
             ...

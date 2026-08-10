@@ -63,7 +63,7 @@ class SampleState:
     sha256: str = ""
     source_path: str = ""
     filename: str = ""
-    # lifecycle: pending -> active -> skipped | failed | completed
+    # lifecycle: pending -> active -> filtered | failed | timed_out
     verdict: SampleStatus = SampleStatus.PENDING
     current_stage: str = ""
     # per-stage namespaced output ledger
@@ -315,9 +315,18 @@ class StateStore:
 
     # -- sample state --
 
-    def sample_dir(self, sample_id: str) -> Path:
+    def sample_dir(self, sample_id: str, *, create: bool = True) -> Path:
+        """where a sample's files live.
+
+        Reading takes create=False. Creating on the way to a read means anything
+        that resolves a path for an id it has not seen leaves a directory behind,
+        which the report does for every id it renders and the api does for every
+        id a request names. On a server bound to every interface, that is an
+        unauthenticated way to fill a disk with empty directories.
+        """
         d = self._samples_dir / sample_id
-        d.mkdir(parents=True, exist_ok=True)
+        if create:
+            d.mkdir(parents=True, exist_ok=True)
         return d
 
     def save_sample(self, state: SampleState) -> None:
@@ -326,7 +335,7 @@ class StateStore:
         self._atomic_write(path, self._dumps(sample_to_dict(state)))
 
     def load_sample(self, sample_id: str) -> SampleState | None:
-        path = self.sample_dir(sample_id) / "state.json"
+        path = self.sample_dir(sample_id, create=False) / "state.json"
         if not path.exists():
             return None
         try:
@@ -379,6 +388,10 @@ class StateStore:
             ),
             "filtered": sum(1 for e in entries if e["verdict"] == SampleStatus.FILTERED),
             "failed": sum(1 for e in entries if e["verdict"] == SampleStatus.FAILED),
+            # counted on its own, and counted at all: a sample that ran out of
+            # time belongs to none of the buckets above, so leaving it out made
+            # the totals disagree with the number of samples they describe
+            "timed_out": sum(1 for e in entries if e["verdict"] == SampleStatus.TIMED_OUT),
             "completed": sum(1 for e in entries if e["verdict"] == SampleStatus.COMPLETED),
             "samples": entries,
         }

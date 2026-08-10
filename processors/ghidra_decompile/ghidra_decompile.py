@@ -63,6 +63,29 @@ def _total_ram_gb() -> float | None:
     return None
 
 
+def _read_cached_result(output_dir: Path, logger: logging.Logger) -> dict[str, Any] | None:
+    """a previous run's result for this binary, or None if there isn't a usable one.
+
+    Both readers of ghidra_result.json go through here so they cannot disagree
+    about what counts as analysed. A file that will not decode, will not parse,
+    or records `success: false` is not a cached analysis: the post-script writes
+    that last one on its way out of a crash, and adopting it would report the
+    binary as decompiled with nothing decompiled.
+    """
+    cached = output_dir / "ghidra_result.json"
+    if not cached.exists():
+        return None
+    try:
+        result = json.loads(cached.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        logger.warning("cached ghidra result is unreadable, re-running analysis: %s", exc)
+        return None
+    if not isinstance(result, dict) or not result.get("success", False):
+        logger.info("cached ghidra result records an unfinished run, re-running analysis")
+        return None
+    return result
+
+
 def _auto_ghidra_workers(cpu: int | None = None, ram_gb: float | None = None) -> int:
     """a memory-safe default worker count for ghidra headless.
 
@@ -78,6 +101,15 @@ def _auto_ghidra_workers(cpu: int | None = None, ram_gb: float | None = None) ->
 
 
 class GhidraDecompile(MapProcessor):
+    """Decompile one binary per sample with a Ghidra headless post-script.
+
+    A `decompiled/ghidra_result.json` already in the sample's directory is
+    adopted instead of running Ghidra again, because analysing one binary costs
+    minutes. The file is recorded as an artifact, which is what lets `deepzero
+    run --redo` discard it and force a real re-analysis; only a result recording
+    a finished run is ever adopted.
+    """
+
     description = (
         "decompiles binaries using ghidra headless analysis with a configurable post-script"
     )
@@ -134,14 +166,13 @@ class GhidraDecompile(MapProcessor):
         return []
 
     def should_skip(self, ctx: ProcessorContext, entry: ProcessorEntry) -> str | None:
-        cached = entry.sample_dir / "decompiled" / "ghidra_result.json"
-        if cached.exists():
-            try:
-                with open(cached, "r", encoding="utf-8") as f:
-                    json.load(f)
-                return "decompilation already cached"
-            except (json.JSONDecodeError, OSError, ValueError) as e:
-                self.log.debug("failed to read cached ghidra output: %s", e)
+        # a skipped sample counts as passed, so only a result that records a
+        # completed analysis may be adopted. The post-script writes this file on
+        # the way out of a crash too, and treating that one as cached marked the
+        # driver decompiled while leaving no decompiled code and none of the
+        # values a later prompt reads.
+        if _read_cached_result(entry.sample_dir / "decompiled", self.log) is not None:
+            return "decompilation already cached"
         return None
 
     def process(self, ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult:
@@ -260,13 +291,13 @@ class GhidraDecompile(MapProcessor):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         cached_result = output_dir / "ghidra_result.json"
-        if cached_result.exists():
+        cached = _read_cached_result(output_dir, log)
+        if cached is not None:
             log.info("ghidra cache hit for %s", binary_path.name)
-            try:
-                return json.loads(cached_result.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError) as e:
-                log.warning("cached result is corrupt, re-running analysis", exc_info=e)
-                cached_result.unlink(missing_ok=True)
+            return cached
+        # unusable either way: a file that cannot be read, and one recording a
+        # run that did not finish, both mean this driver has not been analysed
+        cached_result.unlink(missing_ok=True)
 
         cmd = self._build_ghidra_cmd(
             binary_path, output_dir, ghidra_install_dir, post_script, timeout
@@ -343,7 +374,7 @@ class GhidraDecompile(MapProcessor):
 
         try:
             return json.loads(cached_result.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as e:
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
             return {"success": False, "error": f"failed to parse ghidra output: {e}"}
 
     def _find_analyze_headless(self, ghidra_dir: Path) -> Path:

@@ -32,8 +32,10 @@ class MetadataFilter(MapProcessor):
 
         flat = self._flatten_history(entry)
 
-        # field requirements
-        require = config.get("require", {})
+        # field requirements. `require:` written with nothing under it parses as
+        # null rather than as an empty mapping, and a config left half-edited
+        # should require nothing rather than fail every sample it is given.
+        require = config.get("require") or {}
         for field_name, expected_value in require.items():
             actual = flat.get(field_name)
             if actual != expected_value:

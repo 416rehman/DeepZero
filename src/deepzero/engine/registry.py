@@ -52,9 +52,6 @@ def _get_base_classes() -> tuple:
 
 
 def _resolve_from_processors_dir(processor_ref: str) -> type[Any]:
-    Processor, IngestProcessor, MapProcessor, ReduceProcessor, BulkMapProcessor = (
-        _get_base_classes()
-    )
     processors_root = Path.cwd() / "processors"
 
     class_name = None
@@ -107,9 +104,8 @@ def _load_specific_class(file_path: Path, class_name: str) -> type[Any]:
 
 
 def _load_processor_from_file(file_path: Path) -> type[Any] | None:
-    Processor, IngestProcessor, MapProcessor, ReduceProcessor, BulkMapProcessor = (
-        _get_base_classes()
-    )
+    bases = _get_base_classes()
+    Processor = bases[0]
 
     spec = importlib.util.spec_from_file_location(f"deepzero.custom.{file_path.stem}", file_path)
     if spec is None or spec.loader is None:
@@ -119,20 +115,20 @@ def _load_processor_from_file(file_path: Path) -> type[Any] | None:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
 
-    for attr_name in dir(module):
-        attr = getattr(module, attr_name)
-        if isinstance(attr, type) and issubclass(attr, Processor) and attr is not Processor:
-            if any(
-                attr is base
-                for base in (
-                    IngestProcessor,
-                    MapProcessor,
-                    ReduceProcessor,
-                    BulkMapProcessor,
-                )
-            ):
-                continue
-            return attr
+    # module.__dict__ is in definition order, so a file holding more than one
+    # processor gives up the one written first, which is what a reference
+    # without a :ClassName means. dir() would sort the names and hand back
+    # whichever happened to come first in the alphabet.
+    for attr in vars(module).values():
+        if not (isinstance(attr, type) and issubclass(attr, Processor)):
+            continue
+        if any(attr is base for base in bases):
+            continue
+        # a class the file imported belongs to whatever defines it; picking it
+        # up here would silently run someone else's processor under this name
+        if getattr(attr, "__module__", None) != module.__name__:
+            continue
+        return attr
 
     return None
 

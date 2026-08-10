@@ -246,3 +246,21 @@ class TestAWholeCheckoutScansEndToEnd:
         # the path reaches the report as the scanner saw it, and the assessment
         # prompt tells the model to read that name back to a path in the repository
         assert Path(findings[0]["file"]).name == "risky_web__views.py"
+
+    def test_the_finding_quotes_the_code_and_not_semgreps_login_notice(self, tmp_path):
+        """an unauthenticated semgrep returns "requires login" in place of the
+        matched source. That field is what the assessment prompt quotes to the
+        model and what the report renders, so a finding carrying the notice
+        instead of the code asks for a verdict on something nobody was shown."""
+        risky = _checkout(
+            tmp_path / "risky",
+            {"web/views.py": "def run(req):\n    return eval(req.body)\n"},
+        )
+        scanner = _scanner(rules_dir=str(self._rules(tmp_path)), target_dir="", extensions=[".py"])
+        entries = [_entry(tmp_path, sample_id="risky", source_path=risky)]
+        scanner.process(_ctx(tmp_path), entries)
+
+        findings = json.loads((entries[0].sample_dir / "findings.json").read_text(encoding="utf-8"))
+        code = findings[0]["matched_code"]
+        assert "requires login" not in code
+        assert "eval(req.body)" in code

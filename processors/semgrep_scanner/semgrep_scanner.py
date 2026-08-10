@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import os
 import shutil
@@ -27,14 +28,16 @@ class SemgrepScanner(BulkMapProcessor):
     DEFAULT_TARGET_DIR = "decompiled"
     DEFAULT_EXTENSIONS = (".c", ".h", ".cpp", ".py")
 
-    # findings_json is the parsed report; `findings` holds its filename, which is
-    # why a prompt wanting the findings themselves has to name findings_json
+    # findings_json is the parsed report a prompt reads: findings.json is written
+    # into the sample's own directory, and an artifact is named after its path.
+    #
+    # files_submitted and files_scanned come from the semgrep run itself, so a
+    # result adopted from a findings.json already on disk does not carry them.
     provides = (
         "finding_count",
         "findings_cached",
         "files_submitted",
         "files_scanned",
-        "findings",
         "findings_json",
     )
 
@@ -83,6 +86,12 @@ class SemgrepScanner(BulkMapProcessor):
         uncached_entries: list[tuple[int, ProcessorEntry]] = []
 
         for i, entry in enumerate(entries):
+            # a findings.json already in the sample's directory is adopted rather
+            # than rescanned, so an interrupted run does not repeat the batches it
+            # had already finished. findings.json is recorded as an artifact on
+            # every path that writes one, which is what lets `--redo` delete it:
+            # without that the file outlives the run state that describes it and
+            # the next run reports findings the current rules cannot produce.
             findings_path = entry.sample_dir / "findings.json"
             if findings_path.exists():
                 try:
@@ -224,12 +233,22 @@ class SemgrepScanner(BulkMapProcessor):
             len(uncached_entries),
         )
 
+        # semgrep writes --output with the interpreter's default encoding, which
+        # on windows is the ANSI codepage. A scan that quotes a byte that
+        # codepage cannot represent - which any file that is not UTF-8
+        # guarantees, because the parse error quotes the bytes - then dies
+        # encoding its own report and leaves an empty file behind, failing every
+        # sample in the batch. UTF-8 mode makes the report readable instead.
+        env = dict(os.environ)
+        env["PYTHONUTF8"] = "1"
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 cmd[0],
                 *cmd[1:],
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except FileNotFoundError:
@@ -306,8 +325,54 @@ class SemgrepScanner(BulkMapProcessor):
             return
 
         self._distribute_findings(
-            output, file_to_sample, uncached_entries, results, min_findings, scanned_paths
+            output,
+            file_to_sample,
+            uncached_entries,
+            results,
+            min_findings,
+            scanned_paths,
+            bulk_dir,
         )
+
+    # semgrep withholds the matched source unless the CLI is logged in: an
+    # unauthenticated scan returns the literal string "requires login" in
+    # extra.lines, with no flag to turn it off. That string is what the
+    # assessment prompt quotes to the model and what the report renders, so
+    # taking it at face value means asking for a verdict on code nobody showed
+    # anyone. The span semgrep reports is trustworthy, so read the lines back
+    # off the file it scanned instead.
+    _LINES_WITHHELD = "requires login"
+    _MAX_SNIPPET_LINES = 40
+
+    def _matched_code(self, result_entry: dict[str, Any], bulk_dir: Path | None) -> str:
+        lines = result_entry.get("extra", {}).get("lines", "")
+        if lines and lines.strip() != self._LINES_WITHHELD:
+            return lines
+
+        start = result_entry.get("start", {}).get("line", 0)
+        end = result_entry.get("end", {}).get("line", 0)
+        reported = result_entry.get("path", "")
+        if not reported or start < 1 or end < start:
+            return ""
+
+        candidate = Path(reported)
+        if not candidate.is_absolute() and bulk_dir is not None:
+            # semgrep may report the path relative to where it was invoked
+            candidate = bulk_dir / candidate.name
+
+        try:
+            with candidate.open("r", encoding="utf-8", errors="replace") as fh:
+                span = list(
+                    itertools.islice(fh, start - 1, min(end, start + self._MAX_SNIPPET_LINES - 1))
+                )
+        except OSError as exc:
+            self.log.debug("could not read source for %s: %s", reported, exc)
+            return ""
+
+        snippet = "".join(span).rstrip()
+        if end - start + 1 > self._MAX_SNIPPET_LINES:
+            snippet += f"\n... ({end - start + 1 - self._MAX_SNIPPET_LINES} more lines)"
+        return snippet
 
     def _distribute_findings(
         self,
@@ -317,6 +382,7 @@ class SemgrepScanner(BulkMapProcessor):
         results: list[ProcessorResult | None],
         min_findings: int,
         scanned_paths: list | None = None,
+        bulk_dir: Path | None = None,
     ) -> None:
         sev_map = {"ERROR": "HIGH", "WARNING": "MEDIUM", "INFO": "LOW"}
         per_sample_findings: dict[int, list[dict]] = {idx: [] for idx, _ in uncached_entries}
@@ -349,7 +415,7 @@ class SemgrepScanner(BulkMapProcessor):
                 "file": result_entry.get("path", ""),
                 "line_start": result_entry.get("start", {}).get("line", 0),
                 "line_end": result_entry.get("end", {}).get("line", 0),
-                "matched_code": result_entry.get("extra", {}).get("lines", ""),
+                "matched_code": self._matched_code(result_entry, bulk_dir),
             }
             per_sample_findings[sample_idx].append(finding)
 
@@ -392,16 +458,19 @@ class SemgrepScanner(BulkMapProcessor):
         if scanned is not None:
             data["files_scanned"] = scanned
 
-        if min_findings > 0 and len(findings) < min_findings:
-            return ProcessorResult.filter(
-                f"{len(findings)} findings < min {min_findings}",
-                data={**data, "findings": "findings.json"},
-            )
+        artifacts = {"findings": "findings.json"}
 
-        return ProcessorResult.ok(
-            artifacts={"findings": "findings.json"},
-            data=data,
-        )
+        if min_findings > 0 and len(findings) < min_findings:
+            # built here rather than via ProcessorResult.filter() so the artifact
+            # travels with the filtered sample too: the file is on disk either
+            # way, and a run that does not record it cannot discard it on --redo
+            filtered = ProcessorResult.filter(
+                f"{len(findings)} findings < min {min_findings}", data
+            )
+            filtered.artifacts = artifacts
+            return filtered
+
+        return ProcessorResult.ok(artifacts=artifacts, data=data)
 
     def _cleanup_bulk_dir(self, bulk_dir: Path) -> None:
         try:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -16,7 +15,60 @@ from deepzero.engine.stage import (
     template_key_for_artifact,
 )
 
-_log = logging.getLogger("deepzero.stages.llm")
+# which artifacts beside a sample a prompt can read as text. A file whose
+# extension is not here is invisible to the prompt however relevant it is, and
+# nothing reports that, so the default covers the languages a source pipeline is
+# likely to stage rather than only the C a decompiler writes. A pipeline
+# producing something else entirely names its own set in `text_extensions`.
+# .json is handled separately: it is parsed rather than pasted in.
+DEFAULT_TEXT_EXTENSIONS: tuple[str, ...] = (
+    ".c",
+    ".cc",
+    ".cfg",
+    ".cjs",
+    ".conf",
+    ".cpp",
+    ".cs",
+    ".csv",
+    ".css",
+    ".cxx",
+    ".diff",
+    ".go",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".htm",
+    ".html",
+    ".hxx",
+    ".ini",
+    ".java",
+    ".js",
+    ".jsx",
+    ".kt",
+    ".log",
+    ".lua",
+    ".md",
+    ".mjs",
+    ".patch",
+    ".php",
+    ".pl",
+    ".ps1",
+    ".py",
+    ".rb",
+    ".rs",
+    ".scala",
+    ".sh",
+    ".sql",
+    ".swift",
+    ".toml",
+    ".ts",
+    ".tsv",
+    ".tsx",
+    ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
+)
 
 
 class GenericLLM(MapProcessor):
@@ -77,6 +129,9 @@ class GenericLLM(MapProcessor):
             backoff_decay=backoff_config.get("decay", 0.7),
         )
 
+        # the model has already been paid for by this point, so an output_file
+        # naming a subdirectory must not be what loses the response
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = output_path.with_suffix(".tmp")
         tmp.write_text(response, encoding="utf-8")
         os.replace(tmp, output_path)
@@ -134,19 +189,37 @@ class GenericLLM(MapProcessor):
 
         return prompt_ref
 
+    def _text_extensions(self) -> set[str]:
+        configured = self.config.get("text_extensions")
+        if not configured:
+            return set(DEFAULT_TEXT_EXTENSIONS)
+        if isinstance(configured, str):
+            configured = [configured]
+        return {e if str(e).startswith(".") else f".{e}" for e in (str(x) for x in configured)}
+
     def _build_template_vars(self, ctx: ProcessorContext, entry: ProcessorEntry) -> dict[str, Any]:
+        # read once: the history is loaded from disk on each access, so asking
+        # for it twice reads every earlier stage's output twice per sample
+        history = entry.history
+
         template_vars: dict[str, Any] = {
-            "sample_name": entry.upstream_data("discover", "filename", entry.source_path.name),
+            # what the ingest named this sample, which is also the name the
+            # report gives it. Deriving it from source_path instead would name a
+            # repository after the directory its checkout happens to sit in.
+            "sample_name": entry.filename or entry.source_path.name,
             "sample_path": str(entry.source_path),
-            "history": {name: output.data for name, output in entry.history.items()},
+            "history": {name: output.data for name, output in history.items()},
             "config": self.config,
         }
 
         # flatten history data for backward compatibility with existing templates
-        for output in entry.history.values():
+        for output in history.values():
             for k, v in output.data.items():
                 if k not in template_vars:
                     template_vars[k] = v
+
+        char_budget = self.config.get("max_context_tokens", 900_000) * 4
+        text_extensions = self._text_extensions()
 
         # scan sample_dir for artifact files
         for f in entry.sample_dir.rglob("*"):
@@ -154,16 +227,14 @@ class GenericLLM(MapProcessor):
                 continue
             rel = f.relative_to(entry.sample_dir)
             key = template_key_for_artifact(rel)
+            suffix = f.suffix.lower()
 
-            max_tokens = self.config.get("max_context_tokens", 900_000)
-            char_budget = max_tokens * 4
-
-            if f.suffix == ".json":
+            if suffix == ".json":
                 # an artifact far larger than the whole prompt budget cannot be
                 # used, and parsing it costs time and memory on every sample
                 try:
                     if f.stat().st_size > char_budget:
-                        _log.warning(
+                        self.log.warning(
                             "skipping %s: %d bytes exceeds the context budget of %d",
                             f.name,
                             f.stat().st_size,
@@ -172,8 +243,8 @@ class GenericLLM(MapProcessor):
                         continue
                     template_vars[key] = json.loads(f.read_text(encoding="utf-8"))
                 except (json.JSONDecodeError, OSError) as exc:
-                    _log.debug("skipping unreadable json artifact %s: %s", f.name, exc)
-            elif f.suffix in (".c", ".h", ".txt", ".md", ".py", ".yaml", ".yml"):
+                    self.log.debug("skipping unreadable json artifact %s: %s", f.name, exc)
+            elif suffix in text_extensions:
                 try:
                     content = f.read_text(encoding="utf-8", errors="replace")
                     if len(content) > char_budget:
@@ -183,7 +254,7 @@ class GenericLLM(MapProcessor):
                         )
                     template_vars[key] = content
                 except OSError as exc:
-                    _log.debug("skipping unreadable text artifact %s: %s", f.name, exc)
+                    self.log.debug("skipping unreadable text artifact %s: %s", f.name, exc)
 
         return template_vars
 

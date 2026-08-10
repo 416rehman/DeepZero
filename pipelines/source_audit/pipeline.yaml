@@ -22,6 +22,12 @@ report:
   classification_key: classification
   vulnerable_when: [vulnerable]
   safe_when: [not exploitable]
+  # a repository only reaches the assessment when the scan flagged something, so
+  # nothing here is ever untouched code: the negative outcome is a repository
+  # whose findings were read and none of them reached. The default word for it,
+  # "clear", says the opposite of that.
+  lexicon:
+    negative: Not exploitable
   columns:
     - scan.finding_count
     # nothing found and nothing read both show as zero above, so how many files

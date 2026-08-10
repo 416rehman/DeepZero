@@ -463,7 +463,9 @@ def main():
 
 
 def write_result(output_dir, result):
-    # FIX: Use io.open with utf-8 and ensure_ascii=False for JSON dump
+    # utf-8 explicitly, and characters left as themselves: a driver's strings and
+    # symbol names are not all ascii, and the processor reads this file back as
+    # utf-8 whatever codepage the machine that wrote it happened to default to
     with io.open(os.path.join(output_dir, "ghidra_result.json"), "w", encoding="utf-8") as f:
         data = json.dumps(result, indent=2, default=str, ensure_ascii=False)
         f.write(unicode(data))

@@ -15,14 +15,23 @@ What a pipeline can optionally declare in its yaml to shape the output:
       entity_plural: repositories # only needed when adding an s is wrong
       target_label: organisation  # what the thing being researched is called
       classification_key: verdict # stage data key holding the conclusion
-      vulnerable_when: [vulnerable, exploitable]
-      safe_when: [safe, clean]
+      positive_when: [vulnerable, exploitable]   # also spelled vulnerable_when
+      negative_when: [safe, clean]               # also spelled safe_when
       columns: [scan.finding_count, discover.stars]
       findings_files: [findings.json, sast.json]
+      lexicon:                    # what this run calls the outcomes below
+        discipline: source review
+        positive: Exploitable
+        positive_phrase: found to be exploitable
 
 `target_label` matters because the default, "corpus", assumes a pile of files on
 disk. A pipeline scanning a live web application wants "scope", one walking a
 git history wants "repository", and calling either a corpus reads as a mistake.
+
+`lexicon` matters for the same reason one step further in: the outcomes are the
+same for every run, but "Vulnerable" is the wrong word for a licence audit or a
+code-quality sweep. Every key of `Lexicon` below can be declared, and each one
+left out keeps its vulnerability-research default.
 
 Everything has a default, so a pipeline that declares nothing still gets a
 useful report.
@@ -34,10 +43,11 @@ survive a corpus of 100k artifacts:
     items/<id>.html     one page per sample worth reading, links to artifacts
     inventory.csv       every sample, one row - opens in a spreadsheet
     findings.jsonl      every finding, one json object per line
-    report.json         summary totals only
+    report.json         summary totals, plus the vocabulary they are named in
 
 Nothing is dropped silently: when a listing is capped the page says so and
-points at the csv holding the rest.
+points at the csv holding the rest, which carries the way in to every page
+that was written.
 """
 
 from __future__ import annotations
@@ -96,7 +106,11 @@ class Lexicon:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> Lexicon:
-        raw = raw or {}
+        # a scalar here means the yaml meant a block and wrote a value. The
+        # defaults still describe the run, so that is a reason to fall back
+        # rather than to lose the report a long run just produced.
+        if not isinstance(raw, dict):
+            return cls()
         known = {f.name for f in fields(cls)}
         return cls(**{k: str(v) for k, v in raw.items() if k in known and v})
 
@@ -187,12 +201,26 @@ _INTERESTING_HINTS = ("count", "score", "severity", "total", "hits", "size", "st
 # the note.
 MARK_CONFIRMED = "confirmed"
 MARK_REFUTED = "refuted"
+# not a mark but the absence of one, which the browser writes onto every row
+# nobody has ruled on so that it can be filtered and counted like the others
+MARK_UNREVIEWED = "unmarked"
 # Refuted is its own state rather than being folded into unreviewed: it is a
 # finished piece of work with a definite answer, and a result that did not hold
 # up should never look like one nobody has examined.
 _MARK_LABELS = {
     MARK_CONFIRMED: "Confirmed",
     MARK_REFUTED: "Refuted",
+}
+# every place a review state is named reads this: the filter chips, the control
+# on a result's page, the mark against a row and the tally. One state with two
+# names in one report is a state the reader has to work out twice.
+_REVIEW_LABELS = {**_MARK_LABELS, MARK_UNREVIEWED: "Unreviewed"}
+# what each state claims, worded to serve both the control that records it and
+# the filter that narrows to it
+_MARK_HELP = {
+    MARK_CONFIRMED: "checked, and it holds",
+    MARK_REFUTED: "checked, and it did not hold up",
+    MARK_UNREVIEWED: "no review has been recorded against these yet",
 }
 _MARKS_FILE = "marks.json"
 
@@ -218,10 +246,9 @@ def _load_marks(out_dir: Path) -> dict[str, dict[str, str]]:
     return marks
 
 
-# the default wording, kept as module constants so anything reading them without
+# the default wording, kept as a module constant so anything reading it without
 # a config in hand still sees what an undeclared pipeline renders
 _BUCKET_LABELS = bucket_labels(Lexicon())
-_BUCKET_HELP = bucket_help(Lexicon())
 
 
 @dataclass
@@ -285,7 +312,6 @@ class ItemReport:
     name: str = ""
     source_path: str = ""
     sha256: str = ""
-    status: str = ""
     classification: str = ""
     data: dict[str, Any] = field(default_factory=dict)  # "stage.key" -> value
     stages: dict[str, str] = field(default_factory=dict)
@@ -394,13 +420,12 @@ def _classify(value: str, cfg: ReportConfig) -> str:
 def iter_items(work_dir: Path, cfg: ReportConfig) -> Iterator[ItemReport]:
     store = StateStore(work_dir)
     for state in store.list_samples():
-        sample_dir = store.sample_dir(state.sample_id)
+        sample_dir = store.sample_dir(state.sample_id, create=False)
         item = ItemReport(
             sample_id=state.sample_id,
             name=state.filename or state.sample_id,
             source_path=state.source_path,
             sha256=state.sha256,
-            status=str(getattr(state.verdict, "value", state.verdict)),
             sample_dir=str(sample_dir),
         )
 
@@ -1069,6 +1094,11 @@ _JS = """
      Held in the browser because the report is a file, and exportable so they
      can be saved next to it and stop being one person's private notes. */
   var MK = 'dz:marks:' + (document.body.dataset.corpus || location.pathname);
+  /* the page carries the wording for every review state, so a state is never
+     named one thing here and another where the html was written */
+  var LABELS = {};
+  try{ LABELS = JSON.parse(document.getElementById('review-labels').textContent) }catch(e){}
+  function label(state){ return LABELS[state] || state }
   function loadMarks(){
     var baked = {};
     try{ baked = JSON.parse(document.getElementById('baked-marks').textContent) }catch(e){}
@@ -1093,12 +1123,14 @@ _JS = """
   document.querySelectorAll('tr[data-sid]').forEach(function(row){
     var m = marks[row.dataset.sid];
     row.dataset.mark = m ? m.state : 'unmarked';
-    var cell = row.querySelector('.rev');
+    // qualified by the element: an outcome badge in this same row also carries
+    // .rev, and it sits ahead of the review cell in document order
+    var cell = row.querySelector('td.rev');
     if(!cell || !m) return;
     var note = m.note ? "<span class='note'>" + m.note.replace(/[<&]/g, function(c){
       return c === '<' ? '&lt;' : '&amp;';
     }) + "</span>" : '';
-    cell.innerHTML = "<span class='mark " + m.state + "'>" + m.state + note + "</span>";
+    cell.innerHTML = "<span class='mark " + m.state + "'>" + label(m.state) + note + "</span>";
   });
   /* what has actually been checked, counted here rather than at generation
      time because marks made in this browser have not been saved back yet */
@@ -1109,12 +1141,10 @@ _JS = """
       var n = {confirmed:0, refuted:0, unmarked:0};
       [].forEach.call(rows, function(r){ n[r.dataset.mark] = (n[r.dataset.mark]||0) + 1 });
       var parts = [];
-      [['confirmed','confirmed'],['refuted','did not hold up'],
-       ['unmarked','not yet reviewed']]
-        .forEach(function(pair){
-          if(n[pair[0]]) parts.push("<span class='" + pair[0] + "'><i></i><b>" +
-            n[pair[0]] + "</b>" + pair[1] + "</span>");
-        });
+      ['confirmed','refuted','unmarked'].forEach(function(state){
+        if(n[state]) parts.push("<span class='" + state + "'><i></i><b>" +
+          n[state] + "</b>" + label(state).toLowerCase() + "</span>");
+      });
       tally.innerHTML = parts.join('');
     }
   }
@@ -1130,16 +1160,18 @@ _JS = """
     var saved = panel.querySelector('.saved');
     var current = marks[sid] || null;
     function paint(){
-      // a result that did not hold up needs its detail as much as an open one,
-      // so both states open the note field
+      // what was run is worth recording whichever way it came out, so either
+      // answer opens the note field. Both classes have to be driven: leaving
+      // one of them alone leaves that answer's note hidden and unreachable.
       var st = current ? current.state : '';
+      panel.classList.toggle('confirmed', st === 'confirmed');
       panel.classList.toggle('refuted', st === 'refuted');
       panel.querySelectorAll('button').forEach(function(b){
         b.setAttribute('aria-pressed', String(!!current && current.state === b.dataset.state));
       });
       if(box && current) box.value = current.note || '';
       saved.textContent = current
-        ? 'marked ' + current.state + (current.note ? ', with a note' : '')
+        ? 'marked ' + label(current.state).toLowerCase() + (current.note ? ', with a note' : '')
         : 'not reviewed yet';
     }
     panel.querySelectorAll('button').forEach(function(b){
@@ -1239,6 +1271,8 @@ def _page(
         f"<title>{_esc(title)}</title><style>{_CSS}</style></head>"
         f'<body{attrs}><div class="shell">{body}</div>'
         f'<script type="application/json" id="baked-marks">{baked}</script>'
+        '<script type="application/json" id="review-labels">'
+        f"{json.dumps(_REVIEW_LABELS)}</script>"
         f"<script>{_JS}{_LIVENESS_JS}</script></body></html>"
     )
 
@@ -1254,7 +1288,13 @@ def _strip(item: ItemReport, columns: list[str], limit: int = 3) -> str:
         if _short(key) in _STRIP_SUPPRESS:
             continue
         val = item.data.get(key)
-        if val in (None, "", [], {}, 0, 0.0):
+        # a bool has to be tested before the emptiness check, because False == 0
+        # in python and so `val in (..., 0, 0.0)` matched it. A pipeline that
+        # declares a boolean column does it to tell the two states apart, and
+        # False is usually the one worth reading - loldrivers declares
+        # device_on_load_path to say the device cannot be opened - so dropping
+        # it rendered the informative case as no value at all.
+        if not isinstance(val, bool) and val in (None, "", [], {}, 0, 0.0):
             continue
         if isinstance(val, list):
             shown = ", ".join(str(v) for v in val[:3])
@@ -1328,14 +1368,14 @@ def _review_panel(item: ItemReport, entity: str) -> str:
     unmarked and says why in the note, which is the same place a settled one
     records what was run.
     """
+    opts = "".join(
+        f'<button type="button" class="{state}" data-state="{state}" aria-pressed="false"'
+        f' title="{_esc(_MARK_HELP[state])}">{_esc(_MARK_LABELS[state])}</button>'
+        for state in (MARK_CONFIRMED, MARK_REFUTED)
+    )
     return f"""<div class="review" data-sid="{_esc(item.sample_id)}">
   <span class="lbl">your review</span>
-  <div class="opts">
-    <button type="button" class="confirmed" data-state="confirmed" aria-pressed="false">
-      confirmed</button>
-    <button type="button" class="refuted" data-state="refuted" aria-pressed="false">
-      did not hold up</button>
-  </div>
+  <div class="opts">{opts}</div>
   <textarea placeholder="what did you run, on what, and what happened? enough for
 someone to repeat it on this {_esc(entity)}"
     aria-label="what you checked and what happened"></textarea>
@@ -1469,15 +1509,25 @@ def _run_state_cell(run: dict[str, Any], generated_at: str = "") -> str:
     """
     state = str(run.get("state", "") or "unknown").lower()
     detail = str(run.get("state_detail", "") or "")
+    recorded = str(run.get("status", "") or "").lower()
     if state == "finished" and detail:
         wording = detail  # finished, failed, interrupted - say which
+    elif state == "unknown" and recorded and recorded != "running":
+        # it never claimed to be in progress, so there is nothing to reconcile
+        # against the process: its own last word is the whole story
+        wording = recorded
     else:
         wording = _STATE_WORDING.get(state, state)
 
     attrs = f" data-beat='{_esc(generated_at)}'" if generated_at else ""
     why = _STATE_WHY.get(state, "")
-    if state == "unknown" and detail:
-        why = f"{why} {detail.capitalize()}."
+    if state == "unknown":
+        if not recorded:
+            why = "No run state was recorded in this work directory."
+        elif recorded != "running":
+            why = "This is the last status the run wrote down, and nothing has updated it since."
+        elif detail:
+            why = f"{why} {detail.capitalize()}."
 
     return (
         "<div><div class='lbl'>status</div>"
@@ -1508,17 +1558,14 @@ _LIVENESS_JS = """
   }
   function tick(){
     var s=(Date.now()-beat)/1000;
-    if(!live){ age.textContent='written '+ago(s); return; }
     // a run rewrites this page every few seconds. a gap far wider than that
     // means the page is a leftover, whatever it says about itself.
-    if(s>180){
+    if(live&&s>180){
       el.classList.remove('running'); el.classList.add('stopped');
       label.textContent='no longer updating';
-      age.textContent='last written '+ago(s);
       live=false;
-      return;
     }
-    age.textContent='updated '+ago(s);
+    age.textContent=(live?'updated ':'written ')+ago(s);
   }
   tick(); setInterval(tick,1000);
 })();
@@ -1554,33 +1601,37 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
 
     # the two outcomes somebody has to act on carry the headline; the rest are
     # acknowledged on one line, so the eye is not asked to triage five equals.
+    # Each one is named from the same place the table and the filter name it,
+    # so one outcome never reads as two.
     lead = (
-        ("pos", n_pos, lex.positive.lower(), BUCKET_VULNERABLE),
-        ("rev", n_rev, lex.unconfirmed.lower(), BUCKET_SUSPICIOUS),
+        ("pos", n_pos, BUCKET_VULNERABLE),
+        ("rev", n_rev, BUCKET_SUSPICIOUS),
     )
     rest = (
-        ("err", n_err, "errored", BUCKET_FAILED),
-        ("time", n_time, "ran out of time", BUCKET_TIMED_OUT),
-        ("una", n_una, "unclear verdict", BUCKET_UNASSESSED),
-        ("ok", n_ok, lex.negative.lower(), BUCKET_CLEAN),
-        ("set", n_set, "filtered out", BUCKET_FILTERED),
+        ("err", n_err, BUCKET_FAILED),
+        ("time", n_time, BUCKET_TIMED_OUT),
+        ("una", n_una, BUCKET_UNASSESSED),
+        ("ok", n_ok, BUCKET_CLEAN),
+        ("set", n_set, BUCKET_FILTERED),
     )
     ticks = "".join(
         f"<div class='tick {cls}{'' if n else ' zero'}' title=\"{_esc(rules[bucket])}\">"
-        f"<b>{n:,}</b><span class='lbl'>{label}</span></div>"
-        for cls, n, label, bucket in lead
+        f"<b>{n:,}</b><span class='lbl'>{_esc(labels[bucket].lower())}</span></div>"
+        for cls, n, bucket in lead
     )
     trailing = "".join(
-        f"<span class='{cls}' title=\"{_esc(rules[bucket])}\"><i></i><b>{n:,}</b>{label}</span>"
-        for cls, n, label, bucket in rest
+        f"<span class='{cls}' title=\"{_esc(rules[bucket])}\"><i></i><b>{n:,}</b>"
+        f"{_esc(labels[bucket].lower())}</span>"
+        for cls, n, bucket in rest
         if n
     )
     # the whole corpus as one line, keyed by outcome so the filter can dim it
     # down to the slice on screen. It describes the list being looked at, which
     # during a live run is also the clearest sign the corpus is still growing.
     spread = "".join(
-        f"<i class='{cls}' data-b='{bucket}' style='flex:{n}' title='{n:,} {label}'></i>"
-        for cls, n, label, bucket in lead + rest
+        f"<i class='{cls}' data-b='{bucket}' style='flex:{n}' "
+        f"title='{n:,} {_esc(labels[bucket].lower())}'></i>"
+        for cls, n, bucket in lead + rest
         if n
     )
     readout = (
@@ -1604,14 +1655,20 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
         key=lambda x: (_LIST_ORDER[x.bucket], -x.risk, x.name.lower()),
     )
     shown = listed[:table_limit]
+    # the whole corpus, not the slice detail pages were capped at: a reader
+    # comparing this line with the counts above is owed the same population
+    actionable = sum(buckets.get(b, 0) for b in _LIST_ORDER)
     capped = (
-        f"<p class='aside'>Showing the {len(shown):,} highest-risk of {len(listed):,}. "
+        f"<p class='aside'>Showing the {len(shown):,} highest-risk of {actionable:,}. "
         f"Every {entity} is in <a href='inventory.csv'>inventory.csv</a>.</p>"
-        if len(listed) > len(shown)
+        if actionable > len(shown)
         else ""
     )
+    # counted over the rows the table holds, because that is what pressing a
+    # chip reveals. Counting the corpus here would promise rows this page does
+    # not have, and the line above is where the rest are accounted for.
     present: dict[str, int] = {}
-    for i in listed:
+    for i in shown:
         present[i.bucket] = present.get(i.bucket, 0) + 1
     # a control gets the short gloss; the full rule belongs on the result it
     # was applied to, which is where somebody stops to question a label
@@ -1623,24 +1680,9 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     )
     review_chips = "".join(
         f"<button type='button' class='chipf mk {state}' data-mark='{state}' "
-        f"aria-pressed='false' title=\"{_esc(help_text)}\"><i></i>{label}</button>"
-        for state, label, help_text in (
-            (
-                MARK_CONFIRMED,
-                "Confirmed",
-                "you marked these as checked while reading the report",
-            ),
-            (
-                MARK_REFUTED,
-                "Refuted",
-                "you checked these and they did not hold up",
-            ),
-            (
-                "unmarked",
-                "Unreviewed",
-                "no review has been recorded against these yet",
-            ),
-        )
+        f"aria-pressed='false' title=\"{_esc(_MARK_HELP[state])}\"><i></i>"
+        f"{_esc(_REVIEW_LABELS[state])}</button>"
+        for state in (MARK_CONFIRMED, MARK_REFUTED, MARK_UNREVIEWED)
     )
     body_rows = "".join(
         "<tr class='{res}' data-k='{k}' data-b='{b}' data-sid='{sid}'>"
@@ -1705,7 +1747,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             else " The run recorded no results to review.</p></section>"
         )
 
-    rules = "".join(
+    rule_rows = "".join(
         f"<tr><td class='spec mono' style='color:var(--ink)'>{_esc(k)}</td>"
         f"<td class='r' data-v='{v}'>{v:,}</td></tr>"
         for k, v in payload["rule_totals"].items()
@@ -1716,9 +1758,9 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     <span class="n">{len(payload["rule_totals"]):,}</span>
     <span class="of">across every {_esc(entity)} scanned</span></div>
   <div class="scroll"><table data-sortable><thead><tr><th>rule</th>
-  <th class="r">hits</th></tr></thead><tbody>{rules}</tbody></table></div>
+  <th class="r">hits</th></tr></thead><tbody>{rule_rows}</tbody></table></div>
 </section>"""
-        if rules
+        if rule_rows
         else ""
     )
 
@@ -1774,7 +1816,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     <a href="inventory.csv">inventory.csv</a>
     <a href="findings.jsonl">findings.jsonl</a>
     <a href="report.json">report.json</a>
-    <a href="#" id="export-marks" title="save your review marks next to the report as marks.json, so they render for anyone who opens it">export marks</a>
+    <a href="#" id="export-marks" title="download your review marks as marks.json; put that file next to this one and they render for anyone who opens the report">export marks</a>
   </div>
 </header>
 <div class="filter">
@@ -1802,15 +1844,24 @@ def write_report(
     target = out_dir or (work_dir / "report")
     (target / "items").mkdir(parents=True, exist_ok=True)
 
+    items: list[ItemReport] = payload["items"]
     rows = payload.pop("rows")
+    marks = _load_marks(target)
     # a mark saved back into the report belongs in the spreadsheet too, so it
     # can be sorted and counted with everything else rather than only viewed
-    saved_marks = _load_marks(target)
-    if saved_marks:
+    if marks:
         for r in rows:
-            mark = saved_marks.get(str(r.get("sample_id", "")))
+            mark = marks.get(str(r.get("sample_id", "")))
             r["review"] = mark["state"] if mark else ""
             r["review_note"] = mark["note"] if mark else ""
+    # the index lists only the outcomes worth working through, so a page written
+    # for anything else has nothing pointing at it. The csv holds every sample,
+    # which makes it the one place that can carry the way in.
+    paged = {it.sample_id for it in items}
+    for r in rows:
+        sid = str(r.get("sample_id", ""))
+        if sid in paged:
+            r["report_page"] = f"items/{sid}.html"
     fieldnames: list[str] = []
     for r in rows:
         for k in r:
@@ -1821,9 +1872,13 @@ def write_report(
         writer.writeheader()
         writer.writerows(rows)
 
-    items: list[ItemReport] = payload["items"]
+    # every finding, which is more than the detail pages cover: the in-memory
+    # list is capped to keep a huge corpus renderable, and this file is what a
+    # machine reads instead of the html. A second pass costs a re-read of the
+    # corpus, so it is only paid when the cap actually dropped something.
+    complete = iter_items(work_dir, cfg) if payload["detail_truncated"] else items
     with (target / "findings.jsonl").open("w", encoding="utf-8") as fh:
-        for it in items:
+        for it in complete:
             for f in it.findings:
                 fh.write(
                     json.dumps(
@@ -1842,7 +1897,6 @@ def write_report(
     run_info = payload.get("run") or {}
     pipeline = run_info.get("pipeline", "")
     corpus = f"{pipeline}:{run_info.get('target', '')}"
-    marks = _load_marks(target)
     for it in items:
         (target / "items" / f"{it.sample_id}.html").write_text(
             render_item_page(it, target / "items", cfg, pipeline, corpus, marks),
@@ -1855,10 +1909,13 @@ def write_report(
     summary = {k: v for k, v in payload.items() if k not in ("items", "config")}
     summary["item_pages"] = len(items)
     # consumers of report.json render their own headings, so they need the same
-    # vocabulary the html was built with rather than having to guess a plural
+    # vocabulary the html was built with rather than having to guess a plural.
+    # The bucket keys above are structural and never change; what this pipeline
+    # calls each of them is only knowable from here.
     summary["entity"] = cfg.entity
     summary["entity_plural"] = cfg.plural
     summary["target_label"] = cfg.target_label
+    summary["bucket_labels"] = bucket_labels(cfg.lexicon)
     json_path = target / "report.json"
     json_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
 

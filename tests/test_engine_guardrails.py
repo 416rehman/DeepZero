@@ -125,3 +125,31 @@ class TestReadingDoesNotCreate:
         store.save_sample(SampleState(sample_id="real1", filename="a.bin"))
         assert (tmp_path / "work" / "samples" / "real1" / "state.json").exists()
         assert store.load_sample("real1") is not None
+
+
+class TestOpeningAStoreIsNotAWrite:
+    """Every command opens a store before it knows whether there is anything to
+    read, so creating on open turned a mistyped path into a new empty tree and
+    then reported finding no run in it."""
+
+    def test_opening_a_store_creates_nothing(self, tmp_path):
+        from deepzero.engine.state import StateStore
+
+        ghost = tmp_path / "typo"
+        StateStore(ghost)
+        assert not ghost.exists()
+
+    def test_the_first_write_creates_what_it_needs(self, tmp_path):
+        from deepzero.engine.state import RunState, StateStore
+        from deepzero.engine.types import RunStatus
+
+        work = tmp_path / "later"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+        assert (work / "run.json").exists()
+        assert store.load_run() is not None
+
+    def test_listing_an_absent_store_is_empty_not_an_error(self, tmp_path):
+        from deepzero.engine.state import StateStore
+
+        assert StateStore(tmp_path / "nothing").list_samples() == []

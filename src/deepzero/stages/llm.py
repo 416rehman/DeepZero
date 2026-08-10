@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +13,7 @@ from deepzero.engine.stage import (
     ProcessorResult,
     template_key_for_artifact,
 )
+from deepzero.engine.state import atomic_replace
 
 # which artifacts beside a sample a prompt can read as text. A file whose
 # extension is not here is invisible to the prompt however relevant it is, and
@@ -134,7 +134,7 @@ class GenericLLM(MapProcessor):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = output_path.with_suffix(".tmp")
         tmp.write_text(response, encoding="utf-8")
-        os.replace(tmp, output_path)
+        atomic_replace(tmp, output_path)
         self.log.info("response written to %s (%d chars)", output_file, len(response))
 
         return self._make_result(response, output_file)

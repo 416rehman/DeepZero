@@ -13,10 +13,16 @@ if TYPE_CHECKING:
 log = logging.getLogger("deepzero.api")
 
 
-def _extract_classification(sample) -> str:
-    # classification is stored in stage data dicts, not as a top-level attribute
+def _extract_classification(sample, key: str = "classification") -> str:
+    """the verdict a stage recorded, under whatever key this pipeline uses.
+
+    A pipeline names the key itself through report.classification_key, so
+    assuming "classification" answers correctly only for the pipelines that
+    happen to keep the default and returns nothing at all for any other, which
+    reads as "no verdict" rather than as a lookup that missed.
+    """
     for stage_output in sample.history.values():
-        classification = stage_output.data.get("classification", "")
+        classification = stage_output.data.get(key, "")
         if classification:
             return classification
     return ""
@@ -37,7 +43,7 @@ def _read_artifact(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def create_app(work_dir: Path):
+def create_app(work_dir: Path, classification_key: str = "classification"):
     try:
         from starlette.applications import Starlette
         from starlette.responses import JSONResponse
@@ -89,7 +95,7 @@ def create_app(work_dir: Path):
         results = []
         for s in samples:
             # classification lives in the stage data dicts, not a top-level attribute
-            classification = _extract_classification(s)
+            classification = _extract_classification(s, classification_key)
 
             if verdict and s.verdict != verdict:
                 continue

@@ -867,8 +867,16 @@ def serve(host: str, port: int, work_dir: str):
         console.print("[red]uvicorn required: pip install deepzero\\[serve][/]")
         raise SystemExit(1) from exc
 
+    # the run records which pipeline made it, and that pipeline names the key its
+    # verdict is stored under, so the api reports verdicts for a pipeline that
+    # renamed it rather than silently reporting none
+    classification_key = str(
+        _report_config_for_run(run_dir).get("classification_key", "classification")
+        or "classification"
+    )
+
     try:
-        app = create_app(run_dir)
+        app = create_app(run_dir, classification_key)
     except ImportError as exc:
         console.print(f"[red]{escape(str(exc))}[/]")
         raise SystemExit(1) from exc

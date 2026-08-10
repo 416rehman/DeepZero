@@ -282,13 +282,25 @@ class StateStore:
 
     def __init__(self, work_dir: Path):
         self.work_dir = work_dir
-        self.work_dir.mkdir(parents=True, exist_ok=True)
         self._samples_dir = work_dir / "samples"
+        # not created here. Opening a store is what every command does before it
+        # knows whether it has anything to read, so creating on open meant a
+        # mistyped path produced an empty tree and then reported finding no run
+        # in it. Writers call _ensure_dirs(); readers get an empty answer about a
+        # directory that stays absent.
+
+    def _ensure_dirs(self) -> None:
+        self.work_dir.mkdir(parents=True, exist_ok=True)
         self._samples_dir.mkdir(parents=True, exist_ok=True)
 
     # -- atomic write helpers --
 
     def _atomic_write(self, path: Path, content: str) -> None:
+        # every write in the store passes through here, so this is where the
+        # directories come into being: writing is the act that means the run is
+        # real, rather than merely being asked about
+        self._ensure_dirs()
+        path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(content, encoding="utf-8")
         atomic_replace(tmp, path)

@@ -11,6 +11,7 @@ from deepzero.engine.stage import (
     ProcessorEntry,
     ProcessorResult,
 )
+from deepzero.engine.state import atomic_replace
 
 
 def _split_command(template: str) -> list[str]:
@@ -96,7 +97,7 @@ class GenericCommand(MapProcessor):
             stdout_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = stdout_path.with_suffix(".tmp")
             tmp.write_bytes(stdout)
-            os.replace(tmp, stdout_path)
+            atomic_replace(tmp, stdout_path)
 
         if returncode != 0:
             stderr_text = stderr.decode("utf-8", errors="replace")[:500]

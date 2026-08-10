@@ -31,7 +31,7 @@ from deepzero.engine.stage import (
     ReduceProcessor,
     StageSpec,
 )
-from deepzero.engine.state import RunState, SampleState, StateStore
+from deepzero.engine.state import RunState, SampleState, StateStore, atomic_replace
 from deepzero.engine.types import RunStatus, SampleStatus, StageStatus, Verdict
 
 log = logging.getLogger("deepzero.runner")
@@ -707,7 +707,7 @@ class PipelineRunner:
                 try:
                     os.write(fd, tb_module.format_exc().encode("utf-8"))
                     os.close(fd)
-                    os.replace(tmp, str(err_log))
+                    atomic_replace(Path(tmp), err_log)
                 except OSError as exc:
                     try:
                         os.close(fd)

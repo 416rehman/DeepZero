@@ -21,10 +21,15 @@
 
 <br>
 
+<table align="center">
+  <tr>
+    <td width="50%"><img src=".github/assets/report-source-audit.png" alt="Rapport HTML DeepZero pour un audit de code source"></td>
+    <td width="50%"><img src=".github/assets/report-loldrivers.png" alt="Rapport HTML DeepZero pour une revue de pilotes noyau"></td>
+  </tr>
+</table>
+
 <div align="center">
-  <img src=".github/assets/report-source-audit.png" alt="Rapport HTML DeepZero" width="700">
-  <br>
-  <sub>Chaque exécution écrit un rapport consultable et le tient à jour pendant qu'elle se déroule. Données fournies à titre indicatif.</sub>
+  <sub>Un seul moteur, deux disciplines. Le rapport tient son vocabulaire du pipeline : le même code affiche <b>6 dépôts</b> / <b>non exploitable</b> à gauche et <b>6 pilotes</b> / <b>sain</b> à droite. Données fournies à titre indicatif.</sub>
 </div>
 
 <br>
@@ -36,8 +41,10 @@
 <br>
 
 - 🔗 **Pipeline en YAML** - enchaînez de manière déclarative les étapes d'ingestion, de filtrage, de transformation et d'évaluation LLM
+- 🧭 **Indépendant du domaine** - le moteur ne connaît ni les binaires, ni les dépôts, ni les points d'accès web ; c'est le pipeline qui apporte le domaine, et les deux pipelines fournis sont des exemples, non la finalité
 - ⚡ **Exécution parallèle** - ThreadPoolExecutor avec une concurrence configurable par étape
 - 💾 **Exécutions reprenables** - état atomique par échantillon sur le disque, cloisonné par corpus ; appuyez sur Ctrl+C et relancez pour reprendre là où vous vous étiez arrêté
+- 🔁 **Sait ce qui a vieilli** - chaque étape prend l'empreinte de ses propres entrées : modifier un prompt, un jeu de règles ou une configuration relance exactement les étapes qui les lisaient, et aucune de celles d'avant
 - 🤖 **Intégration LLM** - modèles de prompts Jinja2, avec au choix une clé d'API via [LiteLLM](https://github.com/BerriAI/litellm) ou votre abonnement Claude Code et aucune clé d'API du tout
 - 📊 **Rapports consultables** - `deepzero report` construit un rapport HTML autonome à partir de l'état de l'exécution ; chaque pipeline nomme lui-même ses entités et ses verdicts
 - 🌐 **API REST (WIP)** - interrogez l'état de l'exécution et les données d'échantillons via HTTP (actuellement expérimental et incomplet)
@@ -84,7 +91,7 @@ DeepZero nécessite un corpus cible à analyser et une configuration de pipeline
    ```bash
    deepzero report -p loldrivers --open
    ```
-   Peut être exécuté sans risque pendant une exécution. Le rapport est construit à partir de l'état de l'exécution : il peut donc être supprimé et reconstruit à tout moment.
+   Peut être exécuté sans risque pendant une exécution. Le rapport est construit à partir de l'état de l'exécution : il peut donc être supprimé et reconstruit à tout moment. `deepzero runs` liste toutes les exécutions présentes sur le disque, quel que soit ce qui les a produites, et `deepzero report` sans argument devine celle que vous vouliez.
 
 Pour des instructions de configuration détaillées et des exemples de corpus, consultez la [Documentation de Démarrage Rapide](https://blog.ahmadz.ai/DeepZero/fr/overview/quickstart.html).
 
@@ -94,6 +101,7 @@ Pour des instructions de configuration détaillées et des exemples de corpus, c
 
 ```text
 src/deepzero/
+├── cli.py               # groupe de commandes click (run, report, runs, status, validate, ...)
 ├── api/                 # API REST (starlette)
 ├── engine/              # orchestration, persistance de l'état, exécution du pipeline
 └── stages/              # processeurs intégrés (map, reduce, ingest)
@@ -123,7 +131,7 @@ tests/                   # suite de tests pytest
 
 ## 🤝 Contribuer
 
-L'intégration continue (CI) s'exécute sur Python 3.11 et 3.12 via GitHub Actions.
+L'intégration continue (CI) exécute la suite de tests sur chaque interpréteur pris en charge via GitHub Actions.
 
 Exécutez les vérifications de linting et de sécurité avant de soumettre :
 

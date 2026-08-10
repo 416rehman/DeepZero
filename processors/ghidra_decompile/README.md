@@ -36,7 +36,11 @@ script knows where to write, and `JAVA_HOME` is exported when `java_home` is set
 
 This is the surprising one, and it is a cache that lives outside the run state.
 
-Before running anything, `should_skip()` looks for
+Before running anything, `should_skip()` reads `entry.cache_is_valid` and returns
+without looking at the disk when it is false. The engine sets that flag by
+comparing the stage's recorded input digest with the current one, so a result
+written under a different processor or config is not offered as a cache hit for
+this one. When the digest still holds, `should_skip()` looks for
 `<sample dir>/decompiled/ghidra_result.json`. If it is there, parses, and records
 `success: true`, the sample is skipped and counted as passed. Analysing one
 binary costs minutes, so an interrupted run does not pay for it twice.
@@ -55,7 +59,10 @@ Two consequences are worth knowing before copying this pattern:
   actually executed. On a resume the earlier run's history entry is still there
   and its values survive. If the run state was discarded while the files were
   kept, the stage completes with an empty `data` and a later prompt asking for
-  `device_name` gets nothing.
+  `device_name` gets nothing. This holds only for a sample the gate above
+  actually skipped. Once the config has moved the digest the sample is not
+  skipped, so it runs and does record its data, and `_run_ghidra_headless` reads
+  the same file through the same helper, so Ghidra is still not launched again.
 - `deepzero run --redo <stage>` is what forces a genuine re-analysis, and it
   works because `ghidra_result.json` is recorded as an artifact: `--redo` deletes
   the artifacts of the stages it drops. `driver_entry.c`, `ioctls/` and the two

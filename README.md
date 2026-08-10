@@ -7,7 +7,7 @@
   <p>
     <a href="https://github.com/416rehman/DeepZero/actions"><img src="https://img.shields.io/github/actions/workflow/status/416rehman/DeepZero/ci.yml?branch=main&style=flat-square" alt="CI"></a>
     <a href="https://github.com/416rehman/DeepZero/blob/main/LICENSE"><img src="https://img.shields.io/github/license/416rehman/DeepZero?style=flat-square" alt="License"></a>
-    <a href="https://blog.ahmadz.ai/DeepZero/"><img src="https://img.shields.io/badge/docs-DeepZero-orange?style=flat-square" alt="Docs"></a>
+    <a href="https://blog.ahmadz.ai/DeepZero/en/"><img src="https://img.shields.io/badge/docs-DeepZero-orange?style=flat-square" alt="Docs"></a>
     <img src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square" alt="Python">
     <img src="https://img.shields.io/badge/platform-windows%20%7C%20linux-lightgrey?style=flat-square" alt="Platform">
   </p>
@@ -21,10 +21,15 @@
 
 <br>
 
+<table align="center">
+  <tr>
+    <td width="50%"><img src=".github/assets/report-source-audit.png" alt="DeepZero HTML report for a source code audit"></td>
+    <td width="50%"><img src=".github/assets/report-loldrivers.png" alt="DeepZero HTML report for a kernel driver review"></td>
+  </tr>
+</table>
+
 <div align="center">
-  <img src=".github/assets/report-source-audit.png" alt="DeepZero HTML report" width="700">
-  <br>
-  <sub>Every run writes a browsable report and keeps it current while the run is going. Illustrative data.</sub>
+  <sub>One engine, two disciplines. The report takes its vocabulary from the pipeline, so the same code says <b>6 repositories</b> / <b>not exploitable</b> on the left and <b>6 drivers</b> / <b>clear</b> on the right. Illustrative data.</sub>
 </div>
 
 <br>
@@ -36,8 +41,10 @@
 <br>
 
 - 🔗 **Pipeline-as-YAML** - chain ingest, filter, transform, and LLM-assess stages declaratively
+- 🧭 **Discipline-agnostic** - the engine knows nothing about binaries, repositories or endpoints; a pipeline brings the domain, and the two shipped ones are examples rather than the point
 - ⚡ **Parallel execution** - ThreadPoolExecutor with configurable concurrency per stage
 - 💾 **Resumable runs** - atomic per-sample state on disk, scoped per corpus; Ctrl+C and re-run to pick up where you left off
+- 🔁 **Knows what went stale** - each stage fingerprints its own inputs, so editing a prompt, a rule set or a config re-runs exactly the stages that read it and nothing before them
 - 🤖 **LLM integration** - Jinja2 prompt templates, with either an API key via [LiteLLM](https://github.com/BerriAI/litellm) or your Claude Code subscription and no API key at all
 - 📊 **Browsable reports** - `deepzero report` builds a self-contained HTML report from run state; each pipeline names its own entities and verdicts
 - 🌐 **REST API (WIP)** - query run state and sample data over HTTP (currently experimental and incomplete)
@@ -49,7 +56,7 @@
 
 DeepZero features extensive, exhaustive documentation covering architecture, pipeline schemas, CLI references, and custom processor development. 
 
-👉 **[Read the Official Documentation here](https://blog.ahmadz.ai/DeepZero/)**
+👉 **[Read the Official Documentation here](https://blog.ahmadz.ai/DeepZero/en/)**
 
 ---
 
@@ -84,7 +91,7 @@ DeepZero requires a target corpus to analyze and a pipeline configuration detail
    ```bash
    deepzero report -p loldrivers --open
    ```
-   Safe to run mid-run. The report is built from run state, so it can be deleted and rebuilt at any time.
+   Safe to run mid-run. The report is built from run state, so it can be deleted and rebuilt at any time. `deepzero runs` lists every run on disk whatever produced it, and `deepzero report` with no arguments works out which one you meant.
 
 For detailed setup instructions and example corpora, see the [Quickstart Documentation](https://blog.ahmadz.ai/DeepZero/en/overview/quickstart.html).
 
@@ -94,6 +101,7 @@ For detailed setup instructions and example corpora, see the [Quickstart Documen
 
 ```
 src/deepzero/
+├── cli.py               # click command group (run, report, runs, status, validate, ...)
 ├── api/                 # REST API (starlette)
 ├── engine/              # orchestration, state persistence, pipeline execution
 └── stages/              # built-in processors (map, reduce, ingest)
@@ -123,7 +131,7 @@ tests/                   # pytest suite
 
 ## 🤝 Contributing
 
-CI runs on Python 3.11 and 3.12 via GitHub Actions.
+CI runs the test suite on every supported interpreter via GitHub Actions.
 
 Run linting and security checks before submitting:
 

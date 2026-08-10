@@ -51,22 +51,42 @@ report and leaves an empty file behind, failing every sample in the batch.
 This is the surprising one, and it is a cache that lives outside the run state.
 
 Before anything is scanned, each sample's own directory is checked for
-`findings.json`. If it is there and it parses, those findings are the result, the
-sample is recorded with `findings_cached: true`, and semgrep is never asked about
-it. If the file is there but unreadable, the sample is rescanned.
+`findings.json`. Three conditions have to hold together: the file exists, the
+engine set `ProcessorEntry.cache_is_valid` on this entry, and the JSON parses.
+Then those findings are the result, the sample is recorded with
+`findings_cached: true`, and semgrep is never asked about it. A file that is
+there but unreadable sends the sample to a real scan, and so does one the engine
+has already declared stale.
 
-That is what stops an interrupted run from repeating batches it had already
-finished. It also means editing the rules and running again changes nothing on
-its own: the old file is still there, so the old findings are reported back.
-`deepzero run --redo <stage>` is the way to force a real rescan, and it works
-because `findings.json` is recorded as an artifact on every path that writes one,
-including the filtered path, so `--redo` can find the file and delete it. Without
-that the file would outlive the run state that describes it, and the next run
-would report findings the current rules cannot produce.
+`cache_is_valid` is the engine's answer to whether this stage's own output on
+disk still describes the pipeline as it stands, and any processor that adopts its
+previous output rather than doing the work again has to consult it. The engine is
+what answers, because it is the only thing that knows what this stage read last
+time.
+
+Adoption is what stops an interrupted run from repeating batches it had already
+finished. Editing the rules and running again does not get the old findings back,
+though: `stage_input_digest` folds in the contents of every file or directory a
+config string points at, and `rules_dir` is one of those, so an edited rule set
+changes this stage's fingerprint and the findings already on disk stop counting
+as a cache.
+
+`deepzero run --redo <stage>` remains the way to force a rescan the fingerprint
+cannot ask for on its own. The fingerprint covers the config and the files the
+config names, not the processor's own code, not a new semgrep version, and not
+the contents of the directory being scanned, because the corpus is deliberately
+not hashed. A result recorded before fingerprinting existed carries an empty
+digest and is trusted rather than redone, which is the other case for `--redo`.
+It works because `findings.json` is recorded as an artifact on every path that
+writes one, including the filtered path, so `--redo` can find the file and delete
+it. Without that the file would outlive the run state that describes it, and the
+next run would report findings the current rules cannot produce.
 
 The check happens before the scan directory is looked for, so a sample whose
 `findings.json` survives is adopted even if the directory that produced it is
-gone.
+gone. That holds only while the fingerprint still matches. Once it does not, the
+sample goes looking for a scan directory that is no longer there and fails on
+that instead.
 
 ## What it emits
 

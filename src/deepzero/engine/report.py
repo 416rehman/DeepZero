@@ -13,7 +13,7 @@ What a pipeline can optionally declare in its yaml to shape the output:
       title: GitHub source bug hunt
       entity: repository          # what one sample is called in the ui
       entity_plural: repositories # only needed when adding an s is wrong
-      target_label: organisation  # what the thing being researched is called
+      target_label: repository list # names the run's target, shown beside it
       classification_key: verdict # stage data key holding the conclusion
       positive_when: [vulnerable, exploitable]   # also spelled vulnerable_when
       negative_when: [safe, clean]               # also spelled safe_when
@@ -263,7 +263,10 @@ class ReportConfig:
     # only needed where appending an s is wrong, e.g. repository -> repositories
     entity_plural: str = ""
     # what the run was pointed at. "corpus" suits a directory of files; a web
-    # assessment wants "scope", a repository sweep wants "organisation".
+    # assessment wants "scope", a repository sweep wants "repository list". Name
+    # the thing the header actually shows beside it, which is the run's target:
+    # "organisation" reads well and then labels a manifest path that can list
+    # repositories belonging to several of them.
     target_label: str = "corpus"
     lexicon: Lexicon = field(default_factory=Lexicon)
     classification_key: str = "classification"

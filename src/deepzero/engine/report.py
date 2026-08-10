@@ -177,20 +177,22 @@ _INTERESTING_HINTS = ("count", "score", "severity", "total", "hits", "size", "st
 
 # What a pipeline concludes and what a person has checked are different claims.
 # A stage records the first; only the reader can record the second, so the report
-# carries marks they make while reading it. Deliberately generic: whether the
-# outstanding work is reproducing a crash, proving a precondition or reading a
-# diff is the pipeline's business, and this only needs somewhere to put it.
+# carries marks they make while reading it.
+#
+# Two states, because a review either reached an answer or it did not. Anything
+# without one of these is simply unreviewed, whether nobody opened it or somebody
+# opened it and could not settle it. Splitting those apart put two controls side
+# by side that read as the same thing, and the difference was not worth the
+# confusion. A reader with something to say about an unsettled result says it in
+# the note.
 MARK_CONFIRMED = "confirmed"
 MARK_REFUTED = "refuted"
-MARK_OUTSTANDING = "outstanding"
-# checked and it holds, checked and it does not, and looked at but not settled.
-# Refuted is worth its own state rather than being folded into outstanding: it
-# is a finished piece of work with a definite answer, and a result that did not
-# hold up should never look like one nobody has examined.
+# Refuted is its own state rather than being folded into unreviewed: it is a
+# finished piece of work with a definite answer, and a result that did not hold
+# up should never look like one nobody has examined.
 _MARK_LABELS = {
     MARK_CONFIRMED: "Confirmed",
     MARK_REFUTED: "Refuted",
-    MARK_OUTSTANDING: "Outstanding",
 }
 _MARKS_FILE = "marks.json"
 
@@ -741,7 +743,6 @@ h1 .qty{color:var(--faint);font-weight:400;letter-spacing:-.02em}
 .rest .ok i{background:var(--ok)}
 .rest .confirmed i{background:var(--ok)}
 .rest .refuted i{background:var(--positive)}
-.rest .outstanding i{background:var(--warn)}
 .rest .unmarked i{background:var(--inert)}
 .rest:empty{display:none}
 .rest b{color:var(--body);font-weight:600;margin-right:.38em}
@@ -817,7 +818,6 @@ input[type=search]::placeholder{color:var(--faint)}
 .chipf.mk i{width:6px;height:6px;border-radius:50%;background:var(--inert);flex:none}
 .chipf.mk.confirmed i{background:var(--ok)}
 .chipf.mk.refuted i{background:var(--positive)}
-.chipf.mk.outstanding i{background:var(--warn)}
 .chipf.mk[aria-pressed="true"]{
   background:var(--plate);border-color:var(--rule-hard);color:var(--ink)
 }
@@ -891,7 +891,6 @@ td.rev{width:1%;white-space:nowrap;text-align:right}
   color:var(--faint);white-space:nowrap}
 .mark.confirmed{color:var(--ok)}
 .mark.refuted{color:var(--positive)}
-.mark.outstanding{color:var(--warn)}
 .mark .note{display:block;margin-top:var(--s1);font:400 11px/1.4 var(--mono);
   letter-spacing:0;text-transform:none;color:var(--faint);max-width:34ch;
   white-space:normal;text-align:right}
@@ -909,14 +908,13 @@ td.rev{width:1%;white-space:nowrap;text-align:right}
 .review button[aria-pressed="true"]{border-color:currentColor;color:var(--ink)}
 .review button.confirmed[aria-pressed="true"]{color:var(--ok)}
 .review button.refuted[aria-pressed="true"]{color:var(--positive)}
-.review button.outstanding[aria-pressed="true"]{color:var(--warn)}
 .review textarea{
   display:none;width:100%;margin-top:var(--s3);background:var(--plate);
   border:1px solid var(--rule-hard);color:var(--ink);padding:var(--s3);
   font:400 12.5px/1.5 var(--mono);resize:vertical;min-height:62px
 }
 .review textarea:focus{outline:0;border-color:var(--review);box-shadow:0 0 0 3px var(--review-wash)}
-.review.outstanding textarea,.review.refuted textarea{display:block}
+.review.confirmed textarea,.review.refuted textarea{display:block}
 .review .saved{margin:var(--s3) 0 0;font:400 11.5px/1 var(--mono);color:var(--faint)}
 
 /* specimen fingerprint ---------------------------------------------------- */
@@ -1108,11 +1106,11 @@ _JS = """
   if(tally){
     var rows = document.querySelectorAll('tr[data-sid]');
     if(rows.length){
-      var n = {confirmed:0, refuted:0, outstanding:0, unmarked:0};
+      var n = {confirmed:0, refuted:0, unmarked:0};
       [].forEach.call(rows, function(r){ n[r.dataset.mark] = (n[r.dataset.mark]||0) + 1 });
       var parts = [];
       [['confirmed','confirmed'],['refuted','did not hold up'],
-       ['outstanding','outstanding'],['unmarked','not yet reviewed']]
+       ['unmarked','not yet reviewed']]
         .forEach(function(pair){
           if(n[pair[0]]) parts.push("<span class='" + pair[0] + "'><i></i><b>" +
             n[pair[0]] + "</b>" + pair[1] + "</span>");
@@ -1135,7 +1133,6 @@ _JS = """
       // a result that did not hold up needs its detail as much as an open one,
       // so both states open the note field
       var st = current ? current.state : '';
-      panel.classList.toggle('outstanding', st === 'outstanding');
       panel.classList.toggle('refuted', st === 'refuted');
       panel.querySelectorAll('button').forEach(function(b){
         b.setAttribute('aria-pressed', String(!!current && current.state === b.dataset.state));
@@ -1327,9 +1324,9 @@ def _review_panel(item: ItemReport, entity: str) -> str:
     """where the reader records what they have actually checked.
 
     The pipeline's verdict and a person's verification are separate claims, and
-    only one of them can be made here. What counts as outstanding is left open
-    on purpose: reproducing a crash, proving a precondition or reading a diff
-    are all the same shape of unfinished work from the report's point of view.
+    only one of them can be made here. A review that reached no answer is left
+    unmarked and says why in the note, which is the same place a settled one
+    records what was run.
     """
     return f"""<div class="review" data-sid="{_esc(item.sample_id)}">
   <span class="lbl">your review</span>
@@ -1338,8 +1335,6 @@ def _review_panel(item: ItemReport, entity: str) -> str:
       confirmed</button>
     <button type="button" class="refuted" data-state="refuted" aria-pressed="false">
       did not hold up</button>
-    <button type="button" class="outstanding" data-state="outstanding" aria-pressed="false">
-      something outstanding</button>
   </div>
   <textarea placeholder="what did you run, on what, and what happened? enough for
 someone to repeat it on this {_esc(entity)}"
@@ -1641,14 +1636,9 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
                 "you checked these and they did not hold up",
             ),
             (
-                MARK_OUTSTANDING,
-                "Outstanding",
-                "you marked these as resting on something still unproven",
-            ),
-            (
                 "unmarked",
                 "Unreviewed",
-                "nobody has recorded a review of these yet",
+                "no review has been recorded against these yet",
             ),
         )
     )

@@ -497,18 +497,18 @@ class TestTheReaderCanRecordWhatTheyChecked:
         index, _ = write_report(_seed(tmp_path))
         page = (index.parent / "items" / "aaa1.html").read_text(encoding="utf-8")
         assert 'class="review" data-sid="aaa1"' in page
-        assert 'data-state="confirmed"' in page and 'data-state="outstanding"' in page
+        assert 'data-state="confirmed"' in page and 'data-state="refuted"' in page
 
     def test_marks_saved_beside_the_report_are_rendered(self, tmp_path):
         index, _ = write_report(_seed(tmp_path))
         (index.parent / "marks.json").write_text(
-            json.dumps({"aaa1": {"state": "outstanding", "note": "ACL not checked"}}),
+            json.dumps({"aaa1": {"state": "refuted", "note": "ACL not checked"}}),
             encoding="utf-8",
         )
         index, _ = write_report(_seed(tmp_path))
         text = index.read_text(encoding="utf-8")
         # readable by json, not html-escaped: script content is never decoded
-        assert '{"aaa1": {"state": "outstanding", "note": "ACL not checked"}}' in text
+        assert '{"aaa1": {"state": "refuted", "note": "ACL not checked"}}' in text
 
     def test_a_mark_reaches_the_spreadsheet(self, tmp_path):
         work = _seed(tmp_path)
@@ -559,11 +559,14 @@ class TestAResultThatDidNotHoldUpIsItsOwnOutcome:
     """checked-and-it-failed is a finished piece of work with a definite answer.
     Folding it in with unreviewed loses the most expensive result there is."""
 
-    def test_the_control_offers_all_three(self, tmp_path):
+    def test_the_control_offers_both_answers(self, tmp_path):
+        """a review either reached an answer or it did not, so the panel offers
+        the two answers and leaves everything else unreviewed."""
         index, _ = write_report(_seed(tmp_path))
         page = (index.parent / "items" / "aaa1.html").read_text(encoding="utf-8")
-        for state in ("confirmed", "refuted", "outstanding"):
+        for state in ("confirmed", "refuted"):
             assert f'data-state="{state}"' in page
+        assert 'data-state="outstanding"' not in page
 
     def test_a_refuted_result_is_rendered_and_filterable(self, tmp_path):
         work = _seed(tmp_path)

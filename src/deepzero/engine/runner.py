@@ -371,7 +371,22 @@ class PipelineRunner:
             )
 
         sample_states = {}
+        collisions: list[tuple[str, str, str]] = []
         for sample in samples:
+            # samples are keyed by id from here on, so two sharing one id means
+            # the second replaces the first and the corpus quietly shrinks while
+            # the discovered count still reports both. An ingest deriving its id
+            # from something insufficiently unique is an easy mistake to make and
+            # an almost impossible one to notice later, so it is named here.
+            if sample.sample_id in sample_states:
+                collisions.append(
+                    (
+                        sample.sample_id,
+                        sample_states[sample.sample_id].filename,
+                        sample.filename,
+                    )
+                )
+                continue
             state = SampleState(
                 sample_id=sample.sample_id,
                 sha256=sample.data.get("sha256", ""),
@@ -387,6 +402,19 @@ class PipelineRunner:
             state.verdict = SampleStatus.ACTIVE
             sample_states[sample.sample_id] = state
             self.state_store.save_sample(state)
+
+        if collisions:
+            log.error(
+                "%s produced %d sample(s) sharing an id with an earlier one; the "
+                "later ones were dropped. The ingest is deriving ids from "
+                "something that is not unique across this corpus.",
+                ingest_name,
+                len(collisions),
+            )
+            for sid, kept, dropped in collisions[:5]:
+                log.error("  id %s: kept %s, dropped %s", sid, kept, dropped)
+            if len(collisions) > 5:
+                log.error("  ... and %d more", len(collisions) - 5)
 
         self.state_store.save_manifest(list(sample_states.values()))
 

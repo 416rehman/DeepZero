@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from deepzero.engine.stage import (
@@ -18,7 +19,13 @@ class MetadataFilter(MapProcessor):
 
     def __init__(self, spec: StageSpec):
         super().__init__(spec)
+        # dedup is the one thing here that remembers other samples, and a Map
+        # processor runs across a thread pool. Testing membership and adding are
+        # two separate steps, so without this lock two threads holding the same
+        # value can both find it absent and both pass, which is silently the
+        # opposite of what dedup_field was asked to do.
         self._seen: set[str] = set()
+        self._seen_lock = threading.Lock()
 
     def process(self, ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult:
         config = self.config
@@ -53,9 +60,11 @@ class MetadataFilter(MapProcessor):
         if dedup_field:
             dedup_value = flat.get(dedup_field, "")
             if dedup_value:
-                if dedup_value in self._seen:
+                with self._seen_lock:
+                    first = dedup_value not in self._seen
+                    self._seen.add(dedup_value)
+                if not first:
                     return ProcessorResult.filter(f"duplicate {dedup_field}")
-                self._seen.add(dedup_value)
 
         return ProcessorResult.ok()
 

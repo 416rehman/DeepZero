@@ -490,9 +490,29 @@ def run(
         first = min(order.index(name) for name in redo_stages)
         affected = order[first:]
         redone = 0
+        discarded = 0
         for state in state_store.list_samples():
-            if not state.clear_stages_from(list(redo_stages), order):
+            dropped = state.clear_stages_from(list(redo_stages), order)
+            if not dropped:
                 continue
+            # a stage whose input has not changed is one the engine would rightly
+            # call fresh, so nothing here invalidates it: --redo is the caller
+            # saying to do the work again anyway. Several processors treat their
+            # own output on disk as a cache, so the file has to go with the state
+            # or the stage reads its old answer back and records it as new.
+            sample_dir = state_store.sample_dir(state.sample_id).resolve()
+            for paths in dropped.values():
+                for rel in paths:
+                    victim = (sample_dir / rel).resolve()
+                    if not victim.is_relative_to(sample_dir) or not victim.exists():
+                        # an artifact recorded outside the sample's own directory
+                        # is not this run's to delete
+                        continue
+                    try:
+                        shutil.rmtree(victim) if victim.is_dir() else victim.unlink()
+                        discarded += 1
+                    except OSError as exc:
+                        log.debug("could not remove %s: %s", victim, exc)
             state_store.save_sample(state)
             redone += 1
         if redone:
@@ -500,6 +520,11 @@ def run(
                 f"[yellow]![/] re-running {', '.join(affected)} for {redone} sample(s); "
                 f"earlier stages are kept"
             )
+            if discarded:
+                console.print(
+                    f"        discarded {discarded} output file(s) those stages had written, "
+                    f"so they are produced again rather than read back"
+                )
         else:
             console.print("[dim]no sample had reached those stages - nothing to redo[/]")
 

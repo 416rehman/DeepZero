@@ -99,6 +99,29 @@ class TestGenericLLMProcess:
         assert result.status == "completed"
         mock_llm.complete.assert_not_called()
 
+    def test_a_stale_cache_is_not_read_back(self, tmp_path):
+        """An answer on disk is only reusable while it answers the current prompt.
+
+        The engine sets cache_is_valid to False when the stage's inputs have
+        moved, which for this stage is usually the prompt template being edited.
+        Reading the old file back then would record a reply to the previous
+        question as though the new one had been asked, and the run would report
+        an assessment nobody made.
+        """
+        processor = self._make_tool(config={"prompt": "analyze", "output_file": "result.md"})
+        mock_llm = MagicMock()
+        mock_llm.complete.return_value = "a fresh answer"
+
+        ctx, entry = _make_ctx(tmp_path, llm=mock_llm)
+        (entry.sample_dir / "result.md").write_text("an answer to the old prompt")
+        entry.cache_is_valid = False
+
+        result = processor.process(ctx, entry)
+
+        assert result.status == "completed"
+        mock_llm.complete.assert_called_once()
+        assert (entry.sample_dir / "result.md").read_text() == "a fresh answer"
+
 
 class TestGenericLLMClassify:
     def _make_tool(self, config=None):

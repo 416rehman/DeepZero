@@ -111,7 +111,11 @@ class GenericLLM(MapProcessor):
 
         output_file = self.config.get("output_file", "assessment.md")
         output_path = entry.sample_dir / output_file
-        if output_path.exists():
+        # an answer already on disk is reused, but only while it is still an answer
+        # to this question. An edited prompt or a changed config moves the stage's
+        # input digest, and reading the old file back would record a reply to the
+        # previous prompt as though the new one had been asked.
+        if output_path.exists() and entry.cache_is_valid:
             self.log.info("output already cached: %s", output_path.name)
             content = output_path.read_text(encoding="utf-8", errors="replace")
             return self._make_result(content, output_file)

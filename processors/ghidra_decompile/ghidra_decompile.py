@@ -209,6 +209,11 @@ class GhidraDecompile(MapProcessor):
             timeout=active_timeout,
             java_home=self.config.java_home,
             extra_env=extra_env if extra_env else None,
+            # should_skip already declined to skip when this is False, and
+            # adopting the file here anyway would hand back the previous
+            # strategy's output to be recorded under the current one's
+            # fingerprint, leaving nothing to show the result is stale
+            may_adopt_cache=entry.cache_is_valid,
         )
 
         if not result.get("success", False):
@@ -292,16 +297,19 @@ class GhidraDecompile(MapProcessor):
         timeout: int = 300,
         java_home: str = "",
         extra_env: dict[str, str] | None = None,
+        may_adopt_cache: bool = True,
     ) -> dict[str, Any]:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         cached_result = output_dir / "ghidra_result.json"
-        cached = _read_cached_result(output_dir, log)
+        cached = _read_cached_result(output_dir, log) if may_adopt_cache else None
         if cached is not None:
             log.info("ghidra cache hit for %s", binary_path.name)
             return cached
-        # unusable either way: a file that cannot be read, and one recording a
-        # run that did not finish, both mean this driver has not been analysed
+        # unusable either way: a file that cannot be read, one recording a run
+        # that did not finish, and one produced by a strategy script or limits
+        # the stage no longer uses. All three mean this driver has not been
+        # analysed the way this run is asking for.
         cached_result.unlink(missing_ok=True)
 
         cmd = self._build_ghidra_cmd(

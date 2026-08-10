@@ -199,6 +199,79 @@ class TestRunCommand:
         assert not (corpus_dir / "dummy.txt").exists()
 
 
+class TestRedoDiscardsCachedOutput:
+    """`--redo` has to take a stage's output with its state.
+
+    Several processors treat their own file on disk as a cache and adopt it
+    instead of doing the work again. Forgetting the state alone leaves the file
+    behind, so the stage reads its previous answer back and records it as fresh:
+    the command reports a redo that did not happen. The engine's own staleness
+    check does not cover this, because `--redo` is for the case where nothing
+    about the stage's inputs changed and the caller wants the work done anyway.
+    """
+
+    def _seed(self, tmp_path, artifact: str):
+        from deepzero.engine.pipeline import corpus_segment
+        from deepzero.engine.state import SampleState, StateStore
+
+        pipeline_file = tmp_path / "pipeline.yaml"
+        pipeline_file.write_text(
+            "name: test\n"
+            "stages:\n"
+            "  - name: discover\n"
+            "    processor: file_discovery\n"
+            "  - name: mark\n"
+            "    processor: sort\n"
+            "    config:\n"
+            "      by: discover.size\n"
+        )
+
+        target = tmp_path / "test.sys"
+        target.write_bytes(b"MZ")
+
+        work_root = tmp_path / "work"
+        store = StateStore(work_root / "test" / corpus_segment(target))
+        state = SampleState(sample_id="s0", filename="test.sys", source_path=str(target))
+        state.mark_stage_completed("discover", data={"size": 2})
+        state.mark_stage_completed("mark", data={}, artifacts={"out": artifact})
+        store.save_sample(state)
+        return pipeline_file, target, work_root, store.sample_dir("s0")
+
+    def test_the_file_a_redone_stage_wrote_is_removed(self, tmp_path):
+        pipeline_file, target, work_root, sample_dir = self._seed(tmp_path, "out.txt")
+        cached = sample_dir / "out.txt"
+        cached.write_text("an answer to the previous run")
+
+        result = CliRunner().invoke(
+            main,
+            ["run", str(target), "-p", str(pipeline_file), "-w", str(work_root), "--redo", "mark"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert not cached.exists(), "the redone stage's output survived the redo"
+        assert "discarded 1 output file" in result.output
+
+    def test_an_artifact_outside_the_sample_directory_is_left_alone(self, tmp_path):
+        """A path a processor recorded elsewhere is not this run's to delete.
+
+        Nothing stops a processor writing outside the sample directory and
+        recording where it put it, and a redo that followed such a path would be
+        deleting a file it does not own.
+        """
+        outsider = tmp_path / "not-ours.txt"
+        pipeline_file, target, work_root, _ = self._seed(tmp_path, str(outsider))
+        outsider.write_text("belongs to someone else")
+
+        result = CliRunner().invoke(
+            main,
+            ["run", str(target), "-p", str(pipeline_file), "-w", str(work_root), "--redo", "mark"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert outsider.exists(), "a redo deleted a file outside the sample directory"
+        assert "discarded" not in result.output
+
+
 class TestServeCommand:
     def test_serve_default_port(self):
         # just verify the command is registered and parses args

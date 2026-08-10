@@ -1597,6 +1597,12 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     rules = bucket_rule(lex)
 
     total = t["samples"]
+
+    # one of these reads "1 repository", the other "6 repositories", and a
+    # declared plural is the whole point of asking for one
+    def _count(n: int) -> str:
+        return f"{n:,} {_esc(entity if n == 1 else plural)}"
+
     n_pos = buckets.get(BUCKET_VULNERABLE, 0)
     n_rev = buckets.get(BUCKET_SUSPICIOUS, 0)
     n_err = buckets.get(BUCKET_FAILED, 0)
@@ -1643,8 +1649,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     readout = (
         f"<div class='readout'><div class='ticks'>{ticks}</div>"
         + (
-            f"<div class='spread' role='img' aria-label='{total:,} {_esc(plural)} by "
-            f"outcome'>{spread}</div>"
+            f"<div class='spread' role='img' aria-label='{_count(total)} by outcome'>{spread}</div>"
             if total
             else ""
         )
@@ -1770,11 +1775,6 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
         else ""
     )
 
-    # one of these reads "1 repository", the other "6 repositories", and a
-    # declared plural is the whole point of asking for one
-    def _count(n: int) -> str:
-        return f"{n:,} {_esc(entity if n == 1 else plural)}"
-
     # say what to do next, not only what happened
     if n_pos:
         note = (
@@ -1814,7 +1814,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
   <div class="kicker"><span class="mark">DEEPZERO</span>
     <span class="lbl">{_esc(lex.discipline)}</span>
     <span class="id">{_esc(run.get("run_id", "") or "")}</span></div>
-  <h1>{_esc(title)} <span class="qty">{t["samples"]:,} {_esc(plural)}</span></h1>
+  <h1>{_esc(title)} <span class="qty">{_count(t["samples"])}</span></h1>
   <dl class="plate">{plate}</dl>
   {readout}
   {note}{trunc}

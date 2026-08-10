@@ -272,7 +272,9 @@ class TestWriteReport:
 class TestPipelineAgnostic:
     """a completely different pipeline must render without code changes."""
 
-    def _github_run(self, tmp_path):
+    def _github_run(self, tmp_path, extra: int = 0):
+        """one repository by default; `extra` adds plain ones, for the cases
+        where the corpus size is what is being tested."""
         work = tmp_path / "work" / "srchunt"
         store = StateStore(work)
         store.save_run(
@@ -306,6 +308,11 @@ class TestPipelineAgnostic:
             ),
             encoding="utf-8",
         )
+        for i in range(extra):
+            more = SampleState(sample_id=f"x{i}", filename=f"acme/lib{i}")
+            more.mark_stage_completed("discover", data={"stars": 10})
+            more.mark_stage_completed("sast", data={"finding_count": 0})
+            store.save_sample(more)
         return work
 
     def test_declared_config_shapes_the_report(self, tmp_path):
@@ -362,7 +369,7 @@ class TestPipelineAgnostic:
 
     def test_a_plural_that_an_s_cannot_make(self, tmp_path):
         """ "851 repositorys" would undermine every number beside it."""
-        work = self._github_run(tmp_path)
+        work = self._github_run(tmp_path, extra=2)
         index, _ = write_report(
             work,
             config=ReportConfig.from_dict(
@@ -372,6 +379,21 @@ class TestPipelineAgnostic:
         text = index.read_text(encoding="utf-8")
         assert "repositories" in text
         assert "repositorys" not in text
+
+    def test_a_corpus_of_one_is_not_called_plural(self, tmp_path):
+        """a pipeline pointed at a single repository is ordinary, and "1
+        repositories" beside a page of careful numbers undermines the ones the
+        reader cannot check for themselves."""
+        work = self._github_run(tmp_path)
+        index, _ = write_report(
+            work,
+            config=ReportConfig.from_dict(
+                {"entity": "repository", "entity_plural": "repositories"}
+            ),
+        )
+        text = index.read_text(encoding="utf-8")
+        assert "1 repository" in text
+        assert "1 repositories" not in text
 
     def test_the_plural_reaches_the_prose_not_only_the_headline_count(self, tmp_path):
         """the sentence under the counts says how many were flagged, and it read
@@ -395,7 +417,7 @@ class TestPipelineAgnostic:
         assert "1 repository " in text
 
     def test_the_plural_falls_back_to_adding_an_s(self, tmp_path):
-        work = self._github_run(tmp_path)
+        work = self._github_run(tmp_path, extra=2)
         index, _ = write_report(work, config=ReportConfig.from_dict({"entity": "driver"}))
         assert "drivers" in index.read_text(encoding="utf-8")
 

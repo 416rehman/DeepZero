@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.1](https://github.com/416rehman/DeepZero/compare/deepzero-v0.4.0...deepzero-v0.4.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **docs:** publish canonical URLs with the project path ([#33](https://github.com/416rehman/DeepZero/issues/33)) ([90828f6](https://github.com/416rehman/DeepZero/commit/90828f648fa22416049befc9d1c66b102e26ab4b))
+
+
+### Documentation
+
+* add a runnable local demo for first-time users ([#31](https://github.com/416rehman/DeepZero/issues/31)) ([27b284f](https://github.com/416rehman/DeepZero/commit/27b284f947171667ee7c278fa0372f71e1e233b4))
+* clarify that the local demo requires a checkout ([#34](https://github.com/416rehman/DeepZero/issues/34)) ([cdf4e7c](https://github.com/416rehman/DeepZero/commit/cdf4e7c23dddc615970f4cbe29ec1c75d9f4239a))
+
 ## [0.4.0](https://github.com/416rehman/DeepZero/compare/deepzero-v0.3.0...deepzero-v0.4.0) (2026-07-27)
 
 

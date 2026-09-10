@@ -1,0 +1,13 @@
+name: demo
+description: Local file discovery and filtering demo; no external tools or API keys.
+
+stages:
+  - name: discover
+    processor: file_discovery
+    config:
+      extensions: [txt]
+
+  - name: keep_larger_files
+    processor: metadata_filter
+    config:
+      min_size_bytes: 32

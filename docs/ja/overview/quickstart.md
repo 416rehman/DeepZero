@@ -8,6 +8,19 @@ order: 1
 
 DeepZero は、分析するためのターゲットとなるファイルコーパスと、その処理方法を詳述する[パイプライン設定]({{ '/ja/reference/pipeline-yaml.html' | relative_url }})を必要とします。[LOLDrivers](https://www.loldrivers.io/) プロジェクトからの既知のハッシュをフィルタリングすることにより、未加工のバイナリデータセットの中から新しい脆弱なドライバー（BYOVD）候補を見つけるように設計された[完全なサンプルパイプライン]({{ '/ja/reference/included-pipeline.html' | relative_url }})を提供しています。
 
+### Try the local demo first
+
+After installing the base package, run the included harmless text samples from the repository root:
+
+```sh
+deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml
+deepzero status -p pipelines/demo/pipeline.yaml
+deepzero report -p pipelines/demo/pipeline.yaml --open
+```
+
+The demo needs no API keys, external tools, or driver corpus. It discovers two files, keeps `hello.txt`, filters `tiny.txt` by size, and writes an HTML report. It demonstrates orchestration and saved state, not vulnerability detection. Repeating the run command resumes saved results. See the [demo walkthrough](https://github.com/416rehman/DeepZero/tree/main/pipelines/demo) for details.
+
+
 ### 1. インストール
 
 DeepZero には **Python 3.11+** が必要です。

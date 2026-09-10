@@ -8,6 +8,19 @@ order: 1
 
 DeepZero требует целевого корпуса файлов для анализа и [конфигурации конвейера]({{ '/ru/reference/pipeline-yaml.html' | relative_url }}), детализирующей их обработку. Мы предоставляем [полный пример конвейера]({{ '/ru/reference/included-pipeline.html' | relative_url }}), предназначенный для поиска новых уязвимых драйверов (BYOVD) в необработанных бинарных наборах данных, путем фильтрации известных хешей с использованием проекта [LOLDrivers](https://www.loldrivers.io/).
 
+### Try the local demo first
+
+After installing the base package, run the included harmless text samples from the repository root:
+
+```sh
+deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml
+deepzero status -p pipelines/demo/pipeline.yaml
+deepzero report -p pipelines/demo/pipeline.yaml --open
+```
+
+The demo needs no API keys, external tools, or driver corpus. It discovers two files, keeps `hello.txt`, filters `tiny.txt` by size, and writes an HTML report. It demonstrates orchestration and saved state, not vulnerability detection. Repeating the run command resumes saved results. See the [demo walkthrough](https://github.com/416rehman/DeepZero/tree/main/pipelines/demo) for details.
+
+
 ### 1. Установка
 
 DeepZero требует **Python 3.11+**.

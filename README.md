@@ -38,7 +38,7 @@
 
 ## 📚 Documentation
 
-DeepZero features extensive, exhaustive documentation covering architecture, pipeline schemas, CLI references, and custom processor development. 
+The documentation covers architecture, pipeline schemas, CLI references, and custom processor development.
 
 👉 **[Read the Official Documentation here](https://blog.ahmadz.ai/DeepZero/)**
 
@@ -46,26 +46,23 @@ DeepZero features extensive, exhaustive documentation covering architecture, pip
 
 ## ⚡️ Quickstart
 
-DeepZero requires a target corpus of files to analyze and a pipeline configuration detailing how to process them. 
+Try a complete local run with the included text samples. **No API keys, Ghidra, or driver corpus needed.** Requires Python 3.11+.
 
-1. **Clone & Install (Python 3.11+)**
-   ```bash
-   git clone https://github.com/416rehman/DeepZero.git
-   cd DeepZero
-   pip install -e .
-   ```
+```sh
+git clone https://github.com/416rehman/DeepZero.git
+cd DeepZero
+python -m pip install -e .
+deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml
+deepzero report -p pipelines/demo/pipeline.yaml --open
+```
 
-2. **Configure Environment**
-   ```bash
-   cp .env.example .env
-   ```
+These commands work in PowerShell and POSIX shells. For an isolated installation, create and activate a Python virtual environment before installing.
 
-3. **Run a Pipeline**
-   ```bash
-   deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
-   ```
+The demo discovers two harmless text files, keeps one, filters the smaller one, and generates a browsable HTML report. Run the same pipeline command again to resume from saved state. This demonstrates the engine; it does not run vulnerability analysis. See the [demo walkthrough](pipelines/demo/README.md) for expected results and configuration experiments.
 
-For detailed setup instructions and example corpora, see the [Quickstart Documentation](https://blog.ahmadz.ai/DeepZero/en/overview/quickstart.html).
+For the driver analysis pipeline, follow the [full setup guide](https://blog.ahmadz.ai/DeepZero/en/overview/quickstart.html) and [pipeline prerequisites](https://blog.ahmadz.ai/DeepZero/en/reference/included-pipeline.html). Optional integrations require their own dependencies and configuration.
+
+If DeepZero is useful to your work, **star this repository** to help others discover it. Feedback on your first run is welcome in the [issue tracker](https://github.com/416rehman/DeepZero/issues).
 
 ---
 
@@ -84,6 +81,7 @@ processors/              # external processors (shipped as examples)
 └── semgrep_scanner/     # semgrep batch scanner (BulkMapProcessor)
 
 pipelines/
+├── demo/                # local first run with harmless text files; no API keys
 └── loldrivers/          # BYOVD kernel driver vulnerability research pipeline
     ├── pipeline.yaml
     ├── assessment.j2    # LLM prompt template
@@ -97,7 +95,7 @@ tests/                   # pytest suite
 
 ## 🤝 Contributing
 
-CI runs on Python 3.11 and 3.12 via GitHub Actions.
+CI runs on Python 3.11, 3.12, 3.13, and 3.14 via GitHub Actions.
 
 Run linting and security checks before submitting:
 

@@ -8,6 +8,19 @@ order: 1
 
 DeepZero 需要一个待分析的目标文件语料库，以及一个详细说明如何处理这些文件的 [流水线配置]({{ '/zh-CN/reference/pipeline-yaml.html' | relative_url }})。我们提供了一个 [完整的示例流水线]({{ '/zh-CN/reference/included-pipeline.html' | relative_url }})，它旨在通过使用 [LOLDrivers 项目](https://www.loldrivers.io/) 显式过滤已知的哈希值，从而在原始二进制数据集 (例如，Snappy Driver Installer 语料库) 中寻找新的 BYOVD (自带易受攻击驱动程序) 候选目标。
 
+### Try the local demo first
+
+After installing the base package, run the included harmless text samples from the repository root:
+
+```sh
+deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml
+deepzero status -p pipelines/demo/pipeline.yaml
+deepzero report -p pipelines/demo/pipeline.yaml --open
+```
+
+The demo needs no API keys, external tools, or driver corpus. It discovers two files, keeps `hello.txt`, filters `tiny.txt` by size, and writes an HTML report. It demonstrates orchestration and saved state, not vulnerability detection. Repeating the run command resumes saved results. See the [demo walkthrough](https://github.com/416rehman/DeepZero/tree/main/pipelines/demo) for details.
+
+
 ### 1. 安装
 
 DeepZero 要求使用 **Python 3.11+**。

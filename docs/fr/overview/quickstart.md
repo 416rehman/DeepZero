@@ -10,7 +10,7 @@ DeepZero nécessite un corpus cible de fichiers à analyser et une [configuratio
 
 ### Try the local demo first
 
-After installing the base package, run the included harmless text samples from the repository root:
+First clone this repository and install its base package using the installation instructions below. Then run the included harmless text samples from the cloned repository root:
 
 ```sh
 deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml

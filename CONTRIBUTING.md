@@ -82,7 +82,7 @@ processors/              # Community / external processors (shipped as examples)
 
 pipelines/               # Example pipeline definitions
 
-tests/                   # pytest test suite (28 test files)
+tests/                   # pytest test suite
 ```
 
 - **Built-in processors** live in `src/deepzero/stages/` and are registered in
@@ -201,8 +201,9 @@ test(state): add atomicity tests for concurrent writes
 
 ## Pull Request Process
 
-1. **Ensure CI passes.** The GitHub Actions workflow runs linting, security
-   scanning, and the full test suite on Python 3.11 and 3.12.
+1. **Ensure CI passes.** GitHub Actions runs Ruff and Bandit on Python 3.12,
+   the non-Ghidra test suite on Python 3.11 through 3.14, and the Ghidra
+   integration test separately on Python 3.12.
 
 2. **Fill out the PR template.** Describe what changed, why, and how to test
    it. Link any related issues.

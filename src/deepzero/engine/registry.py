@@ -53,15 +53,7 @@ def _get_base_classes() -> tuple:
 
 
 def _processor_roots(pipeline_dir: Path | None) -> list[Path]:
-    """where a `dir/file.py` reference is looked for, in order.
-
-    The working directory comes first, which is how this repository's own
-    pipelines reference the processors beside them. Then the pipeline's own
-    directory and its parent, so a pipeline kept anywhere can carry its
-    processors without the engine dictating that they sit in a folder called
-    `processors` next to wherever the command happened to be run. DEEPZERO_PROCESSORS
-    overrides the lot, for a shared library of them.
-    """
+    """Search shared roots, then the working directory, then the pipeline and its parent."""
     roots: list[Path] = []
     env = os.environ.get("DEEPZERO_PROCESSORS", "").strip()
     if env:
@@ -148,10 +140,7 @@ def _load_processor_from_file(file_path: Path) -> type[Any] | None:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
 
-    # module.__dict__ is in definition order, so a file holding more than one
-    # processor gives up the one written first, which is what a reference
-    # without a :ClassName means. dir() would sort the names and hand back
-    # whichever happened to come first in the alphabet.
+    # Without :ClassName, use definition order; dir() would alphabetize classes.
     for attr in vars(module).values():
         if not (isinstance(attr, type) and issubclass(attr, Processor)):
             continue

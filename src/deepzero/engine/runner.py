@@ -202,8 +202,10 @@ class PipelineRunner:
         stage_names: list[str],
     ) -> None:
         eligible = [s for s in sample_states.values() if s.is_active() or spec.name in s.history]
-        collective = isinstance(processor, (ReduceProcessor, BulkMapProcessor)) or bool(
-            spec.config.get("limit", 0)
+        collective = (
+            isinstance(processor, (ReduceProcessor, BulkMapProcessor))
+            or processor.requires_full_cohort
+            or bool(spec.config.get("limit", 0))
         )
         if collective:
             # A barrier's inputs include its membership and upstream results.

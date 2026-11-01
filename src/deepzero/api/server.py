@@ -14,13 +14,7 @@ log = logging.getLogger("deepzero.api")
 
 
 def _extract_classification(sample, key: str = "classification") -> str:
-    """the verdict a stage recorded, under whatever key this pipeline uses.
-
-    A pipeline names the key itself through report.classification_key, so
-    assuming "classification" answers correctly only for the pipelines that
-    happen to keep the default and returns nothing at all for any other, which
-    reads as "no verdict" rather than as a lookup that missed.
-    """
+    """Read the verdict under the pipeline's configured classification key."""
     for stage_output in sample.history.values():
         classification = stage_output.data.get(key, "")
         if classification:
@@ -29,13 +23,7 @@ def _extract_classification(sample, key: str = "classification") -> str:
 
 
 def _is_plain_segment(sample_id: str) -> bool:
-    """Whether a sample id addresses one entry inside the sample store.
-
-    The id arrives from the request path, and the store builds a filesystem path
-    out of it, so anything carrying a separator or a parent reference would
-    reach outside the work directory entirely - on a server the CLI will bind to
-    every interface on request.
-    """
+    """Reject IDs that could address paths outside the sample store."""
     return bool(sample_id) and sample_id not in (".", "..") and not set(sample_id) & set("/\\")
 
 
@@ -84,9 +72,7 @@ def create_app(work_dir: Path, classification_key: str = "classification"):
     async def get_samples(request: Request) -> JSONResponseType:
         samples = await _run_sync(store.list_samples)
 
-        # filtering. a sample's verdict is where it left the pipeline; its
-        # classification is what a stage decided about it. the response carries
-        # both, so each filters the field it is named after
+        # Lifecycle verdict and assessment classification are separate fields.
         verdict = request.query_params.get("verdict")
         classification_filter = request.query_params.get("classification")
         stage = request.query_params.get("stage")

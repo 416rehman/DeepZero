@@ -11,12 +11,10 @@ class RunLockedError(RuntimeError):
 
 
 class RunLock:
-    """A nonblocking OS lock whose lifetime follows its open file handle.
+    """Hold a nonblocking OS lock until its handle closes.
 
-    Keep the lock file outside the corpus directory: --clean may rename that
-    directory while its writer still holds this lock. The file deliberately
-    remains after release; the OS lock, rather than its existence or a stored
-    process ID, decides whether another writer can proceed.
+    Keep the file outside the corpus: --clean may rename that directory.
+    The file remains after release; its existence does not imply ownership.
     """
 
     def __init__(self, path: Path):
@@ -33,8 +31,7 @@ class RunLock:
             if os.name == "nt":
                 import msvcrt
 
-                # Windows locks a byte range, including one byte in an otherwise
-                # empty file. Materialize it once so every opener locks byte 0.
+                # Every opener must lock byte 0, including in a newly created file.
                 if handle.seek(0, os.SEEK_END) == 0:
                     handle.write(b"\0")
                     handle.flush()

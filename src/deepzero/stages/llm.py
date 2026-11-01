@@ -197,10 +197,7 @@ class GenericLLM(MapProcessor):
         if classify_by:
             import re
 
-            # the verdict is asked for at the top, and reading only the top
-            # stops a model discussing the words later in its reasoning from
-            # being read as the verdict. A prompt with a longer preamble can say
-            # so rather than losing every verdict past the default.
+            # Ignore verdict words quoted later in the model's reasoning.
             window = int(self.config.get("classify_window", 200) or 200)
             match = re.search(classify_by, content[:window], re.IGNORECASE)
             if match:
@@ -223,12 +220,7 @@ class GenericLLM(MapProcessor):
             # otherwise render as empty and the model would be asked to judge
             # nothing, so an unknown name is an error naming what is available.
             #
-            # a prompt is plain text, never a web page: escaping is off because
-            # the values interpolated here are source code and decompiler output,
-            # and html-escaping them sends the model `hdr-&gt;len` where the file
-            # says `hdr->len`. select_autoescape() escapes string templates by
-            # default, which is why this has to be said explicitly.
-            # Plain-text LLM prompts: escaping would alter the source being assessed.
+            # HTML escaping would alter the source sent to the model.
             env = jinja2.Environment(  # nosec B701
                 loader=jinja2.FileSystemLoader(str(template_path.parent)),
                 undefined=jinja2.StrictUndefined,

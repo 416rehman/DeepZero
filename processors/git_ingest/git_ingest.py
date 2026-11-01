@@ -545,14 +545,9 @@ class GitIngest(IngestProcessor):
         return ctx.shutdown_event is not None and ctx.shutdown_event.is_set()
 
     def _repo_git(self, path: Path, args: list[str]) -> str:
-        """read something from a checkout, or nothing when the tree is not one.
+        """Read metadata only when this directory has its own .git.
 
-        git searches every parent of the directory it is handed, so a plain
-        source tree that happens to sit inside somebody's checkout would report
-        that checkout's remote and revision as its own. Since the identity a
-        sample is keyed on comes from those answers, every such tree in a corpus
-        would also collapse onto one sample. A tree with no `.git` of its own is
-        therefore not asked.
+        Git parent lookup would give unrelated source trees the same identity.
         """
         if not (path / ".git").exists():
             return ""
@@ -581,11 +576,9 @@ class GitIngest(IngestProcessor):
     def _run_git_network(
         self, ctx: ProcessorContext, args: list[str], cwd: Path | None
     ) -> tuple[bool, str]:
-        """run a git command that talks to a server, watching for shutdown.
+        """Poll network Git commands so shutdown interrupts long fetches.
 
-        Cloning is the one part of ingest that can take minutes, so it is polled
-        rather than waited on: Ctrl+C stops the fetch instead of being queued
-        behind it. Returns whether it worked and the tail of what git said.
+        Return success and the tail of Git output.
         """
         timeout = max(0, int(self.config.clone_timeout or 0))
         # git writes progress to stderr; a file rather than a pipe means a

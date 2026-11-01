@@ -256,8 +256,7 @@ def _digest_path(path: Path, into: Any) -> None:
                     into.update(str(child.relative_to(path)).encode("utf-8"))
                     _digest_path(child, into)
     except OSError:
-        # unreadable is a state worth being stable about rather than failing on:
-        # the stage will report the real problem when it runs
+        # Defer unreadable-input errors to the processor.
         into.update(b"<unreadable>")
 
 
@@ -268,17 +267,9 @@ def stage_input_digest(
     processor: Any = None,
     global_config: GlobalConfig | None = None,
 ) -> str:
-    """a fingerprint of everything that decides what this stage produces.
+    """Fingerprint declared inputs: config files, processor source, and globals.
 
-    A stage's results are stale when its inputs change, and the inputs are its
-    processor, its config, and any file that config points at: a prompt, a rule
-    set, an analysis script. Recording this alongside the result is what lets a
-    resumed run work out for itself which stages still hold and which have to be
-    done again, instead of the reader having to remember what they edited.
-
-    Only the config's own file references are followed. The corpus is not
-    hashed: it is keyed by the work directory, and reading every sample to decide
-    whether to read every sample would cost more than the stage it protects.
+    Corpus contents are tracked separately by discovery refresh.
     """
     import hashlib
     import json
@@ -290,10 +281,8 @@ def stage_input_digest(
     if processor is not None:
         import inspect
 
-        # Include implementations, including shared base classes. A Python file
-        # edited in place is a different processor even when its YAML name is
-        # unchanged. Dependencies outside these files should be versioned by
-        # the extension or included explicitly in its configuration.
+        # In-place code edits invalidate cached results. Extensions must declare
+        # dependencies outside these implementation files.
         sources: set[Path] = set()
         source_file = getattr(processor, "_source_file", None)
         if source_file:
@@ -382,6 +371,7 @@ class Processor(ABC):
     # may name just the keys they read, or () when their inputs are entirely
     # stage configuration and upstream results.
     cache_global_keys: ClassVar[tuple[str, ...] | None] = None
+    requires_full_cohort: ClassVar[bool] = False
     # None follows every config path; () is useful for output/cache/tool
     # directories. Such processors declare their actual files via cache_files.
     cache_path_keys: ClassVar[tuple[str, ...] | None] = None

@@ -56,11 +56,8 @@ class StageOutput:
     # why this stage did no work (cached output, filtered out). kept separate from
     # error so a normal skip is never reported as a failure
     skip_reason: str = ""
-    # fingerprint of the processor, config and referenced files this result came
-    # from. A resumed run compares it with the current one to work out whether
-    # this result still describes the pipeline as it stands. Empty on results
-    # written before this was recorded, which are trusted rather than redone:
-    # discarding a corpus because it predates a feature would be the worse guess.
+    # Inputs that produced this result. Older results with no digest are trusted
+    # because their original inputs cannot be checked.
     input_digest: str = ""
 
 
@@ -168,19 +165,9 @@ class SampleState:
     def clear_stages_from(
         self, stage_names: list[str], pipeline_order: list[str]
     ) -> dict[str, list[str]]:
-        """forget a stage and everything the run did after it.
+        """Forget the earliest named stage and its consumers, keeping earlier work.
 
-        Redoing one stage and keeping the stages that consumed its old output
-        would leave a sample describing two different runs at once: an
-        assessment written from findings that no longer exist, say. So the
-        named stage and every later stage in the pipeline go together, and
-        everything before it, which is usually the expensive part, is kept.
-
-        Returns each dropped stage with the artifacts it had recorded. Several
-        processors treat their own output on disk as a cache and skip when it is
-        present, so forgetting the state alone would have them re-adopt the
-        stale file and record it as fresh, which is worse than not redoing at
-        all. The caller removes what is returned here.
+        Return their artifact paths so the caller can remove on-disk caches too.
         """
         targets = {name for name in stage_names if name in pipeline_order}
         if not targets:
@@ -230,10 +217,7 @@ class SampleState:
         s = self.history.get(stage_name)
         if s is None:
             return False
-        # a result produced from inputs the pipeline no longer has is not done,
-        # it is stale. An empty digest on either side means the question cannot
-        # be asked, and an unanswerable question is not grounds for discarding
-        # work that may have taken hours.
+        # Trust legacy results without digests; only a known mismatch invalidates them.
         if input_digest and s.input_digest and s.input_digest != input_digest:
             return False
         return s.status in (
@@ -307,11 +291,7 @@ class StateStore:
     def __init__(self, work_dir: Path):
         self.work_dir = work_dir
         self._samples_dir = work_dir / "samples"
-        # not created here. Opening a store is what every command does before it
-        # knows whether it has anything to read, so creating on open meant a
-        # mistyped path produced an empty tree and then reported finding no run
-        # in it. Writers call _ensure_dirs(); readers get an empty answer about a
-        # directory that stays absent.
+        # Opening a store is read-only; writers create directories on first use.
 
     def _ensure_dirs(self) -> None:
         self.work_dir.mkdir(parents=True, exist_ok=True)
@@ -320,9 +300,6 @@ class StateStore:
     # -- atomic write helpers --
 
     def _atomic_write(self, path: Path, content: str) -> None:
-        # every write in the store passes through here, so this is where the
-        # directories come into being: writing is the act that means the run is
-        # real, rather than merely being asked about
         self._ensure_dirs()
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -357,13 +334,9 @@ class StateStore:
     # -- sample state --
 
     def sample_dir(self, sample_id: str, *, create: bool = True) -> Path:
-        """where a sample's files live.
+        """Resolve a sample directory; use create=False for reads.
 
-        Reading takes create=False. Creating on the way to a read means anything
-        that resolves a path for an id it has not seen leaves a directory behind,
-        which the report does for every id it renders and the api does for every
-        id a request names. On a server bound to every interface, that is an
-        unauthenticated way to fill a disk with empty directories.
+        Queries for unknown IDs must not leave directories behind.
         """
         d = self._samples_dir / sample_id
         if create:

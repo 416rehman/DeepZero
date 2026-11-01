@@ -102,14 +102,6 @@ class TestGenericLLMProcess:
         mock_llm.complete.assert_not_called()
 
     def test_a_stale_cache_is_not_read_back(self, tmp_path):
-        """An answer on disk is only reusable while it answers the current prompt.
-
-        The engine sets cache_is_valid to False when the stage's inputs have
-        moved, which for this stage is usually the prompt template being edited.
-        Reading the old file back then would record a reply to the previous
-        question as though the new one had been asked, and the run would report
-        an assessment nobody made.
-        """
         processor = self._make_tool(config={"prompt": "analyze", "output_file": "result.md"})
         mock_llm = MagicMock()
         mock_llm.complete.return_value = "a fresh answer"
@@ -343,10 +335,7 @@ class TestPromptCompleteness:
 
 
 class TestAPromptIsPlainTextNotAWebPage:
-    """every value a prompt interpolates is code: decompiler output, a semgrep
-    snippet, a file read off disk. Escaping it for html rewrites the evidence on
-    the way to the model, which then reasons about `hdr-&gt;len` and reports on
-    a line the file does not contain."""
+    """HTML escaping would change the source sent to the model."""
 
     def test_an_interpolated_value_keeps_its_punctuation(self, tmp_path):
         code = 'if (hdr->len & 0xFF) { memcpy(dst, "a<b", n); }'

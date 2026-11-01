@@ -14,9 +14,7 @@ def _sample(*stages: str) -> SampleState:
 
 
 class TestRedoingAStageKeepsTheWorkBeforeIt:
-    """Re-running a prompt or a rule set must not mean decompiling everything
-    again. Decompilation is the expensive stage and its output does not change
-    when a later stage's configuration does."""
+    """Redoing a later stage must preserve expensive earlier work."""
 
     def test_the_named_stage_and_everything_after_it_are_forgotten(self):
         s = _sample(*ORDER)
@@ -31,17 +29,12 @@ class TestRedoingAStageKeepsTheWorkBeforeIt:
         assert set(s.history) == {"discover", "decompile", "scan", "rank"}
 
     def test_a_later_stage_is_not_left_describing_output_that_is_gone(self):
-        """an assessment written from findings that no longer exist would have a
-        sample describing two different runs at once, so redoing a stage takes
-        the stages that consumed it with it."""
         s = _sample(*ORDER)
         s.clear_stages_from(["decompile"], ORDER)
         assert "assess" not in s.history
         assert "scan" not in s.history
 
     def test_a_filtered_sample_rejoins_the_run(self):
-        """a sample the old scan excluded must be reconsidered by the new one,
-        otherwise redoing a stage silently keeps its previous verdict."""
         s = _sample("discover", "decompile")
         s.mark_stage_skipped("scan", "no findings")
         assert s.verdict == SampleStatus.FILTERED
@@ -60,8 +53,6 @@ class TestRedoingAStageKeepsTheWorkBeforeIt:
         assert set(s.history) == {"discover", "decompile"}
 
     def test_an_unknown_stage_name_is_ignored_rather_than_clearing_everything(self):
-        """the cli rejects unknown names, and the state layer must not fall back
-        to dropping the whole history if one slips through."""
         s = _sample(*ORDER)
         assert s.clear_stages_from(["nonsense"], ORDER) == {}
         assert set(s.history) == set(ORDER)
@@ -81,9 +72,7 @@ class TestRedoingAStageKeepsTheWorkBeforeIt:
 
 
 class TestRedoingAStageTheRunHasNotReachedYet:
-    """Naming a stage that is ahead of where a sample got to must be harmless.
-    A corpus is rarely uniform: a sample can fail early, be filtered early, or
-    simply not have been reached when the run was interrupted."""
+    """Redo must not reactivate samples stopped at an earlier stage."""
 
     def test_a_sample_that_stopped_early_is_left_alone(self):
         s = _sample("discover", "decompile")
@@ -93,9 +82,6 @@ class TestRedoingAStageTheRunHasNotReachedYet:
         assert s.verdict != SampleStatus.FILTERED
 
     def test_a_sample_filtered_before_the_redone_stage_stays_filtered(self):
-        """a driver dropped for having no ioctl surface must not be dragged back
-        into the run by redoing a stage it never reached, or every redo would
-        widen the corpus."""
         s = _sample("discover")
         s.mark_stage_skipped("decompile", "no ioctl surface")
         assert s.verdict == SampleStatus.FILTERED
@@ -110,9 +96,7 @@ class TestRedoingAStageTheRunHasNotReachedYet:
 
 
 class TestRedoingTakesTheStagesOutputWithIt:
-    """Several processors treat their own output on disk as a cache and skip
-    when it is present. Forgetting only the state would have them re-adopt the
-    stale file and record it as fresh, which reads as done and is not."""
+    """Redo must discard recorded files that processors would reuse as caches."""
 
     def test_the_artifacts_of_a_dropped_stage_are_reported(self):
         s = SampleState(sample_id="a1", filename="a.sys")
@@ -125,8 +109,6 @@ class TestRedoingTakesTheStagesOutputWithIt:
         assert dropped == {"scan": ["findings.json"]}
 
     def test_earlier_artifacts_are_not_reported_for_deletion(self):
-        """the expensive decompiler output is exactly what a redo is meant to
-        keep, so it must never appear in the list of things to remove."""
         s = SampleState(sample_id="a1", filename="a.sys")
         s.mark_stage_completed(
             "decompile", artifacts={"ghidra_result": "decompiled/ghidra_result.json"}

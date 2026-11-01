@@ -1,14 +1,6 @@
-"""the source_audit pipeline is configuration, and its failure mode is silence.
+"""Check agreement between rules, scan extensions, prompts, and report vocabulary.
 
-Most of what follows is an agreement between two files that nothing enforces at run
-time: a scan whose extensions miss a rule's language, or a prompt whose verdict words
-the report does not recognise, both produce a run that finishes cleanly and reports
-nothing. These are the assertions that would have to break before that could happen
-again.
-
-The last class is the exception: it runs semgrep over a defect per language, because
-a rule that parses is not the same as a rule that matches, and a rule that matches
-nothing is invisible in every other check here.
+The matching tests also run Semgrep against defects in each supported language.
 """
 
 from __future__ import annotations
@@ -82,10 +74,7 @@ def _rules() -> list[dict]:
 
 
 class TestTheScanReachesEveryLanguageTheRulesTarget:
-    """a rule for a language whose extension nobody listed never fires, and the
-    repository is reported as having nothing wrong with it. Neither stage can
-    notice: ingest counts zero files of a language it was not told about, and
-    semgrep is handed a directory that simply has no java in it."""
+    """Missing scan extensions make rules silently skip their language."""
 
     def test_rules_are_present_to_check(self):
         # an empty rules directory passes the scanner's own validate(), so the

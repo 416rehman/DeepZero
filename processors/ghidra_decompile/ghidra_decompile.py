@@ -64,13 +64,9 @@ def _total_ram_gb() -> float | None:
 
 
 def _read_cached_result(output_dir: Path, logger: logging.Logger) -> dict[str, Any] | None:
-    """a previous run's result for this binary, or None if there isn't a usable one.
+    """Return a successfully completed cached analysis, or None.
 
-    Both readers of ghidra_result.json go through here so they cannot disagree
-    about what counts as analysed. A file that will not decode, will not parse,
-    or records `success: false` is not a cached analysis: the post-script writes
-    that last one on its way out of a crash, and adopting it would report the
-    binary as decompiled with nothing decompiled.
+    The post-script also writes a result after a crash; file existence is insufficient.
     """
     cached = output_dir / "ghidra_result.json"
     if not cached.exists():
@@ -183,14 +179,7 @@ class GhidraDecompile(MapProcessor):
         return []
 
     def should_skip(self, ctx: ProcessorContext, entry: ProcessorEntry) -> str | None:
-        # a skipped sample counts as passed, so only a result that records a
-        # completed analysis may be adopted. The post-script writes this file on
-        # the way out of a crash too, and treating that one as cached marked the
-        # driver decompiled while leaving no decompiled code and none of the
-        # values a later prompt reads.
-        # and only while it still describes this stage. The engine knows whether
-        # the strategy, depth and limits that wrote it are the ones in force now;
-        # a result from a different script is not a cache hit for this one.
+        # Cached work counts as passed only when analysis completed with current inputs.
         if not entry.cache_is_valid:
             return None
         if _read_cached_result(entry.sample_dir / "decompiled", self.log) is not None:
@@ -226,10 +215,7 @@ class GhidraDecompile(MapProcessor):
             timeout=active_timeout,
             java_home=self.config.java_home,
             extra_env=extra_env if extra_env else None,
-            # should_skip already declined to skip when this is False, and
-            # adopting the file here anyway would hand back the previous
-            # strategy's output to be recorded under the current one's
-            # fingerprint, leaving nothing to show the result is stale
+            # The process path must honor the same cache decision as should_skip.
             may_adopt_cache=entry.cache_is_valid,
         )
 
@@ -323,10 +309,7 @@ class GhidraDecompile(MapProcessor):
         if cached is not None:
             log.info("ghidra cache hit for %s", binary_path.name)
             return cached
-        # unusable either way: a file that cannot be read, one recording a run
-        # that did not finish, and one produced by a strategy script or limits
-        # the stage no longer uses. All three mean this driver has not been
-        # analysed the way this run is asking for.
+        # Unreadable, incomplete, or stale analyses must be recomputed.
         cached_result.unlink(missing_ok=True)
 
         cmd = self._build_ghidra_cmd(

@@ -80,15 +80,7 @@ BUCKET_TIMED_OUT = "timed_out"
 
 @dataclass(frozen=True)
 class Lexicon:
-    """the words one pipeline uses for the outcomes every pipeline has.
-
-    The buckets below are structural: an assessment concluded something, or
-    findings exist that nothing has confirmed, or a stage errored. That shape
-    holds whether the run is hunting driver vulnerabilities, auditing licences
-    or grading code quality. Only the vocabulary changes, so only the vocabulary
-    is declared here, and the defaults keep a vulnerability pipeline reading
-    exactly as it always has.
-    """
+    """Pipeline vocabulary for shared outcome buckets."""
 
     # the kind of work, shown beside the product name in the header
     discipline: str = "vulnerability research"
@@ -107,9 +99,7 @@ class Lexicon:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> Lexicon:
-        # a scalar here means the yaml meant a block and wrote a value. The
-        # defaults still describe the run, so that is a reason to fall back
-        # rather than to lose the report a long run just produced.
+        # Invalid presentation config must not prevent reading completed results.
         if not isinstance(raw, dict):
             return cls()
         known = {f.name for f in fields(cls)}
@@ -196,27 +186,18 @@ _INTERESTING_HINTS = ("count", "score", "severity", "total", "hits", "size", "st
 # A stage records the first; only the reader can record the second, so the report
 # carries marks they make while reading it.
 #
-# Two states, because a review either reached an answer or it did not. Anything
-# without one of these is simply unreviewed, whether nobody opened it or somebody
-# opened it and could not settle it. Splitting those apart put two controls side
-# by side that read as the same thing, and the difference was not worth the
-# confusion. A reader with something to say about an unsettled result says it in
-# the note.
+# Only conclusive reviews become marks; unsettled findings remain unreviewed.
 MARK_CONFIRMED = "confirmed"
 MARK_REFUTED = "refuted"
 # not a mark but the absence of one, which the browser writes onto every row
 # nobody has ruled on so that it can be filtered and counted like the others
 MARK_UNREVIEWED = "unmarked"
-# Refuted is its own state rather than being folded into unreviewed: it is a
-# finished piece of work with a definite answer, and a result that did not hold
-# up should never look like one nobody has examined.
+# Refuted results have been reviewed; they must not look unexamined.
 _MARK_LABELS = {
     MARK_CONFIRMED: "Confirmed",
     MARK_REFUTED: "Refuted",
 }
-# every place a review state is named reads this: the filter chips, the control
-# on a result's page, the mark against a row and the tally. One state with two
-# names in one report is a state the reader has to work out twice.
+# Share labels across controls, filters, rows, and totals.
 _REVIEW_LABELS = {**_MARK_LABELS, MARK_UNREVIEWED: "Unreviewed"}
 # what each state claims, worded to serve both the control that records it and
 # the filter that narrows to it
@@ -376,13 +357,7 @@ def _read_json(path: Path) -> Any | None:
 
 
 def _conclusion_panel(run: dict[str, Any]) -> str:
-    """what a stage concluded about the corpus, if one did.
-
-    Placed above the per-sample counts because it is the answer to a different
-    question, and often the one that was actually asked: which model is behind
-    this endpoint, how many distinct bugs these crashes are. A page that leads
-    with a table of samples buries it.
-    """
+    """Show a corpus-wide conclusion above per-sample results."""
     conclusion = run.get("conclusion") or {}
     if not isinstance(conclusion, dict) or not conclusion:
         return ""

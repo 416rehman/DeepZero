@@ -29,6 +29,11 @@ class SemgrepScanner(BulkMapProcessor):
     DEFAULT_TARGET_DIR = "decompiled"
     DEFAULT_EXTENSIONS = (".c", ".h", ".cpp", ".py")
 
+    # Unauthenticated scans may withhold snippets. Read the reported source span
+    # instead of sending "requires login" to the assessment model.
+    _LINES_WITHHELD = "requires login"
+    _MAX_SNIPPET_LINES = 40
+
     # findings_json is the parsed report a prompt reads: findings.json is written
     # into the sample's own directory, and an artifact is named after its path.
     #
@@ -87,16 +92,8 @@ class SemgrepScanner(BulkMapProcessor):
         uncached_entries: list[tuple[int, ProcessorEntry]] = []
 
         for i, entry in enumerate(entries):
-            # a findings.json already in the sample's directory is adopted rather
-            # than rescanned, so an interrupted run does not repeat the batches it
-            # had already finished. findings.json is recorded as an artifact on
-            # every path that writes one, which is what lets `--redo` delete it:
-            # without that the file outlives the run state that describes it and
-            # the next run reports findings the current rules cannot produce.
+            # Record cached findings as artifacts so --redo can discard them.
             findings_path = entry.sample_dir / "findings.json"
-            # only while it still describes the rules in force: the engine says
-            # so, because it is the only thing that knows what this stage read
-            # last time
             if findings_path.exists() and entry.cache_is_valid:
                 try:
                     findings = json.loads(findings_path.read_text(encoding="utf-8"))
@@ -237,12 +234,7 @@ class SemgrepScanner(BulkMapProcessor):
             len(uncached_entries),
         )
 
-        # semgrep writes --output with the interpreter's default encoding, which
-        # on windows is the ANSI codepage. A scan that quotes a byte that
-        # codepage cannot represent - which any file that is not UTF-8
-        # guarantees, because the parse error quotes the bytes - then dies
-        # encoding its own report and leaves an empty file behind, failing every
-        # sample in the batch. UTF-8 mode makes the report readable instead.
+        # Windows' default codec can fail while Semgrep writes quoted source bytes.
         env = dict(os.environ)
         env["PYTHONUTF8"] = "1"
 
@@ -337,16 +329,6 @@ class SemgrepScanner(BulkMapProcessor):
             scanned_paths,
             bulk_dir,
         )
-
-    # semgrep withholds the matched source unless the CLI is logged in: an
-    # unauthenticated scan returns the literal string "requires login" in
-    # extra.lines, with no flag to turn it off. That string is what the
-    # assessment prompt quotes to the model and what the report renders, so
-    # taking it at face value means asking for a verdict on code nobody showed
-    # anyone. The span semgrep reports is trustworthy, so read the lines back
-    # off the file it scanned instead.
-    _LINES_WITHHELD = "requires login"
-    _MAX_SNIPPET_LINES = 40
 
     def _matched_code(self, result_entry: dict[str, Any], bulk_dir: Path | None) -> str:
         lines = result_entry.get("extra", {}).get("lines", "")

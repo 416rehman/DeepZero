@@ -28,6 +28,14 @@ class MetadataFilter(MapProcessor):
         self._seen: set[str] = set()
         self._seen_lock = threading.Lock()
 
+    @property
+    def requires_full_cohort(self) -> bool:
+        return bool(self.config.get("dedup_field"))
+
+    def setup(self, global_config: dict[str, Any]) -> None:
+        with self._seen_lock:
+            self._seen.clear()
+
     def process(self, ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult:
         config = self.config
 

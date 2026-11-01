@@ -273,8 +273,7 @@ class TestPipelineAgnostic:
     """a completely different pipeline must render without code changes."""
 
     def _github_run(self, tmp_path, extra: int = 0):
-        """one repository by default; `extra` adds plain ones, for the cases
-        where the corpus size is what is being tested."""
+        """Seed one repository; extra adds repositories without findings."""
         work = tmp_path / "work" / "srchunt"
         store = StateStore(work)
         store.save_run(
@@ -347,9 +346,6 @@ class TestPipelineAgnostic:
         assert "Needs assessment" in text
 
     def test_the_target_is_named_in_the_pipeline_s_own_terms(self, tmp_path):
-        """the header labels whatever the run was pointed at. Calling a GitHub
-        organisation or a web application a "corpus" reads as a mistake, so the
-        label is declared rather than assumed."""
         work = self._github_run(tmp_path)
         index, _ = write_report(
             work,
@@ -361,14 +357,11 @@ class TestPipelineAgnostic:
         assert "<div class='lbl'>corpus</div>" not in text
 
     def test_the_target_label_defaults_to_corpus(self, tmp_path):
-        """a pipeline over a directory of files declares nothing and still reads
-        correctly, so this stays invisible until a pipeline needs it."""
         work = self._github_run(tmp_path)
         index, _ = write_report(work)
         assert "<div class='lbl'>corpus</div>" in index.read_text(encoding="utf-8")
 
     def test_a_plural_that_an_s_cannot_make(self, tmp_path):
-        """ "851 repositorys" would undermine every number beside it."""
         work = self._github_run(tmp_path, extra=2)
         index, _ = write_report(
             work,
@@ -381,9 +374,6 @@ class TestPipelineAgnostic:
         assert "repositorys" not in text
 
     def test_a_corpus_of_one_is_not_called_plural(self, tmp_path):
-        """a pipeline pointed at a single repository is ordinary, and "1
-        repositories" beside a page of careful numbers undermines the ones the
-        reader cannot check for themselves."""
         work = self._github_run(tmp_path)
         index, _ = write_report(
             work,
@@ -396,9 +386,6 @@ class TestPipelineAgnostic:
         assert "1 repositories" not in text
 
     def test_the_plural_reaches_the_prose_not_only_the_headline_count(self, tmp_path):
-        """the sentence under the counts says how many were flagged, and it read
-        "2 repositorys" long after the headline was fixed, because the two were
-        pluralised in different places."""
         work = self._github_run(tmp_path)
         index, _ = write_report(
             work,
@@ -422,8 +409,6 @@ class TestPipelineAgnostic:
         assert "drivers" in index.read_text(encoding="utf-8")
 
     def test_report_json_carries_the_vocabulary(self, tmp_path):
-        """anything rendering its own headings from report.json needs the same
-        words the html used, rather than guessing a plural."""
         work = self._github_run(tmp_path)
         write_report(
             work,
@@ -582,8 +567,6 @@ class TestAResultThatDidNotHoldUpIsItsOwnOutcome:
     Folding it in with unreviewed loses the most expensive result there is."""
 
     def test_the_control_offers_both_answers(self, tmp_path):
-        """a review either reached an answer or it did not, so the panel offers
-        the two answers and leaves everything else unreviewed."""
         index, _ = write_report(_seed(tmp_path))
         page = (index.parent / "items" / "aaa1.html").read_text(encoding="utf-8")
         for state in ("confirmed", "refuted"):

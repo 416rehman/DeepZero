@@ -1,11 +1,3 @@
-"""Rails that stop an extension author losing data without being told.
-
-Both behaviours here were latent bugs found while building a second ingest
-processor. Neither raised an error; both quietly produced a smaller or wrong
-corpus than the run reported, which is the worst failure mode a research tool
-has, because the number it prints is the number that gets believed.
-"""
-
 from __future__ import annotations
 
 import threading
@@ -31,19 +23,7 @@ def _entry(sample_id: str, value: str):
 
 
 class TestDedupKeepsExactlyOne:
-    """MapProcessor runs across a thread pool and its own docs require thread
-    safety. Dedup is the one condition here that remembers other samples, and it
-    was a check-then-act on an unguarded set.
-
-    Being straight about what these tests do and do not establish: the window
-    between the membership test and the add is two bytecodes, and CPython's
-    interpreter switch interval makes losing that race so unlikely that it does
-    not reproduce in hundreds of forced-contention trials. So these tests pin
-    the behaviour (exactly one survivor, whatever the concurrency) rather than
-    proving the race. The lock is still worth having, because correctness that
-    holds only because of an interpreter implementation detail is not
-    correctness, and a future processor copying this pattern for something
-    slower than a set lookup would lose the race for real."""
+    """Concurrent dedup must keep one sample; these tests cannot guarantee a race occurs."""
 
     def _filter(self):
         return MetadataFilter(
@@ -59,8 +39,6 @@ class TestDedupKeepsExactlyOne:
         assert Verdict.FILTER in verdicts and Verdict.CONTINUE in verdicts
 
     def test_exactly_one_survives_under_concurrency(self, tmp_path):
-        """many threads, one value, released together. Anything other than
-        exactly one survivor means dedup silently did not dedup."""
         f = self._filter()
         ctx = _ctx(tmp_path)
         results = []
@@ -90,12 +68,6 @@ class TestDedupKeepsExactlyOne:
 
 
 class TestReadingDoesNotCreate:
-    """Resolving a path for a sample that does not exist must not bring it into
-    being. The report resolves one per rendered row and the api resolves one per
-    request, and the cli will bind that api to every interface on request, so a
-    creating read is an unauthenticated way to fill a disk with empty
-    directories."""
-
     def _store(self, tmp_path):
         from deepzero.engine.state import StateStore
 
@@ -118,7 +90,6 @@ class TestReadingDoesNotCreate:
         assert not path.exists()
 
     def test_saving_still_creates_what_it_needs(self, tmp_path):
-        """the guard must not break the write path it shares."""
         from deepzero.engine.state import SampleState
 
         store = self._store(tmp_path)
@@ -128,10 +99,6 @@ class TestReadingDoesNotCreate:
 
 
 class TestOpeningAStoreIsNotAWrite:
-    """Every command opens a store before it knows whether there is anything to
-    read, so creating on open turned a mistyped path into a new empty tree and
-    then reported finding no run in it."""
-
     def test_opening_a_store_creates_nothing(self, tmp_path):
         from deepzero.engine.state import StateStore
 
@@ -156,10 +123,7 @@ class TestOpeningAStoreIsNotAWrite:
 
 
 class TestAPipelineCanShipItsOwnFiles:
-    """A pipeline that carries a blocklist, a rule set or a template beside its
-    yaml has to be able to name it. setup() sees only the global config, so
-    without the pipeline's own directory in there the only thing a relative path
-    could resolve against was whichever directory the command was run from."""
+    """Processor setup needs the pipeline directory to resolve bundled files."""
 
     def test_a_blocklist_beside_the_pipeline_is_found_from_anywhere(self, tmp_path, monkeypatch):
         from deepzero.engine.stage import StageSpec
@@ -179,8 +143,6 @@ class TestAPipelineCanShipItsOwnFiles:
         assert h._exclude_hashes == {"aaaa", "bbbb"}
 
     def test_the_working_directory_still_wins_when_the_file_is_there(self, tmp_path, monkeypatch):
-        """the shipped pipelines reference their files relative to the repository
-        root, so that resolution must keep working."""
         from deepzero.engine.stage import StageSpec
         from deepzero.stages.hash_filter import HashExclude
 
@@ -199,8 +161,6 @@ class TestAPipelineCanShipItsOwnFiles:
         assert h._exclude_hashes == {"fromcwd"}
 
     def test_the_pipeline_directory_reaches_a_processor_setup(self):
-        """the engine has to actually put it in the global config, or the above
-        only works because the test passed it by hand."""
         from pathlib import Path
 
         from deepzero.engine.pipeline import PipelineDefinition
@@ -219,11 +179,6 @@ class TestAPipelineCanShipItsOwnFiles:
 
 
 class TestAPipelineCanLiveAnywhere:
-    """The engine is the product; the pipelines beside it are examples. Somebody
-    building their own workflow keeps it in their own repository, and resolving
-    their processors only against a folder called `processors` next to whichever
-    directory the command was run from made the engine dictate their layout."""
-
     def _pipeline_carrying_a_processor(self, root):
         import textwrap
 
@@ -295,11 +250,7 @@ class TestAPipelineCanLiveAnywhere:
 
 
 class TestAConclusionAboutTheWholeCorpus:
-    """Some questions only have an answer in aggregate: which model sits behind
-    an endpoint, how many distinct bugs a pile of crashes is, whether a scope is
-    configured correctly. Every one of those was homeless: a stage could record
-    against a sample and nowhere else, so the answer had to be attributed to an
-    arbitrary member of the set it was actually about."""
+    """Corpus conclusions must not be attributed to an arbitrary sample."""
 
     def _corpus(self, tmp_path, stage_cls, kind):
         import pathlib
@@ -352,9 +303,7 @@ class TestAConclusionAboutTheWholeCorpus:
         assert store.load_run().conclusion["headline"] == "seen all at once"
 
     def test_a_map_stage_cannot(self, tmp_path):
-        """a per-sample lane runs across a thread pool, so several of them
-        writing a corpus verdict is a race whose winner is whichever sample
-        finished last. The call does nothing rather than recording that."""
+        """Parallel sample processors cannot write a stable corpus-wide conclusion."""
         from deepzero.engine.stage import MapProcessor, ProcessorResult
 
         class Concluder(MapProcessor):
@@ -376,7 +325,6 @@ class TestAConclusionAboutTheWholeCorpus:
         assert store.load_run().conclusion == {}
 
     def test_an_older_run_without_the_field_still_loads(self, tmp_path):
-        """runs written before this existed must not become unreadable."""
         import json
 
         from deepzero.engine.state import StateStore

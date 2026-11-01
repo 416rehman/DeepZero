@@ -103,11 +103,6 @@ def _latest_run_dir(base: Path) -> Path | None:
 
 
 def _given_on_command_line(param: str) -> bool:
-    """Whether an option was actually typed, as opposed to left at its default.
-
-    A flag that is quietly ignored because the flag it depends on was not passed
-    should say so, and that is only worth saying when someone asked for it.
-    """
     from click.core import ParameterSource
 
     ctx = click.get_current_context(silent=True)
@@ -117,13 +112,7 @@ def _given_on_command_line(param: str) -> bool:
 
 
 def _load_pipeline_or_exit(ref: str, **overrides: str | None) -> Any:
-    """Load a pipeline, or say why it could not be loaded and stop.
-
-    A pipeline is named by hand on every command that takes one, so a typo is
-    the most common way any of them fails. The loader already assembles the
-    search path it tried, which is exactly what the reader needs; a traceback
-    around it is not.
-    """
+    """Exit with the loader's search-path error instead of a traceback."""
     import yaml
 
     import deepzero.stages  # noqa: F401
@@ -137,13 +126,7 @@ def _load_pipeline_or_exit(ref: str, **overrides: str | None) -> Any:
 
 
 def _require_run_dir(raw: str) -> Path:
-    """Resolve a ``--work-dir`` to the run directory it names, or stop.
-
-    A run lives at ``<work_dir>/<pipeline>/<corpus>/``, so the path someone has
-    to hand is often the pipeline's root rather than one run. Accept either, the
-    way ``--pipeline`` already does, rather than reading an empty directory and
-    presenting the empty answer as a result.
-    """
+    """Accept a corpus directory or its pipeline root; fail if neither holds a run."""
     path = Path(raw)
     if not path.is_dir():
         detail = "is not a directory" if path.exists() else "does not exist"
@@ -159,13 +142,7 @@ def _require_run_dir(raw: str) -> Path:
 
 
 def _discover_runs(root: Path) -> list[Path]:
-    """every run directory under `root`, newest first.
-
-    A run is any directory holding a run.json, at any depth. Work is namespaced
-    <root>/<pipeline>/<corpus>/, but --work-dir can put one anywhere, so the
-    marker file is what is searched for rather than a shape that only holds for
-    the default layout.
-    """
+    """Find runs by run.json, including custom layouts, newest first."""
     if not root.is_dir():
         return []
     return sorted(
@@ -190,13 +167,7 @@ def _describe_run(d: Path) -> tuple[str, str, str]:
 
 
 def _choose_run(root: Path) -> Path | None:
-    """the run to report on when nothing was named.
-
-    One run is not a choice, so it is taken. Several is a question, and it is
-    only worth asking a person: a prompt with nowhere to read an answer from
-    would hang a script, so a non-interactive caller is shown the list and told
-    how to name one instead.
-    """
+    """Choose a run; prompt only for multiple runs with interactive input."""
     found = _discover_runs(root)
     if not found:
         console.print(f"[yellow]no runs found under {escape(str(root))}[/]")
@@ -230,9 +201,7 @@ def _choose_run(root: Path) -> Path | None:
             "  which run", type=click.IntRange(1, len(found)), default=1, show_default=True
         )
     except (click.Abort, EOFError):
-        # isatty is not a promise. Some shells report a redirected stdin as a
-        # terminal, and a prompt that reaches end of input there would otherwise
-        # end the command with nothing said about how to get the report.
+        # Some shells report a TTY even after stdin reaches EOF.
         console.print()
         _cannot_ask()
         return None
@@ -240,11 +209,9 @@ def _choose_run(root: Path) -> Path | None:
 
 
 def _report_config_for_run(work_path: Path) -> dict:
-    """recover a run's report block from the work directory alone.
+    """Read saved report config so reports outlive their pipeline files.
 
-    The saved snapshot lets a custom pipeline's report outlive its source files
-    and the working directory it originally ran from. Older runs without a
-    snapshot can still recover their configuration by pipeline name.
+    Older runs fall back to pipeline lookup by name.
     """
     snapshot_path = work_path / "pipeline.yaml"
     if snapshot_path.is_file():
@@ -274,18 +241,12 @@ def _report_config_for_run(work_path: Path) -> dict:
 
         return load_pipeline(name).report
     except (ImportError, OSError, ValueError):
-        # a run can outlive the pipeline that made it, and a report with default
-        # wording is far better than no report
+        # Reports remain usable after their pipeline files are removed.
         return {}
 
 
 def _announce_corpus(base: Path, chosen: Path) -> None:
-    """say which corpus these results are when a pipeline has seen more than one.
-
-    Work directories are namespaced per corpus, so resolving by pipeline name
-    alone silently picks the most recent. That is the right default and the wrong
-    thing to leave unsaid: the newest run is not always the one being asked about.
-    """
+    """Name the selected corpus when pipeline lookup could be ambiguous."""
     if not base.exists():
         return
     runs = [d for d in base.iterdir() if d.is_dir() and (d / "run.json").exists()]
@@ -408,9 +369,7 @@ def run(
     """run a pipeline against a target file or directory (resumes automatically)"""
     _setup_logging(verbose)
 
-    # the multiplier says how much longer to allow, so anything under 1 asks for
-    # a shorter budget than the one that already ran out - and 0 reads as "no
-    # timeout at all" downstream, quietly removing the limit it was tuning
+    # Zero disables timeouts; retries must allow at least the previous budget.
     if timeout_multiplier < 1:
         console.print(
             "[bold red]X ERROR[/]: --timeout-multiplier is how much longer to allow, "
@@ -528,18 +487,14 @@ def run(
             dropped = state.clear_stages_from(list(redo_stages), order)
             if not dropped:
                 continue
-            # a stage whose input has not changed is one the engine would rightly
-            # call fresh, so nothing here invalidates it: --redo is the caller
-            # saying to do the work again anyway. Several processors treat their
-            # own output on disk as a cache, so the file has to go with the state
-            # or the stage reads its old answer back and records it as new.
+            # Processors reuse artifacts as caches, so --redo must remove both
+            # state and recorded files.
             sample_dir = state_store.sample_dir(state.sample_id).resolve()
             for paths in dropped.values():
                 for rel in paths:
                     victim = (sample_dir / rel).resolve()
                     if not victim.is_relative_to(sample_dir) or not victim.exists():
-                        # an artifact recorded outside the sample's own directory
-                        # is not this run's to delete
+                        # External artifacts do not belong to this run.
                         continue
                     try:
                         shutil.rmtree(victim) if victim.is_dir() else victim.unlink()
@@ -668,8 +623,6 @@ def report(
         _announce_corpus(pipeline_def.base_work_dir, work_path)
         report_cfg = pipeline_def.report
     else:
-        # neither was named, so work out what there is rather than refusing to
-        # answer a question that has one obvious answer most of the time
         chosen = _choose_run(Path("work"))
         if chosen is None:
             raise SystemExit(1)
@@ -769,10 +722,6 @@ def validate(pipeline_ref: str):
         else:
             console.print(f"  [yellow]![/] {w}")
 
-    # the point of validating is to find out before a long run whether the
-    # pipeline holds together, which is a thing worth putting in front of a
-    # commit. Printing errors and exiting 0 means no automation can tell the
-    # difference between a pipeline that is fine and one that cannot start.
     if failed:
         raise SystemExit(1)
 

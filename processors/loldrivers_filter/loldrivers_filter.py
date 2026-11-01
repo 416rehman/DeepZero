@@ -45,10 +45,7 @@ class LoldriversFilter(MapProcessor):
     )
     Config = LoldriversFilterConfig
 
-    # whether the database was actually consulted for this sample. Without it a
-    # run where the database could not be fetched is indistinguishable from one
-    # where nothing matched, and every known-vulnerable driver in the corpus
-    # would be reported as new.
+    # Distinguish a negative lookup from a sample that was never checked.
     provides = ("loldrivers_checked",)
 
     def __init__(self, spec: StageSpec):
@@ -60,9 +57,7 @@ class LoldriversFilter(MapProcessor):
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         self._pipeline_dir = ctx.pipeline_dir
-        # a db_path that resolves to nothing is a typo, not a request to go to
-        # the network: say so before the run rather than quietly downloading a
-        # different database than the one that was asked for
+        # A missing explicit database must not silently fall back to the network.
         if self.config.db_path and self._configured_db() is None:
             return [f"db_path does not exist: {self.config.db_path}"]
         return []
@@ -166,10 +161,7 @@ class LoldriversFilter(MapProcessor):
 
     def process(self, ctx: ProcessorContext, entry: ProcessorEntry) -> ProcessorResult:
         if not self._known_hashes:
-            # the run goes on: a database that could not be fetched is no reason
-            # to lose a corpus. But every sample records that it passed this
-            # stage unchecked, so a report cannot read "not known vulnerable"
-            # into what is really "not looked up".
+            # Continue unchecked, preserving that distinction in every sample's result.
             return ProcessorResult.ok(data={"loldrivers_checked": False})
 
         sha = ""

@@ -43,10 +43,7 @@ class PEIngest(IngestProcessor):
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         errors = []
-        # without lief every sample carries its hashes and nothing else, so a
-        # later stage filtering on is_kernel_driver or has_ioctl_surface drops
-        # the entire corpus and the run reports an empty result rather than a
-        # missing dependency. Say so before any file is read.
+        # Without LIEF, later PE filters would silently drop the whole corpus.
         if importlib.util.find_spec("lief") is None:
             errors.append(
                 "lief not installed, so no PE header can be parsed and only hashes would be "
@@ -204,9 +201,7 @@ def _parse_pe(data: bytes, subsystem_filter: list[int]) -> dict[str, Any]:
     try:
         import lief
     except ImportError:
-        # validate() stops a pipeline before it gets here, so this is the direct
-        # caller's path. Record why the headers are missing rather than handing
-        # back a sample that merely looks like a file with nothing in it.
+        # Direct callers still need an explicit reason for missing PE headers.
         return {
             "is_valid_pe": False,
             "reject_reason": "lief not installed, PE headers were not parsed",

@@ -216,13 +216,7 @@ class TestPipelineE2E:
         assert res.stats["per_stage"]["m1"]["completed"] == 2
 
     def _processed_by(self, store, tmp_path, spec, ingest, run_id):
-        """run a one-stage pipeline and report which samples it actually worked.
-
-        Counted at the processor rather than read off the stage stats, because a
-        cached sample is reported as completed there too. That is right for
-        somebody watching progress and useless for deciding whether the work
-        happened.
-        """
+        """Count processor calls because stage totals include cached results."""
         proc = E2EMapProcessor(spec)
         worked: list[str] = []
         inner = proc.process
@@ -238,10 +232,6 @@ class TestPipelineE2E:
         return worked
 
     def test_editing_a_stage_makes_its_results_stale(self, tmp_path):
-        """A result is only worth keeping while it still describes the pipeline
-        that produced it. Change what a stage reads and its old answers are about
-        a question nobody is asking any more, so a resumed run redoes that stage
-        rather than reporting the previous answer as current."""
         store = StateStore(tmp_path / "work")
         ingest = E2EIngest(self._make_samples(2))
 
@@ -266,8 +256,6 @@ class TestPipelineE2E:
         assert all(s.history["m1"].data == {"v": 2} for s in store.list_samples())
 
     def test_an_untouched_stage_is_not_redone(self, tmp_path):
-        """the other half of the same promise: nothing changed, nothing repeats,
-        which is what makes resuming a long run worth anything."""
         store = StateStore(tmp_path / "work")
         ingest = E2EIngest(self._make_samples(2))
         config = {"data": {"v": 1}}

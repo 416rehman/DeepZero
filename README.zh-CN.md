@@ -41,7 +41,7 @@
 <br>
 
 - 🔗 **基于 YAML 的流水线** - 声明式串联数据摄取、过滤、转换和 LLM 评估阶段
-- 🧭 **与领域无关** - 引擎本身对二进制文件、代码仓库或网络端点一无所知；领域知识由流水线提供，内置的两条流水线只是示例，而非引擎的用途所在
+- 🧭 **与领域无关** - 引擎本身对二进制文件、代码仓库或网络端点一无所知；领域知识由流水线提供，内置流水线只是示例，而非引擎的用途所在
 - ⚡ **并行执行** - 支持每个阶段可配置并发数的 ThreadPoolExecutor
 - 💾 **可恢复的运行状态** - 将每个样本的原子状态按语料库分别保存在磁盘上；按 Ctrl+C 中断后，再次运行即可从中断处恢复
 - 🔁 **自动识别过期结果** - 每个阶段都会为自己的输入生成指纹，因此修改提示词、规则集或配置后，只会重跑读取过它们的那些阶段，之前的阶段一概不动
@@ -64,6 +64,8 @@ DeepZero 提供了全面详细的文档，涵盖架构设计、流水线 Schema�
 
 DeepZero 需要一个待分析的目标语料库，以及一份用于说明如何处理它的流水线配置文件。
 
+首次体验可先运行[本地演示](https://blog.ahmadz.ai/DeepZero/zh-CN/overview/quickstart.html)：只需 `python -m pip install -e .`，无需 API 密钥或外部工具。下方步骤用于配置两条安全分析流水线。
+
 1. **克隆并安装 (要求 Python 3.11+)**
    ```bash
    git clone https://github.com/416rehman/DeepZero.git
@@ -75,7 +77,7 @@ DeepZero 需要一个待分析的目标语料库，以及一份用于说明如�
 
    运行示例流水线前，请在同一环境中安装外部工具：
 
-   - 两条流水线：PATH 中可用的 **Semgrep**（`python -m pip install semgrep`）和一个 LLM 后端。
+   - 两条安全分析流水线：PATH 中可用的 **Semgrep**（`python -m pip install semgrep`）和一个 LLM 后端。
    - 源代码审计：PATH 中可用的 **Git**。
    - 驱动分析：**Ghidra** 及该版本支持的 **JDK**，并在 `.env` 中将 `GHIDRA_INSTALL_DIR` 设置为你自己的安装目录。
    - 默认 LLM：安装 **Claude Code CLI** 并登录你自己的账户。它使用 CLI 的默认模型，无需 API 密钥。也可以在下方配置 API 模型及密钥。
@@ -87,8 +89,8 @@ DeepZero 需要一个待分析的目标语料库，以及一份用于说明如�
    cp .env.example .env
    ```
 
-   在 PowerShell 中请使用 `Copy-Item .env.example .env`。在 `.env` 中设置 `DEEPZERO_MODEL` 可覆盖两条内置流水线的后端和模型，或使用 `-m` 仅覆盖一次运行。例如，`DEEPZERO_MODEL=openai/gpt-4o` 需要设置你自己的 `OPENAI_API_KEY`。
-   两条内置流水线默认使用 `claude-code`，即你自己的 Claude Code CLI 的默认模型。请先安装该 CLI 并登录。也可以通过 `DEEPZERO_MODEL` 或 `-m` 选择 LiteLLM 模型，并设置你自己的 API 密钥。
+   在 PowerShell 中请使用 `Copy-Item .env.example .env`。在 `.env` 中设置 `DEEPZERO_MODEL` 可覆盖两条安全分析流水线的后端和模型，或使用 `-m` 仅覆盖一次运行。例如，`DEEPZERO_MODEL=openai/gpt-4o` 需要设置你自己的 `OPENAI_API_KEY`。
+   两条安全分析流水线默认使用 `claude-code`，即你自己的 Claude Code CLI 的默认模型。请先安装该 CLI 并登录。也可以通过 `DEEPZERO_MODEL` 或 `-m` 选择 LiteLLM 模型，并设置你自己的 API 密钥。
 
 3. **运行一条流水线**
    ```bash
@@ -131,6 +133,7 @@ processors/              # 外部处理器 (作为示例提供)
 └── semgrep_scanner/     # semgrep 批量扫描器 (BulkMapProcessor)
 
 pipelines/
+├── demo/                # local first run; no API keys or external tools
 ├── loldrivers/          # BYOVD 内核驱动程序漏洞研究流水线
 │   ├── pipeline.yaml
 │   ├── assessment.j2    # LLM 提示词模板

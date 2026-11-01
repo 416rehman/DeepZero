@@ -5,6 +5,14 @@ on:
     branches: ["main"]
     paths:
       - 'docs/**'
+      - 'scripts/check_docs_metadata.py'
+      - '.github/workflows/pages.yml'
+  pull_request:
+    branches: ["main"]
+    paths:
+      - 'docs/**'
+      - 'scripts/check_docs_metadata.py'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -13,7 +21,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: "pages-${{ github.event_name }}-${{ github.ref }}"
   cancel-in-progress: false
 
 jobs:
@@ -29,10 +37,13 @@ jobs:
         with:
           source: ./docs/
           destination: ./_site
+      - name: Check rendered documentation metadata
+        run: python3 scripts/check_docs_metadata.py _site --site-url https://blog.ahmadz.ai/DeepZero
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
 
   deploy:
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

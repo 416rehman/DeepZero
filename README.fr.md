@@ -41,7 +41,7 @@
 <br>
 
 - 🔗 **Pipeline en YAML** - enchaînez de manière déclarative les étapes d'ingestion, de filtrage, de transformation et d'évaluation LLM
-- 🧭 **Indépendant du domaine** - le moteur ne connaît ni les binaires, ni les dépôts, ni les points d'accès web ; c'est le pipeline qui apporte le domaine, et les deux pipelines fournis sont des exemples, non la finalité
+- 🧭 **Indépendant du domaine** - le moteur ne connaît ni les binaires, ni les dépôts, ni les points d'accès web ; c'est le pipeline qui apporte le domaine, et les pipelines fournis sont des exemples, non la finalité
 - ⚡ **Exécution parallèle** - ThreadPoolExecutor avec une concurrence configurable par étape
 - 💾 **Exécutions reprenables** - état atomique par échantillon sur le disque, cloisonné par corpus ; appuyez sur Ctrl+C et relancez pour reprendre là où vous vous étiez arrêté
 - 🔁 **Sait ce qui a vieilli** - chaque étape prend l'empreinte de ses propres entrées : modifier un prompt, un jeu de règles ou une configuration relance exactement les étapes qui les lisaient, et aucune de celles d'avant
@@ -64,6 +64,8 @@ DeepZero dispose d'une documentation exhaustive couvrant l'architecture, les sch
 
 DeepZero nécessite un corpus cible à analyser et une configuration de pipeline détaillant comment le traiter.
 
+Pour un premier essai sans clé API ni outil externe, suivez la [démo locale](https://blog.ahmadz.ai/DeepZero/fr/overview/quickstart.html) : `python -m pip install -e .` suffit. Les étapes ci-dessous configurent les deux pipelines de sécurité.
+
 1. **Cloner & Installer (Python 3.11+)**
    ```bash
    git clone https://github.com/416rehman/DeepZero.git
@@ -75,7 +77,7 @@ DeepZero nécessite un corpus cible à analyser et une configuration de pipeline
 
    Installez aussi les outils externes dans le même environnement :
 
-   - Les deux pipelines : **Semgrep** dans PATH (`python -m pip install semgrep`) et un backend LLM.
+   - Les deux pipelines de sécurité : **Semgrep** dans PATH (`python -m pip install semgrep`) et un backend LLM.
    - Audit de code : **Git** dans PATH.
    - Pilotes : **Ghidra**, le **JDK compatible avec cette version**, et `GHIDRA_INSTALL_DIR` dans `.env` pointant vers votre installation.
    - LLM par défaut : installez la CLI **Claude Code** et connectez votre propre compte. Son modèle par défaut est utilisé sans clé API. Un modèle avec clé API peut aussi être configuré ci-dessous.
@@ -87,8 +89,8 @@ DeepZero nécessite un corpus cible à analyser et une configuration de pipeline
    cp .env.example .env
    ```
 
-   Dans PowerShell : `Copy-Item .env.example .env`. Définissez `DEEPZERO_MODEL` dans `.env` pour les deux pipelines, ou passez `-m` pour une exécution. Par exemple, `DEEPZERO_MODEL=openai/gpt-4o` nécessite votre `OPENAI_API_KEY`.
-   Les deux pipelines utilisent `claude-code` par défaut, donc le modèle choisi dans votre propre CLI Claude Code. Installez cette CLI et connectez-vous avant de lancer une analyse. Utilisez `DEEPZERO_MODEL` ou `-m` pour un modèle LiteLLM avec votre clé API.
+   Dans PowerShell : `Copy-Item .env.example .env`. Définissez `DEEPZERO_MODEL` dans `.env` pour les deux pipelines de sécurité, ou passez `-m` pour une exécution. Par exemple, `DEEPZERO_MODEL=openai/gpt-4o` nécessite votre `OPENAI_API_KEY`.
+   Les deux pipelines de sécurité utilisent `claude-code` par défaut, donc le modèle choisi dans votre propre CLI Claude Code. Installez cette CLI et connectez-vous avant de lancer une analyse. Utilisez `DEEPZERO_MODEL` ou `-m` pour un modèle LiteLLM avec votre clé API.
 
 3. **Exécuter un Pipeline**
    ```bash
@@ -131,6 +133,7 @@ processors/              # processeurs externes (fournis comme exemples)
 └── semgrep_scanner/     # scanneur de lots semgrep (BulkMapProcessor)
 
 pipelines/
+├── demo/                # local first run; no API keys or external tools
 ├── loldrivers/          # pipeline de recherche de vulnérabilités pour les pilotes noyau BYOVD
 │   ├── pipeline.yaml
 │   ├── assessment.j2    # modèle de prompt LLM

@@ -6,7 +6,7 @@ order: 1
 
 ## Inicio rápido
 
-DeepZero requiere un corpus de destino para analizar y una [configuración de canalización]({{ '/es/reference/pipeline-yaml.html' | relative_url }}) que detalla cómo procesarlo. Se incluyen dos [canalizaciones completas]({{ '/es/reference/included-pipeline.html' | relative_url }}): una que busca nuevos candidatos BYOVD (Bring Your Own Vulnerable Driver) en conjuntos de datos binarios sin procesar (por ejemplo, el corpus de Snappy Driver Installer) descartando de forma explícita los hashes ya conocidos mediante el [proyecto LOLDrivers](https://www.loldrivers.io/), y otra que audita código fuente en repositorios git.
+DeepZero requiere un corpus de destino para analizar y una [configuración de canalización]({{ '/es/reference/pipeline-yaml.html' | relative_url }}) que detalla cómo procesarlo. Se incluyen dos [canalizaciones completas de seguridad]({{ '/es/reference/included-pipeline.html' | relative_url }}): una que busca nuevos candidatos BYOVD (Bring Your Own Vulnerable Driver) en conjuntos de datos binarios sin procesar (por ejemplo, el corpus de Snappy Driver Installer) descartando de forma explícita los hashes ya conocidos mediante el [proyecto LOLDrivers](https://www.loldrivers.io/), y otra que audita código fuente en repositorios git.
 
 ### 1. Instalación
 
@@ -15,6 +15,26 @@ DeepZero requiere **Python 3.11+**.
 ```bash
 git clone https://github.com/416rehman/DeepZero.git
 cd DeepZero
+python -m pip install -e .
+```
+
+La instalación base basta para la demostración. Las dos canalizaciones de seguridad necesitan la configuración opcional del paso 3.
+
+### 2. Probar la demostración local
+
+Tras instalar el paquete base, ejecute los archivos de texto inocuos incluidos desde la raíz del repositorio clonado:
+
+```sh
+deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml
+deepzero status -p pipelines/demo/pipeline.yaml
+deepzero report -p pipelines/demo/pipeline.yaml --open
+```
+
+La demostración no necesita claves API, herramientas externas ni un corpus de controladores. Descubre dos archivos, conserva `hello.txt`, filtra `tiny.txt` por tamaño y genera un informe HTML. Demuestra la orquestación y el estado guardado, sin detectar vulnerabilidades. Repetir el comando reanuda los resultados guardados. Consulte la [guía de la demostración](https://github.com/416rehman/DeepZero/tree/main/pipelines/demo).
+
+### 3. Configurar las integraciones de seguridad
+
+```sh
 python -m pip install -e ".[full]"
 ```
 
@@ -22,14 +42,14 @@ Ejecute los comandos desde el repositorio clonado. El extra `full` incluye LIEF 
 
 Instale las herramientas externas en el mismo entorno:
 
-- Ambas canalizaciones: **Semgrep** en PATH (`python -m pip install semgrep`) y un backend LLM.
+- Ambas canalizaciones de seguridad: **Semgrep** en PATH (`python -m pip install semgrep`) y un backend LLM.
 - Auditoría de código: **Git** en PATH.
 - Controladores: **Ghidra**, el **JDK compatible con esa versión**, y `GHIDRA_INSTALL_DIR` en `.env` apuntando a su instalación.
 - LLM predeterminado: instale la CLI de **Claude Code** e inicie sesión con su propia cuenta. Se usa su modelo predeterminado sin clave API. También puede configurar un modelo con API abajo.
 
 Si usa WSL, instale y ejecute las herramientas, Python y DeepZero dentro de ese entorno.
 
-### 2. Configuración del entorno
+#### Configuración del entorno
 
 Si integra etapas de análisis de IA, configure las claves API creando un archivo `.env`:
 
@@ -37,11 +57,11 @@ Si integra etapas de análisis de IA, configure las claves API creando un archiv
 cp .env.example .env
 ```
 
-En PowerShell: `Copy-Item .env.example .env`. Configure `DEEPZERO_MODEL` en `.env` para ambas canalizaciones, o pase `-m` para una ejecución. Por ejemplo, `DEEPZERO_MODEL=openai/gpt-4o` requiere su `OPENAI_API_KEY`.
+En PowerShell: `Copy-Item .env.example .env`. Configure `DEEPZERO_MODEL` en `.env` para ambas canalizaciones de seguridad, o pase `-m` para una ejecución. Por ejemplo, `DEEPZERO_MODEL=openai/gpt-4o` requiere su `OPENAI_API_KEY`.
 
-Ambas canalizaciones incluidas declaran un modelo `claude-code`, que utiliza la CLI de Claude Code en la que ya ha iniciado sesión y no necesita ninguna clave API. En su lugar sirve cualquier [modelo de LiteLLM]({{ '/es/reference/pipeline-yaml.html' | relative_url }}), mediante el campo `model` de la canalización o la opción `-m` en la línea de comandos, y para eso son las claves anteriores.
+Ambas canalizaciones de seguridad declaran un modelo `claude-code`, que utiliza la CLI de Claude Code en la que ya ha iniciado sesión y no necesita ninguna clave API. En su lugar sirve cualquier [modelo de LiteLLM]({{ '/es/reference/pipeline-yaml.html' | relative_url }}), mediante el campo `model` de la canalización o la opción `-m` en la línea de comandos, y para eso son las claves anteriores.
 
-### 3. Comprobación antes de lanzar una ejecución larga
+### 4. Comprobación antes de lanzar una ejecución larga
 
 Estas ejecuciones son largas. Esta comprobación es barata, responde en segundos en lugar de en horas y no arranca nada:
 
@@ -52,7 +72,7 @@ deepzero validate pipelines/loldrivers/pipeline.yaml
 
 Sale con código 1 cuando informa de un error, así que sirve como hook de commit o como paso de integración continua, y no solo como algo que leer.
 
-### 4. Ejecución de la canalización
+### 5. Ejecución de la canalización
 
 Ejecute la canalización LOLDrivers incluida contra una ruta de destino:
 
@@ -80,7 +100,7 @@ deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --preflight
 
 Cada corpus recibe su propio directorio de trabajo, así que apuntar la misma canalización a un segundo destino inicia una segunda ejecución en lugar de reanudarse sobre los resultados de la primera. Ambas siguen siendo reanudables.
 
-### 5. Lectura de los resultados
+### 6. Lectura de los resultados
 
 Una ejecución imprime la URL de un informe antes de su primera etapa y lo mantiene al día a medida que llegan los resultados, así que puede abrirse y seguirse mientras la ejecución avanza. Para generarlo de nuevo en cualquier momento, incluso sobre una ejecución todavía en curso:
 

@@ -41,7 +41,7 @@
 <br>
 
 - 🔗 **Pipeline-as-YAML** - chain ingest, filter, transform, and LLM-assess stages declaratively
-- 🧭 **Discipline-agnostic** - the engine knows nothing about binaries, repositories or endpoints; a pipeline brings the domain, and the two shipped ones are examples rather than the point
+- 🧭 **Discipline-agnostic** - the engine knows nothing about binaries, repositories or endpoints; a pipeline brings the domain, and the shipped pipelines are examples rather than the point
 - ⚡ **Parallel execution** - ThreadPoolExecutor with configurable concurrency per stage
 - 💾 **Resumable runs** - atomic per-sample state on disk, scoped per corpus; Ctrl+C and re-run to pick up where you left off
 - 🔁 **Knows what went stale** - each stage fingerprints its own inputs, so editing a prompt, a rule set or a config re-runs exactly the stages that read it and nothing before them
@@ -54,7 +54,7 @@
 
 ## 📚 Documentation
 
-DeepZero features extensive, exhaustive documentation covering architecture, pipeline schemas, CLI references, and custom processor development. 
+The documentation covers architecture, pipeline schemas, CLI references, and custom processor development.
 
 👉 **[Read the Official Documentation here](https://blog.ahmadz.ai/DeepZero/en/)**
 
@@ -62,18 +62,32 @@ DeepZero features extensive, exhaustive documentation covering architecture, pip
 
 ## ⚡️ Quickstart
 
-DeepZero requires a target corpus to analyze and a pipeline configuration detailing how to process it.
+Try a complete local run with the included text samples. **No API keys, Ghidra, or driver corpus needed.** Requires Python 3.11+.
 
-1. **Clone & Install (Python 3.11+)**
+```sh
+git clone https://github.com/416rehman/DeepZero.git
+cd DeepZero
+python -m pip install -e .
+deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml
+deepzero report -p pipelines/demo/pipeline.yaml --open
+```
+
+These commands work in PowerShell and POSIX shells. For an isolated installation, create and activate a Python virtual environment before installing.
+
+The demo discovers two harmless text files, keeps one, filters the smaller one, and generates a browsable HTML report. Run the same pipeline command again to resume from saved state. This demonstrates the engine; it does not run vulnerability analysis. See the [demo walkthrough](pipelines/demo/README.md) for expected results and configuration experiments.
+
+### Security Pipeline Setup
+
+The two security pipelines need your own target corpus and additional tools. Continue from the cloned repository after the demo; these integrations are optional.
+
+1. **Install Optional Integrations**
    ```bash
-   git clone https://github.com/416rehman/DeepZero.git
-   cd DeepZero
    python -m pip install -e ".[full]"
    ```
 
    The `full` extra includes PE parsing, API-backed LLMs, and the experimental API server. The engine alone needs only `python -m pip install -e .`.
 
-   Run the commands below from the cloned repository. Both example pipelines need **Semgrep** on PATH (`python -m pip install semgrep`) and an LLM backend. The source audit also needs **Git**. The driver pipeline needs **Ghidra**, its supported **JDK**, and `GHIDRA_INSTALL_DIR` pointing to your installation. Install these tools in the environment where DeepZero runs; if using WSL, use its Linux environment consistently.
+   Run the commands below from the cloned repository. Both security pipelines need **Semgrep** on PATH (`python -m pip install semgrep`) and an LLM backend. The source audit also needs **Git**. The driver pipeline needs **Ghidra**, its supported **JDK**, and `GHIDRA_INSTALL_DIR` pointing to your installation. Install these tools in the environment where DeepZero runs; if using WSL, use its Linux environment consistently.
 
 2. **Configure Environment**
    ```bash
@@ -81,7 +95,7 @@ DeepZero requires a target corpus to analyze and a pipeline configuration detail
    ```
    In PowerShell, use `Copy-Item .env.example .env`. Set your own Ghidra path in `.env` for driver analysis.
 
-   Both bundled pipelines default to `claude-code`, which uses your Claude Code CLI's default model. Install that CLI and sign in with your own account first. To use an API-backed model instead, set its API key and `DEEPZERO_MODEL` in `.env`, or pass `-m`, for example `-m openai/gpt-4o`.
+   Both security pipelines default to `claude-code`, which uses your Claude Code CLI's default model. Install that CLI and sign in with your own account first. To use an API-backed model instead, set its API key and `DEEPZERO_MODEL` in `.env`, or pass `-m`, for example `-m openai/gpt-4o`.
 
 3. **Run a Pipeline**
    ```bash
@@ -102,7 +116,9 @@ DeepZero requires a target corpus to analyze and a pipeline configuration detail
    ```
    Safe to run mid-run. The report is built from run state, so it can be deleted and rebuilt at any time. `deepzero runs` lists every run on disk whatever produced it, and `deepzero report` with no arguments works out which one you meant.
 
-For detailed setup instructions and example corpora, see the [Quickstart Documentation](https://blog.ahmadz.ai/DeepZero/en/overview/quickstart.html).
+For the security pipelines, follow the [full setup guide](https://blog.ahmadz.ai/DeepZero/en/overview/quickstart.html) and [pipeline prerequisites](https://blog.ahmadz.ai/DeepZero/en/reference/included-pipeline.html). Optional integrations require their own dependencies and configuration.
+
+If DeepZero is useful to your work, **star this repository** to help others discover it. Feedback on your first run is welcome in the [issue tracker](https://github.com/416rehman/DeepZero/issues).
 
 ---
 
@@ -123,6 +139,9 @@ processors/              # external processors (shipped as examples)
 └── semgrep_scanner/     # semgrep batch scanner (BulkMapProcessor)
 
 pipelines/
+├── demo/                # local first run with harmless text files; no API keys
+│   ├── pipeline.yaml
+│   └── samples/
 ├── loldrivers/          # BYOVD kernel driver vulnerability research pipeline
 │   ├── pipeline.yaml
 │   ├── assessment.j2    # LLM prompt template
@@ -140,7 +159,7 @@ tests/                   # pytest suite
 
 ## 🤝 Contributing
 
-CI runs the test suite on every supported interpreter via GitHub Actions.
+CI tests Linux on Python 3.11–3.14 and Windows on Python 3.12. It also checks linting, security, a real Ghidra installation, and a clean wheel installation.
 
 Run linting and security checks before submitting:
 

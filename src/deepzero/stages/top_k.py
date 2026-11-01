@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from deepzero.engine.stage import ProcessorContext, ProcessorEntry, ReduceProcessor
+from deepzero.stages.sort import bad_direction, descending, metric_reader
 
 
 class TopKSelector(ReduceProcessor):
+    cache_global_keys = ()
     description = "sorts active samples by an upstream metric and keeps only the top k"
 
     @dataclass
@@ -23,24 +25,14 @@ class TopKSelector(ReduceProcessor):
             ]
         if len(self.config.metric_path.split(".", 1)) != 2:
             return [f"metric_path must be 'processor_name.key', got '{self.config.metric_path}'"]
-        return []
+        return bad_direction("sort_order", self.config.sort_order)
 
     def process(self, ctx: ProcessorContext, entries: list[ProcessorEntry]) -> list[str]:
-        parts = self.config.metric_path.split(".", 1)
-        stage_name, data_key = parts
-
-        def _get_metric(s: ProcessorEntry) -> float:
-            output = s.history.get(stage_name)
-            if output is None:
-                return 0.0
-            val = output.data.get(data_key, 0)
-            try:
-                return float(val)
-            except (TypeError, ValueError):
-                return 0.0
-
-        reverse = self.config.sort_order == "desc"
-        scored = sorted(entries, key=_get_metric, reverse=reverse)
+        scored = sorted(
+            entries,
+            key=metric_reader(self.config.metric_path),
+            reverse=descending(self.config.sort_order),
+        )
 
         keep_top = self.config.keep_top
         kept = scored if keep_top <= 0 else scored[:keep_top]

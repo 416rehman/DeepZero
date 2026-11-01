@@ -32,7 +32,7 @@ Data integrity is handled by the `StateStore` (defined in `engine/state.py`). Op
         <!-- Temp Node -->
         <g transform="translate(320, 120)">
             <rect x="0" y="-40" width="140" height="80" fill="var(--bg-secondary)" stroke="var(--border)" stroke-width="2" stroke-dasharray="4 4" rx="8"/>
-            <text x="70" y="-5" font-family="JetBrains Mono, monospace" font-size="14" font-weight="bold" text-anchor="middle" fill="var(--text-secondary)">state.json.tmp</text>
+            <text x="70" y="-5" font-family="JetBrains Mono, monospace" font-size="14" font-weight="bold" text-anchor="middle" fill="var(--text-secondary)">state.tmp</text>
             <text x="70" y="15" font-family="Inter, sans-serif" font-size="12" text-anchor="middle" fill="var(--text-tertiary)">Buffer</text>
         </g>
         
@@ -57,19 +57,32 @@ Data integrity is handled by the `StateStore` (defined in `engine/state.py`). Op
 
 ### Atomic Swaps (`atomic_replace`)
 
-Instead of writing directly to expected artifacts (e.g., `state.json`), the persistence layer marshals data into temporary `.tmp` buffers. Once serialization completes, an `os.replace` operation forcibly overwrites the destination atomic inode. A retry-backoff mechanism actively intercepts `PermissionError` locks triggered by host EDR/Antivirus heuristics scanning newly created binaries.
+Instead of writing directly to expected artifacts (e.g., `state.json`), the persistence layer marshals data into temporary `.tmp` buffers. The buffer takes the destination's name with its suffix replaced rather than extended, so `state.json` is staged as `state.tmp`. Once serialization completes, an `os.replace` operation forcibly overwrites the destination atomic inode. A retry-backoff mechanism actively intercepts `PermissionError` locks triggered by host EDR/Antivirus heuristics scanning newly created binaries.
 
 ### Schema Versioning
 
-All state objects are tagged with an internal `STATE_VERSION`. If the engine encounters schema drift during deserialization (e.g., reading a v1 JSON under a v2 runtime), it explicitly deprecates the state object rather than inducing unpredictable mutation bugs.
+Sample state is the part that is both tagged and gated. `state.json` is written with a
+`_version` field carrying the internal `STATE_VERSION`, and on load anything older is
+refused: reading a v1 JSON under a v2 runtime returns nothing at all, rather than inducing
+unpredictable mutation bugs by interpreting a record under a schema that no longer
+describes it.
+
+The other two files are not gated. `run_manifest.json` carries the same `_version` field,
+but nothing reads it back, because the manifest is a derived summary rewritten from the
+samples every time they are saved. `run.json` is neither tagged nor checked: it is loaded
+by filtering the JSON through `RunState`'s own field names and dropping anything
+unrecognised, so a record written by an older version loads with whatever fields it has
+and the rest left at their defaults.
 
 ### Workspace Hierarchy
 
 ```text
-work/<pipeline_name>/
-├── run.json             # Serialized `RunState`: Execution metrics and pipeline metadata
+work/<pipeline_name>/<corpus_key>/
+├── run.json             # Serialized `RunState`: execution metrics, pipeline metadata,
+│                        #   the corpus-wide conclusion and the run's liveness record
 ├── pipeline.yaml        # Immutable snapshot of the pipeline YAML config during initialization
-├── run_manifest.json    # Aggregated macro-overview of all samples (used by Starlette API)
+├── run_manifest.json    # Aggregated macro-overview of all samples, read by `status` and `interactive`
+├── report/              # Browsable HTML report, rebuilt as results land
 └── samples/
     └── <sample_id>/     # Isolated sandbox
         ├── state.json   # Serialized `SampleState`: Complete ledger of `StageOutput` maps
@@ -77,8 +90,73 @@ work/<pipeline_name>/
         └── ...          # Processor-specific artifacts
 ```
 
+Two parts of `RunState` are worth naming beyond the metrics. `conclusion` holds a finding
+about the corpus rather than about any one sample: which model sits behind an endpoint,
+how many distinct bugs a pile of crashes represents, whether a scope is configured
+correctly. It is written through `ctx.conclude(...)` by a stage that sees every sample,
+and stays empty for the many pipelines whose answers are all per-sample. Alongside it,
+`host`, `pid`, `pid_token` and `heartbeat_at` record who is writing the run: a status of
+`running` is only a claim until the process behind it can be checked, and a killed run
+never gets to withdraw the claim itself, so those four fields are what lets another
+process tell a live run from an abandoned one.
+
+### Corpus Scoping
+
+The `<corpus_key>` segment is what keeps two targets through one pipeline apart. It is
+derived from the run target: its basename, plus a short digest of the resolved absolute
+path, so it is both readable and unambiguous. On Windows the path is case-folded first,
+because `C:\Drivers` and `c:\drivers` are the same corpus.
+
+Without that segment, pointing the same pipeline at a second corpus would resume into
+the first one's sample store: samples that no longer correspond to anything on disk
+would be treated as already analysed, and the run would report results for a corpus it
+was never given. With it, each corpus has its own state, its own manifest and its own
+report, and each resumes independently.
+
+The same resolved path always maps to the same key, so a rerun lands back where it left
+off. Nearly everything under this directory is derived, and deleting `report/` normally
+costs a rebuild rather than a run.
+
+There is one exception, and it is not recoverable. `report/marks.json` holds the review
+marks: for each sample, whether a reader checked it and found it held or did not hold up,
+plus a note. That is what the reader has checked, which no stage can know, so it exists
+nowhere in the run state. It is saved back next to the report precisely so it renders for
+anyone who opens it instead of being stranded in one person's browser, and it is re-read
+on every rebuild. Deleting `report/` destroys it, as does `run --clean`, which removes the
+whole corpus directory before starting.
+
 ### The `history` Ledger
 
-The `SampleState.history` dictionary strictly maps processor stage names to instances of `StageOutput`. Output data structures are strictly isolated and namespaced. A downstream processor extracting metrics from an upstream map will query: `history["upstream_processor"].data.get("metric")` (see [Building Custom Processors]({{ '/extensibility/building-custom.html' | relative_url }})).
+The `SampleState.history` dictionary strictly maps processor stage names to instances of `StageOutput`. Output data structures are strictly isolated and namespaced. A downstream processor extracting metrics from an upstream map will query: `history["upstream_processor"].data.get("metric")` (see [Building Custom Processors]({{ '/en/extensibility/building-custom.html' | relative_url }})).
 
 This namespacing permanently prevents field collision across divergent heuristic analysis techniques.
+
+### Stage Input Fingerprints
+
+Each `StageOutput` carries an `input_digest`: a fingerprint of the processor, configuration, and file dependencies tracked under the controls below. It is recorded when the stage completes and compared during resume to decide whether its saved result is stale.
+
+Where both digests are present and they differ, the stored result describes inputs the
+pipeline no longer has, so it counts as stale rather than done and the stage runs again.
+This is what lets a resumed run work out for itself which results still hold, instead of
+the reader having to remember what they edited. Where either digest is empty the question
+cannot be asked, and an unanswerable question is not grounds for discarding work that may
+have taken hours, so results written before the digest was recorded are trusted rather
+than redone.
+
+Fingerprints include the processor source, files referenced recursively by its config, and the global configuration the processor declares it reads. Changing the model invalidates LLM assessment and its descendants while preserving bundled non-LLM work such as decompilation. Invalidating an upstream result also discards downstream ledger entries and recorded artifacts. A downstream reducer recomputes its cohort when an upstream result or membership changes.
+
+Custom processors conservatively fingerprint all global configuration unless they declare `cache_global_keys` (for example, `()` for a processor using only its own config). Include file dependencies in config; external resources or environment variables read privately inside processor code are not automatically tracked. Use `--redo <stage>` when such a dependency changes.
+
+`cache_path_keys` selects the top-level config keys followed as file/directory dependencies (`None`: all; `()`: none). Use `cache_files(pipeline_dir)` for explicit dependencies, such as analysis scripts or version metadata, instead of hashing entire tool installations or output/cache directories.
+
+### Refreshing the discovered corpus
+
+A resumed run uses the saved discovery snapshot by default. Use `--refresh` to discover new or changed inputs at the same target path. Samples with unchanged discovery metadata keep their cached results; changed samples and their downstream results are reprocessed. Removed samples move out of the active run into `retired_samples/` with their artifacts preserved. `--redo discover` also repeats discovery for the bundled pipelines. Detection depends on the metadata the ingest processor records; it does not monitor arbitrary file or network changes.
+
+For git manifests, also set `refresh: true` in the ingest stage config to fetch newer remote commits; `--refresh` alone revisits cached clones.
+
+```bash
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --refresh
+```
+
+Each pipeline/corpus allows one writer at a time. An OS lock rejects a concurrent `deepzero run` before cleanup, redo, or refresh; it releases when the process exits, so a leftover lock file does not need manual deletion.

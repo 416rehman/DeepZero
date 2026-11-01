@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -82,7 +83,15 @@ class TestKillProcessTree:
         await _kill_process_tree(proc)
 
     @patch("deepzero.engine.process.asyncio.create_subprocess_exec")
-    async def test_kill_on_windows(self, mock_create):
+    @pytest.mark.parametrize(
+        "windows_env",
+        [{"SystemRoot": "Q:/PortableWindows"}, {"WINDIR": "R:/Windows"}, {}],
+    )
+    async def test_kill_on_windows(self, mock_create, monkeypatch, windows_env):
+        monkeypatch.delenv("SystemRoot", raising=False)
+        monkeypatch.delenv("WINDIR", raising=False)
+        for key, value in windows_env.items():
+            monkeypatch.setenv(key, value)
         # mock taskkill process
         mock_kproc = AsyncMock()
         mock_kproc.communicate.return_value = (b"", b"")
@@ -99,7 +108,11 @@ class TestKillProcessTree:
 
         mock_create.assert_called_once()
         call_args = mock_create.call_args[0]
-        assert r"C:\Windows\System32\taskkill.exe" in call_args
+        system_root = windows_env.get("SystemRoot") or windows_env.get("WINDIR")
+        expected = (
+            str(Path(system_root) / "System32" / "taskkill.exe") if system_root else "taskkill.exe"
+        )
+        assert call_args[0] == expected
         assert str(12345) in call_args
 
     @patch(

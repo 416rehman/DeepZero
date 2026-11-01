@@ -5,7 +5,7 @@ title: Inicio
 <section class="hero-massive">
     <div class="hero-massive-content">
         <h1>Búsqueda automatizada de vulnerabilidades.</h1>
-        <p class="hero-subtitle">DeepZero es un motor de orquestación de alta concurrencia para la investigación automatizada de vulnerabilidades. Analice archivos binarios, ejecute heurísticas y escale LLMs con canalizaciones multipaso personalizadas en conjuntos de datos masivos.</p>
+        <p class="hero-subtitle">DeepZero es un motor de orquestación de alta concurrencia para la investigación automatizada de vulnerabilidades. Defina canalizaciones multipaso en YAML y ejecútelas sobre cualquier corpus que pueda enumerar: binarios, repositorios, endpoints, respuestas de modelos. El motor aporta el paralelismo, el estado y los informes; su canalización aporta la disciplina.</p>
 
         <div class="hero-cta">
             <a href="{{ '/es/overview/quickstart.html' | relative_url }}" class="btn btn-primary">Empezar</a>
@@ -158,7 +158,9 @@ title: Inicio
             </g>
         </svg>
         <h4>Delegación masivamente paralela</h4>
-        <p>Procese corpus masivos como Snappy Driver Installer. DeepZero paraleliza de forma nativa el análisis de PE, la descompilación Ghidra y el análisis estático localmente en su hardware.</p>
+        <p>Apunte una canalización a lo que sea su corpus y el motor lo recorre entero en su hardware, con la
+            concurrencia fijada por etapa. Las dos canalizaciones incluidas son ejemplos trabajados: un paquete de
+            controladores con cientos de miles de archivos, y una lista de repositorios git.</p>
     </div>
     <div class="feature-item">
         <svg viewBox="0 0 100 100" style="width:72px;height:72px;margin-bottom:1.5rem;display:block;">
@@ -170,7 +172,9 @@ title: Inicio
             </g>
         </svg>
         <h4>Evaluación heurística e inteligencia artificial</h4>
-        <p>Los LLMs son solo una etapa de la canalización. DeepZero filtra interfaces IOCTL de Windows, excluye hashes de loldrivers.io, ejecuta reglas Semgrep y utiliza la evaluación LLM solo en los candidatos de mayor probabilidad de explotación.</p>
+        <p>Un LLM es una etapa entre muchas, y las etapas baratas van primero. Filtre, analice y ordene con lo que
+            pida su dominio, y gaste después las llamadas al modelo solo en lo que haya sobrevivido. Use una clave
+            API, o su suscripción a Claude Code sin ninguna clave.</p>
     </div>
     <div class="feature-item">
         <svg viewBox="0 0 100 100" style="width:72px;height:72px;margin-bottom:1.5rem;display:block;">
@@ -183,6 +187,8 @@ title: Inicio
             </g>
         </svg>
         <h4>Orquestación resiliente</h4>
-        <p>Construido para campañas de semanas de duración. DeepZero mantiene el estado atómico de cada muestra de forma persistente. Interrumpa las ejecuciones en cualquier momento y reanude sin perder progreso.</p>
+        <p>Construido para campañas de semanas de duración. DeepZero mantiene el estado atómico de cada muestra de
+            forma persistente, aislado por corpus. Interrumpa las ejecuciones en cualquier momento y reanude sin
+            perder progreso. Cada ejecución escribe un informe navegable que puede abrir mientras aún avanza.</p>
     </div>
 </div>

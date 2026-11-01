@@ -20,7 +20,8 @@ env.bak/
 venv.bak/
 
 # Environment variables
-.env.local
+.env.*
+!.env.example
 
 # IDE
 .vscode/
@@ -54,3 +55,4 @@ _site/
 
 # local research artifacts: run logs, generated reports, scratch previews
 research/
+.demo/

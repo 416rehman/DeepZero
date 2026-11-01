@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import os
 import shutil
@@ -17,16 +18,32 @@ from deepzero.engine.stage import (
 
 
 class SemgrepScanner(BulkMapProcessor):
-    description = "runs semgrep batch scan against decompiled source across all active samples"
+    cache_global_keys = ()
+    description = "runs semgrep batch scan across all active samples"
 
-    # findings_json is the parsed report; `findings` holds its filename, which is
-    # why a prompt wanting the findings themselves has to name findings_json
+    # what a sample's scannable files are called on disk. The default suits a
+    # pipeline that decompiles first and writes C beside each sample; a pipeline
+    # whose samples are already source (a repository checkout, say) sets
+    # target_dir to "" so the sample's own path is scanned, and widens
+    # extensions to whatever it actually ingests.
+    DEFAULT_TARGET_DIR = "decompiled"
+    DEFAULT_EXTENSIONS = (".c", ".h", ".cpp", ".py")
+
+    # Unauthenticated scans may withhold snippets. Read the reported source span
+    # instead of sending "requires login" to the assessment model.
+    _LINES_WITHHELD = "requires login"
+    _MAX_SNIPPET_LINES = 40
+
+    # findings_json is the parsed report a prompt reads: findings.json is written
+    # into the sample's own directory, and an artifact is named after its path.
+    #
+    # files_submitted and files_scanned come from the semgrep run itself, so a
+    # result adopted from a findings.json already on disk does not carry them.
     provides = (
         "finding_count",
         "findings_cached",
         "files_submitted",
         "files_scanned",
-        "findings",
         "findings_json",
     )
 
@@ -67,7 +84,7 @@ class SemgrepScanner(BulkMapProcessor):
             reason = f"semgrep rules_dir not found: {self.config.get('rules_dir') or '(unset)'}"
             return [ProcessorResult.fail(reason) for _ in entries]
 
-        target_subdir = self.config.get("target_dir", "decompiled")
+        target_subdir = self.config.get("target_dir", self.DEFAULT_TARGET_DIR)
         timeout = self.config.get("timeout", 300)
         min_findings = self.config.get("min_findings", 0)
 
@@ -75,8 +92,9 @@ class SemgrepScanner(BulkMapProcessor):
         uncached_entries: list[tuple[int, ProcessorEntry]] = []
 
         for i, entry in enumerate(entries):
+            # Record cached findings as artifacts so --redo can discard them.
             findings_path = entry.sample_dir / "findings.json"
-            if findings_path.exists():
+            if findings_path.exists() and entry.cache_is_valid:
                 try:
                     findings = json.loads(findings_path.read_text(encoding="utf-8"))
                     results[i] = self._make_result(findings, min_findings, cached=True)
@@ -84,10 +102,10 @@ class SemgrepScanner(BulkMapProcessor):
                 except (json.JSONDecodeError, OSError) as exc:
                     self.log.debug("cache read failed for %s, rescanning: %s", entry.sample_id, exc)
 
-            scan_dir = entry.sample_dir / target_subdir
+            scan_dir = self._scan_dir(entry, target_subdir)
             if not scan_dir.exists():
                 results[i] = ProcessorResult.fail(
-                    f"scan target '{target_subdir}' missing - does a decompile processor run before this?"
+                    f"scan target '{scan_dir}' missing - does the stage that produces it run before this?"
                 )
                 continue
 
@@ -137,6 +155,19 @@ class SemgrepScanner(BulkMapProcessor):
 
         return [r for r in results if r is not None]
 
+    def _scan_dir(self, entry: ProcessorEntry, target_subdir: str) -> Path:
+        # an empty target_dir means the sample IS the tree to scan, which is the
+        # case when ingest produced a checkout rather than a file to decompile
+        if not target_subdir:
+            return Path(entry.source_path)
+        return entry.sample_dir / target_subdir
+
+    def _scan_extensions(self) -> tuple[str, ...]:
+        raw = self.config.get("extensions") or self.DEFAULT_EXTENSIONS
+        if isinstance(raw, str):
+            raw = [raw]
+        return tuple(e if e.startswith(".") else f".{e}" for e in raw)
+
     def _build_bulk_dir(
         self,
         uncached_entries: list[tuple[int, ProcessorEntry]],
@@ -147,15 +178,19 @@ class SemgrepScanner(BulkMapProcessor):
             shutil.rmtree(bulk_dir, ignore_errors=True)
         bulk_dir.mkdir(parents=True, exist_ok=True)
 
+        extensions = self._scan_extensions()
         file_to_sample: dict[str, int] = {}
         for idx, entry in uncached_entries:
-            scan_dir = entry.sample_dir / target_subdir
+            scan_dir = self._scan_dir(entry, target_subdir)
             for src_file in scan_dir.rglob("*"):
                 if not src_file.is_file():
                     continue
-                if src_file.suffix not in (".c", ".h", ".cpp", ".py"):
+                if src_file.suffix not in extensions:
                     continue
-                dest_name = f"{entry.sample_id}_{src_file.name}"
+                # a checkout has many files sharing a basename, so key on the
+                # path within the sample to keep them apart in one flat bulk dir
+                rel = src_file.relative_to(scan_dir).as_posix().replace("/", "__")
+                dest_name = f"{entry.sample_id}_{rel}"
                 dest = bulk_dir / dest_name
                 try:
                     os.link(src_file, dest)
@@ -199,12 +234,17 @@ class SemgrepScanner(BulkMapProcessor):
             len(uncached_entries),
         )
 
+        # Windows' default codec can fail while Semgrep writes quoted source bytes.
+        env = dict(os.environ)
+        env["PYTHONUTF8"] = "1"
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 cmd[0],
                 *cmd[1:],
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except FileNotFoundError:
@@ -281,8 +321,44 @@ class SemgrepScanner(BulkMapProcessor):
             return
 
         self._distribute_findings(
-            output, file_to_sample, uncached_entries, results, min_findings, scanned_paths
+            output,
+            file_to_sample,
+            uncached_entries,
+            results,
+            min_findings,
+            scanned_paths,
+            bulk_dir,
         )
+
+    def _matched_code(self, result_entry: dict[str, Any], bulk_dir: Path | None) -> str:
+        lines = result_entry.get("extra", {}).get("lines", "")
+        if lines and lines.strip() != self._LINES_WITHHELD:
+            return lines
+
+        start = result_entry.get("start", {}).get("line", 0)
+        end = result_entry.get("end", {}).get("line", 0)
+        reported = result_entry.get("path", "")
+        if not reported or start < 1 or end < start:
+            return ""
+
+        candidate = Path(reported)
+        if not candidate.is_absolute() and bulk_dir is not None:
+            # semgrep may report the path relative to where it was invoked
+            candidate = bulk_dir / candidate.name
+
+        try:
+            with candidate.open("r", encoding="utf-8", errors="replace") as fh:
+                span = list(
+                    itertools.islice(fh, start - 1, min(end, start + self._MAX_SNIPPET_LINES - 1))
+                )
+        except OSError as exc:
+            self.log.debug("could not read source for %s: %s", reported, exc)
+            return ""
+
+        snippet = "".join(span).rstrip()
+        if end - start + 1 > self._MAX_SNIPPET_LINES:
+            snippet += f"\n... ({end - start + 1 - self._MAX_SNIPPET_LINES} more lines)"
+        return snippet
 
     def _distribute_findings(
         self,
@@ -292,6 +368,7 @@ class SemgrepScanner(BulkMapProcessor):
         results: list[ProcessorResult | None],
         min_findings: int,
         scanned_paths: list | None = None,
+        bulk_dir: Path | None = None,
     ) -> None:
         sev_map = {"ERROR": "HIGH", "WARNING": "MEDIUM", "INFO": "LOW"}
         per_sample_findings: dict[int, list[dict]] = {idx: [] for idx, _ in uncached_entries}
@@ -324,7 +401,7 @@ class SemgrepScanner(BulkMapProcessor):
                 "file": result_entry.get("path", ""),
                 "line_start": result_entry.get("start", {}).get("line", 0),
                 "line_end": result_entry.get("end", {}).get("line", 0),
-                "matched_code": result_entry.get("extra", {}).get("lines", ""),
+                "matched_code": self._matched_code(result_entry, bulk_dir),
             }
             per_sample_findings[sample_idx].append(finding)
 
@@ -367,16 +444,19 @@ class SemgrepScanner(BulkMapProcessor):
         if scanned is not None:
             data["files_scanned"] = scanned
 
-        if min_findings > 0 and len(findings) < min_findings:
-            return ProcessorResult.filter(
-                f"{len(findings)} findings < min {min_findings}",
-                data={**data, "findings": "findings.json"},
-            )
+        artifacts = {"findings": "findings.json"}
 
-        return ProcessorResult.ok(
-            artifacts={"findings": "findings.json"},
-            data=data,
-        )
+        if min_findings > 0 and len(findings) < min_findings:
+            # built here rather than via ProcessorResult.filter() so the artifact
+            # travels with the filtered sample too: the file is on disk either
+            # way, and a run that does not record it cannot discard it on --redo
+            filtered = ProcessorResult.filter(
+                f"{len(findings)} findings < min {min_findings}", data
+            )
+            filtered.artifacts = artifacts
+            return filtered
+
+        return ProcessorResult.ok(artifacts=artifacts, data=data)
 
     def _cleanup_bulk_dir(self, bulk_dir: Path) -> None:
         try:

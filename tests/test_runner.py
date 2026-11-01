@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from deepzero.engine.runner import PipelineRunner
 from deepzero.engine.stage import (
@@ -306,7 +307,13 @@ class TestPipelineRunner:
 
 
 class TestResolveParallelism:
-    # _resolve_parallelism uses no instance state, so call it unbound with None
+    # the only instance state _resolve_parallelism reads is the pipeline's
+    # max_workers ceiling, so it is called unbound with a stand-in for it.
+    # 0 is "no ceiling declared".
+    @staticmethod
+    def _runner(max_workers: int = 0) -> SimpleNamespace:
+        return SimpleNamespace(default_max_workers=max_workers)
+
     class _CeilingProc(MapProcessor):
         def max_parallelism(self):
             return 3
@@ -322,19 +329,33 @@ class TestResolveParallelism:
         monkeypatch.setattr("os.cpu_count", lambda: 32)
         proc = self._CeilingProc(StageSpec(name="d", processor="x"))
         spec = StageSpec(name="d", processor="x", parallel=0)
-        assert PipelineRunner._resolve_parallelism(None, spec, proc) == 3
+        assert PipelineRunner._resolve_parallelism(self._runner(), spec, proc) == 3
 
     def test_explicit_parallel_is_honored_over_ceiling(self, monkeypatch):
         monkeypatch.setattr("os.cpu_count", lambda: 32)
         proc = self._CeilingProc(StageSpec(name="d", processor="x"))
         spec = StageSpec(name="d", processor="x", parallel=20)
-        assert PipelineRunner._resolve_parallelism(None, spec, proc) == 20
+        assert PipelineRunner._resolve_parallelism(self._runner(), spec, proc) == 20
 
     def test_auto_uses_cpu_when_no_ceiling(self, monkeypatch):
         monkeypatch.setattr("os.cpu_count", lambda: 8)
         proc = self._NoCeilingProc(StageSpec(name="d", processor="x"))
         spec = StageSpec(name="d", processor="x", parallel=0)
-        assert PipelineRunner._resolve_parallelism(None, spec, proc) == 8
+        assert PipelineRunner._resolve_parallelism(self._runner(), spec, proc) == 8
+
+    def test_auto_is_capped_to_the_pipelines_max_workers(self, monkeypatch):
+        # the setting is documented as a ceiling, so auto-scaling has to see it
+        monkeypatch.setattr("os.cpu_count", lambda: 32)
+        proc = self._NoCeilingProc(StageSpec(name="d", processor="x"))
+        spec = StageSpec(name="d", processor="x", parallel=0)
+        assert PipelineRunner._resolve_parallelism(self._runner(4), spec, proc) == 4
+
+    def test_the_lower_of_the_two_ceilings_wins(self, monkeypatch):
+        monkeypatch.setattr("os.cpu_count", lambda: 32)
+        proc = self._CeilingProc(StageSpec(name="d", processor="x"))
+        spec = StageSpec(name="d", processor="x", parallel=0)
+        assert PipelineRunner._resolve_parallelism(self._runner(16), spec, proc) == 3
+        assert PipelineRunner._resolve_parallelism(self._runner(2), spec, proc) == 2
 
 
 class TestCachedSamplesStayInThePipeline:

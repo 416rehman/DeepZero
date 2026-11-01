@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -55,6 +56,9 @@ class StageOutput:
     # why this stage did no work (cached output, filtered out). kept separate from
     # error so a normal skip is never reported as a failure
     skip_reason: str = ""
+    # Inputs that produced this result. Older results with no digest are trusted
+    # because their original inputs cannot be checked.
+    input_digest: str = ""
 
 
 @dataclass
@@ -63,7 +67,7 @@ class SampleState:
     sha256: str = ""
     source_path: str = ""
     filename: str = ""
-    # lifecycle: pending -> active -> skipped | failed | completed
+    # lifecycle: pending -> active -> filtered | failed | timed_out
     verdict: SampleStatus = SampleStatus.PENDING
     current_stage: str = ""
     # per-stage namespaced output ledger
@@ -83,6 +87,7 @@ class SampleState:
         verdict: Verdict = Verdict.CONTINUE,
         artifacts: dict[str, str] | None = None,
         data: dict[str, Any] | None = None,
+        input_digest: str = "",
     ) -> None:
         if stage_name not in self.history:
             self.history[stage_name] = StageOutput()
@@ -90,10 +95,14 @@ class SampleState:
         stage.status = StageStatus.COMPLETED
         stage.verdict = verdict
         stage.completed_at = _now()
-        if artifacts:
+        if artifacts is not None:
             stage.artifacts = artifacts
-        if data:
+        if data is not None:
             stage.data = data
+        if input_digest:
+            stage.input_digest = input_digest
+        stage.error = None
+        stage.skip_reason = ""
 
         # promote skip verdict to sample level
         if verdict == Verdict.FILTER:
@@ -153,6 +162,30 @@ class SampleState:
             self.verdict = SampleStatus.ACTIVE
         return reset
 
+    def clear_stages_from(
+        self, stage_names: list[str], pipeline_order: list[str]
+    ) -> dict[str, list[str]]:
+        """Forget the earliest named stage and its consumers, keeping earlier work.
+
+        Return their artifact paths so the caller can remove on-disk caches too.
+        """
+        targets = {name for name in stage_names if name in pipeline_order}
+        if not targets:
+            return {}
+        first = min(pipeline_order.index(name) for name in targets)
+        doomed = set(pipeline_order[first:]) | targets
+        reset = [name for name in self.history if name in doomed]
+        dropped: dict[str, list[str]] = {}
+        for name in reset:
+            dropped[name] = [str(p) for p in self.history[name].artifacts.values() if p]
+            del self.history[name]
+        if reset:
+            self.error = None
+            # a sample filtered out by a stage being redone is in the run again
+            self.verdict = SampleStatus.ACTIVE
+            self.current_stage = ""
+        return dropped
+
     def mark_stage_cached(self, stage_name: str, reason: str = "") -> None:
         """work for this stage was already done (e.g. output already on disk).
 
@@ -180,9 +213,12 @@ class SampleState:
             stage.skip_reason = reason
         self.verdict = SampleStatus.FILTERED
 
-    def is_stage_done(self, stage_name: str) -> bool:
+    def is_stage_done(self, stage_name: str, input_digest: str = "") -> bool:
         s = self.history.get(stage_name)
         if s is None:
+            return False
+        # Trust legacy results without digests; only a known mismatch invalidates them.
+        if input_digest and s.input_digest and s.input_digest != input_digest:
             return False
         return s.status in (
             StageStatus.COMPLETED,
@@ -208,6 +244,12 @@ class RunState:
     status: RunStatus = RunStatus.PENDING
     stages: list[str] = field(default_factory=list)
     stats: dict[str, Any] = field(default_factory=dict)
+    # a finding about the corpus rather than about any one sample. Some questions
+    # only have an answer in aggregate: which model is behind an endpoint, how
+    # many distinct bugs a pile of crashes represents, whether a scope is
+    # configured correctly. Written by a stage that sees every sample, and empty
+    # for the many pipelines whose answers are all per-sample.
+    conclusion: dict[str, Any] = field(default_factory=dict)
 
     # who is writing this run. a status of "running" is only a claim until the
     # process behind it can be checked, and a killed run never gets to withdraw
@@ -248,16 +290,26 @@ class StateStore:
 
     def __init__(self, work_dir: Path):
         self.work_dir = work_dir
-        self.work_dir.mkdir(parents=True, exist_ok=True)
         self._samples_dir = work_dir / "samples"
+        # Opening a store is read-only; writers create directories on first use.
+
+    def _ensure_dirs(self) -> None:
+        self.work_dir.mkdir(parents=True, exist_ok=True)
         self._samples_dir.mkdir(parents=True, exist_ok=True)
 
     # -- atomic write helpers --
 
     def _atomic_write(self, path: Path, content: str) -> None:
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(content, encoding="utf-8")
-        atomic_replace(tmp, path)
+        self._ensure_dirs()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        tmp = Path(name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as output:
+                output.write(content)
+            atomic_replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def _dumps(self, obj: Any) -> str:
         return json.dumps(obj, indent=2, cls=SafeJSONEncoder)
@@ -281,9 +333,14 @@ class StateStore:
 
     # -- sample state --
 
-    def sample_dir(self, sample_id: str) -> Path:
+    def sample_dir(self, sample_id: str, *, create: bool = True) -> Path:
+        """Resolve a sample directory; use create=False for reads.
+
+        Queries for unknown IDs must not leave directories behind.
+        """
         d = self._samples_dir / sample_id
-        d.mkdir(parents=True, exist_ok=True)
+        if create:
+            d.mkdir(parents=True, exist_ok=True)
         return d
 
     def save_sample(self, state: SampleState) -> None:
@@ -292,7 +349,7 @@ class StateStore:
         self._atomic_write(path, self._dumps(sample_to_dict(state)))
 
     def load_sample(self, sample_id: str) -> SampleState | None:
-        path = self.sample_dir(sample_id) / "state.json"
+        path = self.sample_dir(sample_id, create=False) / "state.json"
         if not path.exists():
             return None
         try:
@@ -345,6 +402,10 @@ class StateStore:
             ),
             "filtered": sum(1 for e in entries if e["verdict"] == SampleStatus.FILTERED),
             "failed": sum(1 for e in entries if e["verdict"] == SampleStatus.FAILED),
+            # counted on its own, and counted at all: a sample that ran out of
+            # time belongs to none of the buckets above, so leaving it out made
+            # the totals disagree with the number of samples they describe
+            "timed_out": sum(1 for e in entries if e["verdict"] == SampleStatus.TIMED_OUT),
             "completed": sum(1 for e in entries if e["verdict"] == SampleStatus.COMPLETED),
             "samples": entries,
         }

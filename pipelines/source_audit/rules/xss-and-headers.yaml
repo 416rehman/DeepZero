@@ -1,0 +1,475 @@
+# request data reaching the response body without being escaped, and the
+# response headers that decide who may read that body and what a browser will
+# do with it.
+#
+# the XSS rules here are about output the server builds. a template engine that
+# escapes by default is not matched: what is matched is the call that opts out
+# of that escaping, or a framework that has no escaping to opt out of. the one
+# client-side rule is included because location and document.URL are attacker
+# controlled in the same sense the request is.
+
+x-shared:
+  python-request-sources: &python-request-sources
+    - pattern-either:
+        - pattern: flask.request.args
+        - pattern: flask.request.form
+        - pattern: flask.request.values
+        - pattern: flask.request.json
+        - pattern: flask.request.data
+        - pattern: flask.request.cookies
+        - pattern: flask.request.headers
+        - pattern: flask.request.get_json(...)
+    - patterns:
+        - pattern-inside: |
+            def $VIEW(..., $REQ, ...):
+                ...
+        - metavariable-regex:
+            metavariable: $REQ
+            regex: ^(request|req)$
+        - pattern-either:
+            - pattern: $REQ.GET
+            - pattern: $REQ.POST
+            - pattern: $REQ.body
+            - pattern: $REQ.data
+            - pattern: $REQ.query_params
+            - pattern: $REQ.COOKIES
+            - pattern: $REQ.headers
+
+  javascript-request-sources: &javascript-request-sources
+    - patterns:
+        - pattern-either:
+            - pattern: $REQ.query
+            - pattern: $REQ.body
+            - pattern: $REQ.params
+            - pattern: $REQ.cookies
+            - pattern: $REQ.headers
+            - pattern: $REQ.get(...)
+        - metavariable-regex:
+            metavariable: $REQ
+            regex: ^(req|request|ctx|ctx\.request|context\.request)$
+
+  go-request-sources: &go-request-sources
+    - pattern-either:
+        - pattern: $R.URL.Query()
+        - pattern: $R.URL.RawQuery
+        - pattern: $R.URL.Path
+        - pattern: $R.FormValue(...)
+        - pattern: $R.PostFormValue(...)
+        - pattern: $R.Header.Get(...)
+        - pattern: mux.Vars($R)
+    - patterns:
+        - pattern-either:
+            - pattern: $C.Param(...)
+            - pattern: $C.Query(...)
+            - pattern: $C.DefaultQuery(...)
+            - pattern: $C.PostForm(...)
+        - metavariable-regex:
+            metavariable: $C
+            regex: ^(c|ctx|g|gc)$
+
+  java-request-sources: &java-request-sources
+    - pattern-either:
+        - pattern: $REQ.getParameter(...)
+        - pattern: $REQ.getParameterValues(...)
+        - pattern: $REQ.getHeader(...)
+        - pattern: $REQ.getQueryString()
+        - pattern: $REQ.getCookies()
+        - pattern: $REQ.getPathInfo()
+    - patterns:
+        - pattern-either:
+            - pattern-inside: |
+                $RET $HANDLER(..., @$ANN(...) $TYPE $P, ...) { ... }
+            - pattern-inside: |
+                $RET $HANDLER(..., @$ANN $TYPE $P, ...) { ... }
+        - metavariable-regex:
+            metavariable: $ANN
+            regex: ^(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|ModelAttribute|RequestPart)$
+        - pattern: $P
+
+  ruby-request-sources: &ruby-request-sources
+    - pattern-either:
+        - pattern: params
+        - pattern: request.params
+        - pattern: request.query_parameters
+        - pattern: request.headers[...]
+        - pattern: cookies
+
+  php-request-sources: &php-request-sources
+    - pattern-either:
+        - pattern: $_GET
+        - pattern: $_POST
+        - pattern: $_REQUEST
+        - pattern: $_COOKIE
+
+  csharp-request-sources: &csharp-request-sources
+    - pattern-either:
+        - pattern: $REQ.Query
+        - pattern: $REQ.Form
+        - pattern: $REQ.QueryString
+        - pattern: $REQ.Params
+        - pattern: $REQ.Headers
+        - pattern: $REQ.Cookies
+
+rules:
+  # ------------------------------------------------------------------ xss ----
+
+  - id: python-xss-marked-safe
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is marked as safe HTML, which tells the template engine not
+      to escape it. An attacker supplies script that then runs on the site's
+      origin: it reads the session cookie unless it is HttpOnly, and either way
+      it can act as the logged in user through the application's own API.
+    metadata:
+      vuln_class: "Cross-Site Scripting"
+      cwe: "CWE-79"
+      exploitability: "HIGH"
+      confidence: "high: mark_safe and Markup exist to disable escaping, so a tainted argument is the whole bug; escape and bleach.clean are sanitizers"
+    pattern-sources: *python-request-sources
+    pattern-sanitizers:
+      - pattern: django.utils.html.escape(...)
+      - pattern: html.escape(...)
+      - pattern: markupsafe.escape(...)
+      - pattern: bleach.clean(...)
+      - pattern: int(...)
+    pattern-sinks:
+      - pattern: django.utils.safestring.mark_safe(...)
+      - pattern: mark_safe(...)
+      - pattern: SafeString(...)
+      - pattern: markupsafe.Markup(...)
+      - pattern: flask.Markup(...)
+      - pattern: Markup(...)
+
+  - id: javascript-express-reflected-xss
+    languages: [javascript, typescript]
+    severity: WARNING
+    mode: taint
+    message: >
+      Request data is written into the response body without escaping. Where
+      the response is HTML, an attacker supplies script that runs on the site's
+      origin and acts as the logged in user.
+    metadata:
+      vuln_class: "Cross-Site Scripting"
+      cwe: "CWE-79"
+      confidence: "medium: only a string built around the tainted value is a sink, because express serves a string as text/html and an object as JSON; a string response that is not HTML is the false positive to expect"
+    pattern-sources: *javascript-request-sources
+    pattern-sanitizers:
+      - pattern: escapeHtml(...)
+      - pattern: $E.escape(...)
+      - pattern: encodeURIComponent(...)
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+    # the tainted value has to be built into a string here. passing an object
+    # through, which is what a JSON endpoint does, is served as JSON and is not
+    # a finding, and matching it would flag every handler that echoes anything.
+    pattern-sinks:
+      - pattern: $RES.send($X + $Y)
+      - pattern: $RES.send(`...`)
+      - pattern: $RES.write($X + $Y)
+      - pattern: $RES.write(`...`)
+      - pattern: $RES.end($X + $Y)
+      - pattern: $RES.end(`...`)
+
+  - id: javascript-dom-xss
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    message: >
+      A value the attacker controls through the URL is written into the page as
+      markup. A link is enough to run script on the site's origin in the
+      victim's session, with no server-side bug involved.
+    metadata:
+      vuln_class: "Cross-Site Scripting"
+      cwe: "CWE-79"
+      exploitability: "HIGH"
+      confidence: "high: the sources are all attacker controlled through a link and the sinks all parse their input as HTML; textContent is not a sink"
+    pattern-sources:
+      - pattern: location.hash
+      - pattern: location.search
+      - pattern: location.href
+      - pattern: window.location.hash
+      - pattern: window.location.search
+      - pattern: window.location.href
+      - pattern: document.URL
+      - pattern: document.documentURI
+      - pattern: document.referrer
+      - pattern: window.name
+    pattern-sanitizers:
+      - pattern: DOMPurify.sanitize(...)
+      - pattern: encodeURIComponent(...)
+    pattern-sinks:
+      - pattern: $EL.innerHTML = $X
+      - pattern: $EL.outerHTML = $X
+      - pattern: $EL.insertAdjacentHTML(...)
+      - pattern: document.write(...)
+      - pattern: document.writeln(...)
+      - pattern: $EL.html(...)
+
+  - id: go-xss-html-conversion
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is converted to template.HTML, which tells html/template the
+      value is already safe and turns off the escaping that makes the package
+      worth using. An attacker supplies script that runs on the site's origin.
+    metadata:
+      vuln_class: "Cross-Site Scripting"
+      cwe: "CWE-79"
+      exploitability: "HIGH"
+      confidence: "high: these conversions exist only to bypass escaping, so a tainted operand is the whole bug"
+    pattern-sources: *go-request-sources
+    pattern-sanitizers:
+      - pattern: template.HTMLEscapeString(...)
+      - pattern: html.EscapeString(...)
+      - pattern: strconv.Atoi(...)
+    pattern-sinks:
+      - pattern: template.HTML(...)
+      - pattern: template.JS(...)
+      - pattern: template.HTMLAttr(...)
+      - pattern: template.URL(...)
+
+  - id: java-servlet-reflected-xss
+    languages: [java]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is written straight to the response body. A servlet writer
+      escapes nothing, so an attacker supplies script that runs on the site's
+      origin and acts as the logged in user through the application's own
+      endpoints.
+    metadata:
+      vuln_class: "Cross-Site Scripting"
+      cwe: "CWE-79"
+      exploitability: "HIGH"
+      confidence: "medium: writing to the response writer is unescaped by definition, but the writer is recognised by the name it is held under, so a request value appended to a StringBuilder called `out` still matches and one written to a PrintWriter called `p` does not"
+    pattern-sources: *java-request-sources
+    pattern-sanitizers:
+      - pattern: org.owasp.encoder.Encode.forHtml(...)
+      - pattern: Encode.forHtml(...)
+      - pattern: StringEscapeUtils.escapeHtml4(...)
+      - pattern: HtmlUtils.htmlEscape(...)
+      - pattern: Integer.parseInt(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $OUT.print(...)
+              - pattern: $OUT.println(...)
+              - pattern: $OUT.write(...)
+              - pattern: $OUT.append(...)
+          # these four method names belong to StringBuilder as much as to a
+          # servlet writer, and building a string out of a request value is
+          # not an XSS. the receiver has to read as a writer for the sink to
+          # mean what the message says it means.
+          - metavariable-regex:
+              metavariable: $OUT
+              regex: (?i).*(out|writer|resp|pw).*
+          - pattern-not: System.out.$M(...)
+          - pattern-not: System.err.$M(...)
+
+  - id: ruby-xss-unescaped-output
+    languages: [ruby]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is marked as already-escaped HTML, which turns off the
+      escaping ERB does by default. An attacker supplies script that runs on
+      the site's origin and acts as the logged in user.
+    metadata:
+      vuln_class: "Cross-Site Scripting"
+      cwe: "CWE-79"
+      exploitability: "HIGH"
+      confidence: "high: raw and html_safe exist to disable escaping; sanitize and h are treated as sanitizers"
+    pattern-sources: *ruby-request-sources
+    pattern-sanitizers:
+      - pattern: sanitize(...)
+      - pattern: h(...)
+      - pattern: ERB::Util.html_escape(...)
+      - pattern: CGI.escapeHTML(...)
+      - pattern: $X.to_i
+    pattern-sinks:
+      - pattern: raw(...)
+      - pattern: $X.html_safe
+      - pattern: "render inline: $X, ..."
+
+  - id: php-reflected-xss
+    languages: [php]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is echoed into the page without escaping. An attacker
+      supplies script that runs on the site's origin: it reads the session
+      cookie unless it is HttpOnly, and either way it can act as the logged in
+      user through the application's own endpoints.
+    metadata:
+      vuln_class: "Cross-Site Scripting"
+      cwe: "CWE-79"
+      exploitability: "HIGH"
+      confidence: "high: echo escapes nothing; htmlspecialchars and intval are sanitizers"
+    pattern-sources: *php-request-sources
+    pattern-sanitizers:
+      - pattern: htmlspecialchars(...)
+      - pattern: htmlentities(...)
+      - pattern: intval(...)
+      - pattern: urlencode(...)
+    pattern-sinks:
+      - pattern: echo ...;
+      - pattern: print(...)
+      - pattern: printf(...)
+      - pattern: vprintf(...)
+
+  - id: csharp-reflected-xss
+    languages: [csharp]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is written into the response as markup. Response.Write and
+      Html.Raw both escape nothing, so an attacker supplies script that runs on
+      the site's origin and acts as the logged in user.
+    metadata:
+      vuln_class: "Cross-Site Scripting"
+      cwe: "CWE-79"
+      exploitability: "HIGH"
+      confidence: "high: Html.Raw exists to bypass Razor's escaping, and Response.Write has never escaped"
+    pattern-sources: *csharp-request-sources
+    pattern-sanitizers:
+      - pattern: HttpUtility.HtmlEncode(...)
+      - pattern: WebUtility.HtmlEncode(...)
+      - pattern: AntiXssEncoder.HtmlEncode(...)
+      - pattern: int.Parse(...)
+    pattern-sinks:
+      - pattern: Response.Write(...)
+      - pattern: $X.Html.Raw(...)
+      - pattern: Html.Raw(...)
+      - pattern: new HtmlString(...)
+
+  # -------------------------------------------------------------- headers ----
+
+  - id: javascript-cors-origin-reflected
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    message: >
+      The Origin header is echoed back as the allowed origin, which allows
+      every site. Any page the victim visits can then read this origin's
+      responses, and with credentials allowed it reads them as the logged in
+      user, so an attacker's page can pull out anything an authenticated
+      request returns.
+    metadata:
+      vuln_class: "CORS Misconfiguration"
+      cwe: "CWE-942"
+      exploitability: "HIGH"
+      confidence: "high: reflecting the origin defeats the point of the header; a check against an allowlist before the assignment is the only false positive to expect"
+    pattern-sources:
+      - pattern: $REQ.headers.origin
+      - pattern: $REQ.headers["origin"]
+      - pattern: $REQ.get("Origin")
+      - pattern: $REQ.get("origin")
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $RES.setHeader("Access-Control-Allow-Origin", $VAL)
+              - pattern: $RES.header("Access-Control-Allow-Origin", $VAL)
+              - pattern: $RES.set("Access-Control-Allow-Origin", $VAL)
+          - focus-metavariable: $VAL
+
+  - id: javascript-cors-wildcard-with-credentials
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      Any origin is allowed and credentials are allowed with it. Any page the
+      victim visits can then issue authenticated requests to this origin and
+      read the responses, which is every endpoint the session can reach.
+    metadata:
+      vuln_class: "CORS Misconfiguration"
+      cwe: "CWE-942"
+      exploitability: "HIGH"
+      confidence: "high: browsers reject the literal combination, so this shape is either dead configuration or backed by an origin-reflecting middleware, and both are worth reading"
+    pattern-either:
+      - pattern: "cors({..., origin: true, ..., credentials: true, ...})"
+      - pattern: "cors({..., origin: '*', ..., credentials: true, ...})"
+      - pattern: 'cors({..., origin: "*", ..., credentials: true, ...})'
+
+  - id: python-flask-cors-wildcard-with-credentials
+    languages: [python]
+    severity: ERROR
+    message: >
+      Any origin is allowed and credentials are allowed with it. Any page the
+      victim visits can then issue authenticated requests to this application
+      and read the responses, which is every endpoint the session can reach.
+    metadata:
+      vuln_class: "CORS Misconfiguration"
+      cwe: "CWE-942"
+      exploitability: "HIGH"
+      confidence: "high: flask-cors reflects the requesting origin when origins is *, so the browser does not reject this the way it rejects a literal wildcard"
+    pattern-either:
+      - pattern: flask_cors.CORS(..., supports_credentials=True, ...)
+      - pattern: CORS(..., supports_credentials=True, ...)
+
+  - id: java-spring-cors-wildcard-with-credentials
+    languages: [java]
+    severity: ERROR
+    message: >
+      Any origin is allowed and credentials are allowed with it. Any page the
+      victim visits can then issue authenticated requests to this application
+      and read the responses, which is every endpoint the session can reach.
+    metadata:
+      vuln_class: "CORS Misconfiguration"
+      cwe: "CWE-942"
+      exploitability: "HIGH"
+      confidence: "high: allowedOriginPatterns with a wildcard reflects the requesting origin rather than sending a literal star, so the browser does not reject it"
+    pattern-either:
+      - pattern: '@CrossOrigin(..., origins = "*", ..., allowCredentials = "true", ...)'
+      - pattern: $C.allowedOrigins("*").allowCredentials(true)
+      - pattern: $C.allowedOriginPatterns("*").allowCredentials(true)
+      - pattern: $C.setAllowedOriginPatterns(...).setAllowCredentials(true)
+
+  - id: csharp-cors-any-origin-with-credentials
+    languages: [csharp]
+    severity: ERROR
+    message: >
+      Any origin is allowed and credentials are allowed with it. Any page the
+      victim visits can then issue authenticated requests to this application
+      and read the responses, which is every endpoint the session can reach.
+    metadata:
+      vuln_class: "CORS Misconfiguration"
+      cwe: "CWE-942"
+      exploitability: "HIGH"
+      confidence: "high: the two calls are in one chain here, so no inference about the policy is involved"
+    pattern-either:
+      - pattern: $B.AllowAnyOrigin().AllowCredentials()
+      - pattern: $B.AllowCredentials().AllowAnyOrigin()
+      - pattern: $B.SetIsOriginAllowed($X => true)
+
+  - id: javascript-cookie-without-httponly
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >
+      A cookie is set without HttpOnly, so script running on the page can read
+      it. Any XSS anywhere on the origin, including in a third-party script the
+      page loads, then walks away with the session rather than being confined
+      to the page it ran on.
+    metadata:
+      vuln_class: "Insecure Cookie"
+      cwe: "CWE-1004"
+      confidence: "medium: the flag has to be set in an object literal at the call site, so a handler passing a shared options constant matches this rule even when that constant sets it; a cookie the front end is meant to read, a theme or a locale, is the other legitimate case"
+    patterns:
+      - pattern: $RES.cookie($NAME, $VALUE, ...)
+      - pattern-not: "$RES.cookie($NAME, $VALUE, {..., httpOnly: true, ...})"
+
+  - id: python-flask-cookie-without-httponly
+    languages: [python]
+    severity: WARNING
+    message: >
+      A cookie is set without HttpOnly, so script running on the page can read
+      it. Any XSS anywhere on the origin then walks away with the session
+      rather than being confined to the page it ran on.
+    metadata:
+      vuln_class: "Insecure Cookie"
+      cwe: "CWE-1004"
+      confidence: "medium: the flag has to be named at the call site, so a handler splatting a shared options dict matches this rule even when that dict sets it; a cookie the front end is meant to read, a theme or a locale, is the other legitimate case"
+    patterns:
+      - pattern: $RESP.set_cookie(...)
+      - pattern-not: $RESP.set_cookie(..., httponly=True, ...)

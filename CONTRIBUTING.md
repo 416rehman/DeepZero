@@ -201,9 +201,10 @@ test(state): add atomicity tests for concurrent writes
 
 ## Pull Request Process
 
-1. **Ensure CI passes.** GitHub Actions runs Ruff and Bandit on Python 3.12,
-   the non-Ghidra test suite on Python 3.11 through 3.14, and the Ghidra
-   integration test separately on Python 3.12.
+1. **Ensure CI passes.** GitHub Actions runs Ruff and Bandit on Linux/Python 3.12,
+   the non-Ghidra tests on Linux/Python 3.11–3.14 and Windows/Python 3.12,
+   a real Ghidra integration test on Linux/Python 3.12, and a clean wheel
+   build/install smoke test outside the checkout.
 
 2. **Fill out the PR template.** Describe what changed, why, and how to test
    it. Link any related issues.
@@ -246,7 +247,7 @@ Community processors are the easiest way to contribute. Create a directory
 under `processors/`, subclass one of the four base classes
 (`IngestProcessor`, `MapProcessor`, `BulkMapProcessor`, `ReduceProcessor`),
 and include a README explaining what it does. See the
-[Building Processors](README.md#-building-processors) section of the README.
+[Building Custom Processors](docs/en/extensibility/building-custom.md) section of the README.
 
 ### New Pipelines
 

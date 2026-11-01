@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 from pathlib import Path
 from typing import Any
 
@@ -8,12 +9,52 @@ from deepzero.engine.stage import IngestProcessor, ProcessorContext, Sample
 
 
 class PEIngest(IngestProcessor):
+    cache_global_keys = ()
     description = (
         "discovers portable executable files, parses PE headers, and extracts driver metadata"
     )
     version = "2.0"
 
-    provides = ("sha256", "md5", "size_bytes")
+    # the hashes and the size come from reading the file, so every sample has
+    # them; `error` replaces them when the file could not be read at all.
+    # everything below that is read out of the PE headers by lief, so a file
+    # that is not a PE stops at is_valid_pe, and one the subsystem_filter
+    # rejects stops at reject_reason.
+    provides = (
+        "sha256",
+        "md5",
+        "size_bytes",
+        "error",
+        "is_valid_pe",
+        "subsystem",
+        "is_kernel_driver",
+        "machine_type",
+        "reject_reason",
+        "imported_dlls",
+        "imported_functions",
+        "has_ioctl_surface",
+        "creates_device",
+        "creates_symlink",
+        "dangerous_imports",
+        "is_signed",
+        "priority_score",
+        "imphash",
+    )
+
+    def validate(self, ctx: ProcessorContext) -> list[str]:
+        errors = []
+        # Without LIEF, later PE filters would silently drop the whole corpus.
+        if importlib.util.find_spec("lief") is None:
+            errors.append(
+                "lief not installed, so no PE header can be parsed and only hashes would be "
+                "recorded - install with: pip install 'deepzero[pe]'"
+            )
+
+        extensions = self.config.get("extensions", [".sys"])
+        if not extensions:
+            errors.append("extensions is empty, so no file would ever be discovered")
+
+        return errors
 
     def process(self, ctx: ProcessorContext, target: Path) -> list[Sample]:
         extensions = self.config.get("extensions", [".sys"])
@@ -28,7 +69,7 @@ class PEIngest(IngestProcessor):
             return []
 
         if subdirs:
-            return self._ingest_filtered(ctx, target, subdirs, extensions)
+            return self._ingest_filtered(ctx, target, subdirs, extensions, recursive)
 
         return self._ingest_directory(ctx, target, extensions, recursive)
 
@@ -39,14 +80,19 @@ class PEIngest(IngestProcessor):
         return [Sample(sample_id=sample_id, source_path=path, filename=path.name, data=data)]
 
     def _ingest_filtered(
-        self, ctx: ProcessorContext, root: Path, subdirs: list[str], extensions: list[str]
+        self,
+        ctx: ProcessorContext,
+        root: Path,
+        subdirs: list[str],
+        extensions: list[str],
+        recursive: bool = True,
     ) -> list[Sample]:
         all_dirs = sorted(d for d in root.iterdir() if d.is_dir())
         matching = [d for d in all_dirs if any(p.lower() in d.name.lower() for p in subdirs)]
 
         if not matching:
             self.log.warning("no subdirectories matched patterns %s in %s", subdirs, root)
-            return self._ingest_directory(ctx, root, extensions, True)
+            return self._ingest_directory(ctx, root, extensions, recursive)
 
         self.log.info("scanning %d/%d matching subdirectories", len(matching), len(all_dirs))
 
@@ -54,7 +100,7 @@ class PEIngest(IngestProcessor):
         for pack_dir in matching:
             for ext in extensions:
                 ext = ext if ext.startswith(".") else f".{ext}"
-                files.extend(pack_dir.rglob(f"*{ext}"))
+                files.extend(pack_dir.rglob(f"*{ext}") if recursive else pack_dir.glob(f"*{ext}"))
 
         files = sorted(set(files))
         self.log.info("found %d files across %d directories", len(files), len(matching))
@@ -155,7 +201,11 @@ def _parse_pe(data: bytes, subsystem_filter: list[int]) -> dict[str, Any]:
     try:
         import lief
     except ImportError:
-        return {}
+        # Direct callers still need an explicit reason for missing PE headers.
+        return {
+            "is_valid_pe": False,
+            "reject_reason": "lief not installed, PE headers were not parsed",
+        }
 
     try:
         pe = lief.parse(data)

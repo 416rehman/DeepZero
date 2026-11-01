@@ -1,0 +1,793 @@
+# request data deciding which file gets opened, which host gets contacted, or
+# where the browser gets sent next. all four classes share one shape: the value
+# is used as a locator rather than as data.
+#
+# a locator is only ever partly attacker controlled in practice, and taint mode
+# cannot tell a tainted prefix from a tainted suffix. that distinction is left
+# to review and is called out in each message.
+
+x-shared:
+  python-request-sources: &python-request-sources
+    - pattern-either:
+        - pattern: flask.request.args
+        - pattern: flask.request.form
+        - pattern: flask.request.values
+        - pattern: flask.request.json
+        - pattern: flask.request.data
+        - pattern: flask.request.files
+        - pattern: flask.request.cookies
+        - pattern: flask.request.headers
+        - pattern: flask.request.get_json(...)
+        - pattern: flask.request.get_data(...)
+    - patterns:
+        - pattern-inside: |
+            def $VIEW(..., $REQ, ...):
+                ...
+        - metavariable-regex:
+            metavariable: $REQ
+            regex: ^(request|req)$
+        - pattern-either:
+            - pattern: $REQ.GET
+            - pattern: $REQ.POST
+            - pattern: $REQ.body
+            - pattern: $REQ.data
+            - pattern: $REQ.query_params
+            - pattern: $REQ.COOKIES
+            - pattern: $REQ.headers
+            - pattern: $REQ.FILES
+
+  javascript-request-sources: &javascript-request-sources
+    - patterns:
+        - pattern-either:
+            - pattern: $REQ.query
+            - pattern: $REQ.body
+            - pattern: $REQ.params
+            - pattern: $REQ.cookies
+            - pattern: $REQ.headers
+            - pattern: $REQ.get(...)
+        - metavariable-regex:
+            metavariable: $REQ
+            regex: ^(req|request|ctx|ctx\.request|context\.request)$
+
+  go-request-sources: &go-request-sources
+    - pattern-either:
+        - pattern: $R.URL.Query()
+        - pattern: $R.URL.RawQuery
+        - pattern: $R.URL.Path
+        - pattern: $R.FormValue(...)
+        - pattern: $R.PostFormValue(...)
+        - pattern: $R.Form
+        - pattern: $R.PostForm
+        - pattern: $R.MultipartForm
+        - pattern: $R.Header.Get(...)
+        - pattern: $R.Body
+        - pattern: mux.Vars($R)
+    - patterns:
+        - pattern-either:
+            - pattern: $C.Param(...)
+            - pattern: $C.Query(...)
+            - pattern: $C.DefaultQuery(...)
+            - pattern: $C.PostForm(...)
+            - pattern: $C.GetHeader(...)
+        - metavariable-regex:
+            metavariable: $C
+            regex: ^(c|ctx|g|gc)$
+
+  java-request-sources: &java-request-sources
+    - pattern-either:
+        - pattern: $REQ.getParameter(...)
+        - pattern: $REQ.getParameterValues(...)
+        - pattern: $REQ.getParameterMap()
+        - pattern: $REQ.getHeader(...)
+        - pattern: $REQ.getQueryString()
+        - pattern: $REQ.getCookies()
+        - pattern: $REQ.getInputStream()
+        - pattern: $REQ.getReader()
+        - pattern: $REQ.getPathInfo()
+    - patterns:
+        - pattern-either:
+            - pattern-inside: |
+                $RET $HANDLER(..., @$ANN(...) $TYPE $P, ...) { ... }
+            - pattern-inside: |
+                $RET $HANDLER(..., @$ANN $TYPE $P, ...) { ... }
+        - metavariable-regex:
+            metavariable: $ANN
+            regex: ^(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|ModelAttribute|RequestPart)$
+        - pattern: $P
+
+  ruby-request-sources: &ruby-request-sources
+    - pattern-either:
+        - pattern: params
+        - pattern: request.params
+        - pattern: request.query_parameters
+        - pattern: request.request_parameters
+        - pattern: request.body
+        - pattern: request.headers[...]
+        - pattern: cookies
+
+  php-request-sources: &php-request-sources
+    - pattern-either:
+        - pattern: $_GET
+        - pattern: $_POST
+        - pattern: $_REQUEST
+        - pattern: $_COOKIE
+        - pattern: $_FILES
+        - pattern: file_get_contents("php://input")
+
+  csharp-request-sources: &csharp-request-sources
+    - pattern-either:
+        - pattern: $REQ.Query
+        - pattern: $REQ.Form
+        - pattern: $REQ.QueryString
+        - pattern: $REQ.Params
+        - pattern: $REQ.Headers
+        - pattern: $REQ.Cookies
+        - pattern: $REQ.Body
+        - pattern: $REQ.ReadFormAsync(...)
+
+rules:
+  # -------------------------------------------------------- path traversal ---
+
+  - id: python-path-traversal
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a filesystem path. With ../ an attacker reads any
+      file the process can open, which on a typical deployment includes the
+      application's own configuration and its database credentials; where the
+      path is written to, it overwrites code the service later runs.
+    metadata:
+      vuln_class: "Path Traversal"
+      cwe: "CWE-22"
+      exploitability: "HIGH"
+      confidence: "high: basename, secure_filename and integer coercion are treated as sanitizers, so the remaining hits genuinely carry a separator through"
+    pattern-sources: *python-request-sources
+    pattern-sanitizers:
+      - pattern: os.path.basename(...)
+      - pattern: werkzeug.utils.secure_filename(...)
+      - pattern: secure_filename(...)
+      # a record id built into a filename is the common safe shape, and an
+      # integer cannot carry a separator
+      - pattern: int(...)
+    pattern-sinks:
+      - pattern: open(...)
+      - pattern: io.open(...)
+      - pattern: os.open(...)
+      - pattern: os.remove(...)
+      - pattern: os.unlink(...)
+      - pattern: os.rename(...)
+      - pattern: os.rmdir(...)
+      - pattern: shutil.copy(...)
+      - pattern: shutil.copyfile(...)
+      - pattern: shutil.move(...)
+      - pattern: shutil.rmtree(...)
+      - pattern: pathlib.Path(...).open(...)
+      - pattern: flask.send_file(...)
+      - patterns:
+          - pattern: flask.send_from_directory($DIR, $NAME, ...)
+          - focus-metavariable: $NAME
+
+  - id: javascript-path-traversal
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a filesystem path. With ../ an attacker reads any
+      file the node process can open, source and configuration included, and
+      where the path is written to, replaces code the service later requires.
+    metadata:
+      vuln_class: "Path Traversal"
+      cwe: "CWE-22"
+      exploitability: "HIGH"
+      confidence: "high: path.basename and integer coercion are sanitizers, and path.join does not normalise away a leading ../ so it is treated as pass-through"
+    pattern-sources: *javascript-request-sources
+    pattern-sanitizers:
+      - pattern: path.basename(...)
+      - pattern: $P.basename(...)
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+    pattern-sinks:
+      - pattern: fs.readFile(...)
+      - pattern: fs.readFileSync(...)
+      - pattern: fs.writeFile(...)
+      - pattern: fs.writeFileSync(...)
+      - pattern: fs.appendFile(...)
+      - pattern: fs.appendFileSync(...)
+      - pattern: fs.createReadStream(...)
+      - pattern: fs.createWriteStream(...)
+      - pattern: fs.unlink(...)
+      - pattern: fs.unlinkSync(...)
+      - pattern: fs.open(...)
+      - pattern: fs.promises.readFile(...)
+      - pattern: fs.promises.writeFile(...)
+      - pattern: $RES.sendFile(...)
+      - pattern: $RES.download(...)
+
+  - id: go-path-traversal
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a filesystem path. With ../ an attacker reads any
+      file the process can open; filepath.Join cleans the result but does not
+      confine it to the directory it was given.
+    metadata:
+      vuln_class: "Path Traversal"
+      cwe: "CWE-22"
+      exploitability: "HIGH"
+      confidence: "high: filepath.Base and integer coercion are sanitizers, so what remains carries a separator into the path"
+    pattern-sources: *go-request-sources
+    pattern-sanitizers:
+      - pattern: filepath.Base(...)
+      - pattern: path.Base(...)
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+    pattern-sinks:
+      - pattern: os.Open(...)
+      - pattern: os.OpenFile(...)
+      - pattern: os.ReadFile(...)
+      - pattern: os.Create(...)
+      - pattern: os.Remove(...)
+      - pattern: os.RemoveAll(...)
+      - pattern: os.WriteFile(...)
+      - pattern: ioutil.ReadFile(...)
+      - pattern: ioutil.WriteFile(...)
+      - patterns:
+          - pattern: http.ServeFile($W, $R, $NAME)
+          - focus-metavariable: $NAME
+
+  - id: java-path-traversal
+    languages: [java]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a filesystem path. With ../ an attacker reads any
+      file the application server account can open, which normally includes
+      the deployment descriptor and the datasource password in it.
+    metadata:
+      vuln_class: "Path Traversal"
+      cwe: "CWE-22"
+      exploitability: "HIGH"
+      confidence: "high: FilenameUtils.getName, Path.getFileName and integer coercion are treated as sanitizers"
+    pattern-sources: *java-request-sources
+    pattern-sanitizers:
+      - pattern: FilenameUtils.getName(...)
+      - pattern: $P.getFileName()
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: UUID.fromString(...)
+    pattern-sinks:
+      - pattern: new File(...)
+      - pattern: new FileInputStream(...)
+      - pattern: new FileOutputStream(...)
+      - pattern: new FileReader(...)
+      - pattern: new FileWriter(...)
+      - pattern: new RandomAccessFile(...)
+      - pattern: Paths.get(...)
+      - pattern: Files.readAllBytes(...)
+      - pattern: Files.readAllLines(...)
+      - pattern: Files.newInputStream(...)
+      - pattern: Files.newOutputStream(...)
+      - pattern: Files.delete(...)
+
+  - id: ruby-path-traversal
+    languages: [ruby]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a filesystem path. With ../ an attacker reads any
+      file the application account can open, config/master.key and the
+      credentials it decrypts included.
+    metadata:
+      vuln_class: "Path Traversal"
+      cwe: "CWE-22"
+      exploitability: "HIGH"
+      confidence: "medium: `params` is matched by name, so a non-rails local called params reads as untrusted; File.basename and integer coercion are sanitizers"
+    pattern-sources: *ruby-request-sources
+    pattern-sanitizers:
+      - pattern: File.basename(...)
+      - pattern: $X.to_i
+      - pattern: Integer(...)
+    pattern-sinks:
+      - pattern: File.open(...)
+      - pattern: File.read(...)
+      - pattern: File.write(...)
+      - pattern: File.delete(...)
+      - pattern: File.readlines(...)
+      - pattern: IO.read(...)
+      - pattern: FileUtils.rm(...)
+      - pattern: FileUtils.cp(...)
+      - pattern: FileUtils.mv(...)
+      - pattern: send_file(...)
+
+  - id: php-path-traversal
+    languages: [php]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a filesystem path. With ../ an attacker reads any
+      file the web server can open; where the path reaches include or require
+      it is worse than a read, because the file is then executed as PHP.
+    metadata:
+      vuln_class: "Path Traversal"
+      cwe: "CWE-22"
+      exploitability: "CRITICAL"
+      confidence: "high: basename and integer coercion are treated as sanitizers, and a trailing extension appended by the caller does not stop the traversal"
+    pattern-sources: *php-request-sources
+    pattern-sanitizers:
+      - pattern: basename(...)
+      - pattern: intval(...)
+    pattern-sinks:
+      - pattern: file_get_contents(...)
+      - pattern: file_put_contents(...)
+      - pattern: fopen(...)
+      - pattern: readfile(...)
+      - pattern: unlink(...)
+      - pattern: copy(...)
+      - pattern: rename(...)
+      - pattern: include(...)
+      - pattern: include_once(...)
+      - pattern: require(...)
+      - pattern: require_once(...)
+
+  - id: csharp-path-traversal
+    languages: [csharp]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a filesystem path. With ..\ an attacker reads any
+      file the application pool identity can open, web.config and its
+      connection strings included. Path.Combine does not confine the result:
+      an absolute second argument replaces the first outright.
+    metadata:
+      vuln_class: "Path Traversal"
+      cwe: "CWE-22"
+      exploitability: "HIGH"
+      confidence: "high: Path.GetFileName and integer coercion are treated as sanitizers"
+    pattern-sources: *csharp-request-sources
+    pattern-sanitizers:
+      - pattern: Path.GetFileName(...)
+      - pattern: int.Parse(...)
+      - pattern: Guid.Parse(...)
+    pattern-sinks:
+      - pattern: File.ReadAllText(...)
+      - pattern: File.ReadAllBytes(...)
+      - pattern: File.ReadAllLines(...)
+      - pattern: File.WriteAllText(...)
+      - pattern: File.WriteAllBytes(...)
+      - pattern: File.Open(...)
+      - pattern: File.OpenRead(...)
+      - pattern: File.OpenWrite(...)
+      - pattern: File.Delete(...)
+      - pattern: File.Copy(...)
+      - pattern: File.Move(...)
+      - pattern: new FileStream(...)
+      - pattern: new StreamReader(...)
+      - pattern: new StreamWriter(...)
+
+  # ------------------------------------------------------------------ ssrf ---
+
+  - id: python-ssrf
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data decides which URL the server fetches. An attacker reaches
+      anything the server can reach and the client cannot: the cloud instance
+      metadata endpoint and its credentials, admin interfaces bound to
+      localhost, and internal services that trust the network.
+    metadata:
+      vuln_class: "Server-Side Request Forgery"
+      cwe: "CWE-918"
+      exploitability: "HIGH"
+      confidence: "medium: an allowlist check upstream is not visible here, and a tainted path segment on a fixed host is a weaker finding than a tainted host"
+    pattern-sources: *python-request-sources
+    pattern-sinks:
+      - pattern: requests.get(...)
+      - pattern: requests.post(...)
+      - pattern: requests.put(...)
+      - pattern: requests.delete(...)
+      - pattern: requests.head(...)
+      - pattern: requests.patch(...)
+      - pattern: requests.request(...)
+      - pattern: $SESSION.request(...)
+      - pattern: urllib.request.urlopen(...)
+      - pattern: urllib.request.Request(...)
+      - pattern: httpx.get(...)
+      - pattern: httpx.post(...)
+      - pattern: httpx.request(...)
+      - pattern: aiohttp.ClientSession(...).get(...)
+
+  - id: javascript-ssrf
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data decides which URL the server fetches. An attacker reaches
+      anything the server can reach and the client cannot, starting with the
+      cloud instance metadata endpoint and the role credentials it hands out.
+    metadata:
+      vuln_class: "Server-Side Request Forgery"
+      cwe: "CWE-918"
+      exploitability: "HIGH"
+      confidence: "medium: an allowlist check upstream is not visible here, and a tainted path segment on a fixed host is a weaker finding than a tainted host"
+    pattern-sources: *javascript-request-sources
+    pattern-sinks:
+      - pattern: fetch(...)
+      - pattern: axios(...)
+      - pattern: axios.get(...)
+      - pattern: axios.post(...)
+      - pattern: axios.put(...)
+      - pattern: axios.delete(...)
+      - pattern: axios.request(...)
+      - pattern: got(...)
+      - pattern: got.get(...)
+      - pattern: request(...)
+      - pattern: http.get(...)
+      - pattern: http.request(...)
+      - pattern: https.get(...)
+      - pattern: https.request(...)
+      - pattern: superagent.get(...)
+
+  - id: go-ssrf
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data decides which URL the server fetches. An attacker reaches
+      anything the service can reach and the client cannot, including the cloud
+      metadata endpoint and its credentials.
+    metadata:
+      vuln_class: "Server-Side Request Forgery"
+      cwe: "CWE-918"
+      exploitability: "HIGH"
+      confidence: "medium: an allowlist check upstream is not visible here; only the URL argument is a sink, so a tainted body is not reported"
+    pattern-sources: *go-request-sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: http.Get($URL)
+              - pattern: http.Head($URL)
+              - pattern: http.Post($URL, ...)
+              - pattern: http.PostForm($URL, ...)
+              - pattern: $CLIENT.Get($URL)
+              - pattern: $CLIENT.Post($URL, ...)
+              - pattern: http.NewRequest($METHOD, $URL, ...)
+              - pattern: http.NewRequestWithContext($CTX, $METHOD, $URL, ...)
+          - focus-metavariable: $URL
+
+  - id: java-ssrf
+    languages: [java]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data decides which URL the server fetches. An attacker reaches
+      anything the application server can reach and the client cannot,
+      including the cloud metadata endpoint and internal admin interfaces.
+    metadata:
+      vuln_class: "Server-Side Request Forgery"
+      cwe: "CWE-918"
+      exploitability: "HIGH"
+      confidence: "medium: an allowlist check upstream is not visible here, and a tainted path on a fixed host is a weaker finding than a tainted host"
+    pattern-sources: *java-request-sources
+    pattern-sinks:
+      - pattern: new URL(...)
+      - pattern: new HttpGet(...)
+      - pattern: new HttpPost(...)
+      - pattern: $RT.getForObject(...)
+      - pattern: $RT.getForEntity(...)
+      - pattern: $RT.postForObject(...)
+      - pattern: $RT.exchange(...)
+      - pattern: $B.url(...)
+      - pattern: HttpRequest.newBuilder().uri(...)
+
+  - id: ruby-ssrf
+    languages: [ruby]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data decides which URL the server fetches. An attacker reaches
+      anything the application can reach and the client cannot; with Kernel#open
+      a leading pipe character turns the same call into command execution.
+    metadata:
+      vuln_class: "Server-Side Request Forgery"
+      cwe: "CWE-918"
+      exploitability: "HIGH"
+      confidence: "medium: an allowlist check upstream is not visible here; `params` is also matched by name"
+    pattern-sources: *ruby-request-sources
+    pattern-sinks:
+      - pattern: Net::HTTP.get(...)
+      - pattern: Net::HTTP.get_response(...)
+      - pattern: Net::HTTP.post_form(...)
+      - pattern: Net::HTTP.start(...)
+      - pattern: URI.open(...)
+      - pattern: URI.parse(...).open(...)
+      - pattern: RestClient.get(...)
+      - pattern: RestClient.post(...)
+      - pattern: HTTParty.get(...)
+      - pattern: HTTParty.post(...)
+      - pattern: Faraday.get(...)
+
+  - id: php-ssrf
+    languages: [php]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data decides which URL the server fetches. An attacker reaches
+      anything the web server can reach and the client cannot, and with curl
+      the file:// scheme turns the same call into an arbitrary file read.
+    metadata:
+      vuln_class: "Server-Side Request Forgery"
+      cwe: "CWE-918"
+      exploitability: "HIGH"
+      confidence: "medium: an allowlist check upstream is not visible here; file_get_contents is left to the path traversal rule so a single call is reported once"
+    pattern-sources: *php-request-sources
+    pattern-sinks:
+      - pattern: curl_init(...)
+      - patterns:
+          - pattern: curl_setopt($CH, CURLOPT_URL, $URL)
+          - focus-metavariable: $URL
+
+  - id: csharp-ssrf
+    languages: [csharp]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data decides which URL the server fetches. An attacker reaches
+      anything the application can reach and the client cannot, including the
+      cloud metadata endpoint and services bound to the loopback interface.
+    metadata:
+      vuln_class: "Server-Side Request Forgery"
+      cwe: "CWE-918"
+      exploitability: "HIGH"
+      confidence: "medium: an allowlist check upstream is not visible here, and a tainted path on a fixed host is a weaker finding than a tainted host"
+    pattern-sources: *csharp-request-sources
+    pattern-sinks:
+      - pattern: WebRequest.Create(...)
+      - pattern: $CLIENT.GetAsync(...)
+      - pattern: $CLIENT.GetStringAsync(...)
+      - pattern: $CLIENT.GetStreamAsync(...)
+      - pattern: $CLIENT.PostAsync(...)
+      - pattern: $CLIENT.DownloadString(...)
+      - pattern: $CLIENT.DownloadFile(...)
+      - pattern: new HttpRequestMessage($METHOD, $URL)
+
+  # -------------------------------------------------------- open redirect ---
+
+  - id: python-open-redirect
+    languages: [python]
+    severity: WARNING
+    mode: taint
+    message: >
+      Request data decides where the browser is redirected. An attacker sends a
+      link on the real domain that lands the victim on theirs, which is what
+      makes a phishing page credible, and which leaks any token carried in the
+      URL or the referer.
+    metadata:
+      vuln_class: "Open Redirect"
+      cwe: "CWE-601"
+      confidence: "medium: a check that the target is relative or on an allowed host is not visible to this rule"
+    pattern-sources: *python-request-sources
+    pattern-sinks:
+      - pattern: flask.redirect(...)
+      - pattern: django.shortcuts.redirect(...)
+      - pattern: django.http.HttpResponseRedirect(...)
+
+  - id: javascript-open-redirect
+    languages: [javascript, typescript]
+    severity: WARNING
+    mode: taint
+    message: >
+      Request data decides where the browser is redirected. An attacker sends a
+      link on the real domain that lands the victim on theirs, which lends a
+      phishing page the origin's credibility and leaks tokens in the referer.
+    metadata:
+      vuln_class: "Open Redirect"
+      cwe: "CWE-601"
+      confidence: "medium: a check that the target is relative or on an allowed host is not visible to this rule"
+    pattern-sources: *javascript-request-sources
+    pattern-sinks:
+      - pattern: $RES.redirect(...)
+      - pattern: $RES.location(...)
+
+  - id: go-open-redirect
+    languages: [go]
+    severity: WARNING
+    mode: taint
+    message: >
+      Request data decides where the browser is redirected. An attacker sends a
+      link on the real domain that lands the victim on theirs, which lends a
+      phishing page the origin's credibility.
+    metadata:
+      vuln_class: "Open Redirect"
+      cwe: "CWE-601"
+      confidence: "medium: a check that the target is relative or on an allowed host is not visible to this rule"
+    pattern-sources: *go-request-sources
+    pattern-sinks:
+      - patterns:
+          - pattern: http.Redirect($W, $R, $URL, $CODE)
+          - focus-metavariable: $URL
+
+  - id: java-open-redirect
+    languages: [java]
+    severity: WARNING
+    mode: taint
+    message: >
+      Request data decides where the browser is redirected. An attacker sends a
+      link on the real domain that lands the victim on theirs, which lends a
+      phishing page the origin's credibility and leaks tokens in the referer.
+    metadata:
+      vuln_class: "Open Redirect"
+      cwe: "CWE-601"
+      confidence: "medium: a check that the target is relative or on an allowed host is not visible to this rule"
+    pattern-sources: *java-request-sources
+    pattern-sinks:
+      - pattern: $RESP.sendRedirect(...)
+      - pattern: new RedirectView(...)
+      - pattern: new ModelAndView($X)
+
+  - id: ruby-open-redirect
+    languages: [ruby]
+    severity: WARNING
+    mode: taint
+    message: >
+      Request data decides where the browser is redirected. An attacker sends a
+      link on the real domain that lands the victim on theirs, which lends a
+      phishing page the origin's credibility.
+    metadata:
+      vuln_class: "Open Redirect"
+      cwe: "CWE-601"
+      confidence: "medium: rails raises on a non-allowed host only when raise_on_open_redirects is set, which this rule cannot see"
+    pattern-sources: *ruby-request-sources
+    pattern-sinks:
+      - pattern: redirect_to(...)
+
+  - id: php-open-redirect
+    languages: [php]
+    severity: WARNING
+    mode: taint
+    message: >
+      Request data decides where the browser is redirected. An attacker sends a
+      link on the real domain that lands the victim on theirs, which lends a
+      phishing page the origin's credibility.
+    metadata:
+      vuln_class: "Open Redirect"
+      cwe: "CWE-601"
+      confidence: "medium: only the Location header is treated as a redirect, and a check on the target is not visible to this rule"
+    pattern-sources: *php-request-sources
+    pattern-sinks:
+      - patterns:
+          - pattern: header($H, ...)
+          - metavariable-regex:
+              metavariable: $H
+              regex: (?i).*location.*
+          - focus-metavariable: $H
+
+  - id: csharp-open-redirect
+    languages: [csharp]
+    severity: WARNING
+    mode: taint
+    message: >
+      Request data decides where the browser is redirected. An attacker sends a
+      link on the real domain that lands the victim on theirs, which lends a
+      phishing page the origin's credibility.
+    metadata:
+      vuln_class: "Open Redirect"
+      cwe: "CWE-601"
+      confidence: "medium: LocalRedirect is not a sink because it rejects absolute targets; a manual check on the target is not visible here"
+    pattern-sources: *csharp-request-sources
+    pattern-sinks:
+      - pattern: Response.Redirect(...)
+      - pattern: $C.Redirect(...)
+      - pattern: new RedirectResult(...)
+
+  # -------------------------------------------------------------- zip slip ---
+
+  - id: python-archive-extract-unvalidated
+    languages: [python]
+    severity: WARNING
+    message: >
+      An archive is extracted without checking where its members land. A member
+      named ../../etc/cron.d/x or holding an absolute path writes outside the
+      destination, which is how an uploaded archive turns into code execution.
+    metadata:
+      vuln_class: "Path Traversal"
+      cwe: "CWE-22"
+      confidence: "medium: a call passing members= or filter= is not reported, but a manual loop that checks each name before extracting is invisible to this rule"
+    patterns:
+      - pattern-either:
+          - pattern: $Z.extractall(...)
+          - pattern: $Z.extract(...)
+      - pattern-not: $Z.extractall(..., members=..., ...)
+      - pattern-not: $Z.extractall(..., filter=..., ...)
+
+  - id: java-zip-slip
+    languages: [java]
+    severity: ERROR
+    mode: taint
+    message: >
+      An archive member name is used to build the path it is written to. A
+      member named ../../ escapes the destination directory, so whoever
+      supplies the archive writes files anywhere the process can, including
+      over the application's own code.
+    metadata:
+      vuln_class: "Path Traversal"
+      cwe: "CWE-22"
+      exploitability: "HIGH"
+      confidence: "medium: a canonical path check after the File is constructed is the usual fix and is not visible to this rule; FilenameUtils.getName is treated as a sanitizer"
+    pattern-sources:
+      - pattern: $ENTRY.getName()
+    pattern-sanitizers:
+      - pattern: FilenameUtils.getName(...)
+      - pattern: $P.getFileName()
+    # the write is the sink, not the File that names it, so the usual
+    # construct-then-open pair is one finding rather than two
+    pattern-sinks:
+      - pattern: new FileOutputStream(...)
+      - pattern: new FileWriter(...)
+      - pattern: new RandomAccessFile(...)
+      - pattern: Files.newOutputStream(...)
+      - pattern: Files.copy(...)
+      - pattern: Files.write(...)
+      - pattern: $F.mkdirs()
+      - pattern: $F.createNewFile()
+
+  - id: go-zip-slip
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    message: >
+      An archive member name is used to build the path it is written to. A
+      member named ../../ escapes the destination directory, so whoever
+      supplies the archive writes files anywhere the process can.
+    metadata:
+      vuln_class: "Path Traversal"
+      cwe: "CWE-22"
+      exploitability: "HIGH"
+      confidence: "high: the name is only treated as a source inside a loop over an archive's members, and filepath.Base is a sanitizer"
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              for $_, $F := range $ARCHIVE.File {
+                ...
+              }
+          - pattern: $F.Name
+      - patterns:
+          - pattern-inside: |
+              for {
+                $HDR, $ERR := $TR.Next()
+                ...
+              }
+          - pattern: $HDR.Name
+    pattern-sanitizers:
+      - pattern: filepath.Base(...)
+    pattern-sinks:
+      - pattern: os.Create(...)
+      - pattern: os.OpenFile(...)
+      - pattern: os.WriteFile(...)
+      - pattern: os.MkdirAll(...)
+      - pattern: ioutil.WriteFile(...)
+
+  - id: csharp-zip-slip
+    languages: [csharp]
+    severity: ERROR
+    mode: taint
+    message: >
+      An archive member name is used to build the path it is extracted to.
+      Path.Combine does not confine the result, so a member named ..\..\ or
+      carrying an absolute path writes outside the destination directory.
+    metadata:
+      vuln_class: "Path Traversal"
+      cwe: "CWE-22"
+      exploitability: "HIGH"
+      confidence: "high: ZipFile.ExtractToDirectory guards itself and is not matched; only per-entry extraction, which does not, is reported"
+    pattern-sources:
+      - pattern: $ENTRY.FullName
+    pattern-sanitizers:
+      - pattern: Path.GetFileName(...)
+    pattern-sinks:
+      - pattern: $ENTRY.ExtractToFile(...)
+      - pattern: new FileStream(...)
+      - pattern: File.Create(...)
+      - pattern: File.OpenWrite(...)

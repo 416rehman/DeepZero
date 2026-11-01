@@ -12,6 +12,40 @@ from processors.ghidra_decompile.ghidra_decompile import (
 
 
 class TestDecompileParallelism:
+    def test_tool_tree_is_not_fingerprinted_as_pipeline_input(self, tmp_path):
+        from deepzero.engine.stage import stage_input_digest
+
+        tool = tmp_path / "ghidra"
+        tool.mkdir()
+        jar = tool / "tool.jar"
+        jar.write_text("before")
+        proc = GhidraDecompile(
+            StageSpec("decompile", "ghidra_decompile", config={"ghidra_install_dir": str(tool)})
+        )
+        before = stage_input_digest(proc.spec, tmp_path, processor=proc)
+        jar.write_text("after!")
+        assert stage_input_digest(proc.spec, tmp_path, processor=proc) == before
+        metadata = tool / "Ghidra" / "application.properties"
+        metadata.parent.mkdir()
+        metadata.write_text("application.version=updated")
+        assert stage_input_digest(proc.spec, tmp_path, processor=proc) != before
+
+    def test_editing_strategy_invalidates_cached_decompilation(self, tmp_path):
+        from deepzero.engine.stage import stage_input_digest
+
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        strategy = scripts / "strategy.py"
+        strategy.write_text("before")
+        proc = GhidraDecompile(
+            StageSpec("decompile", "ghidra_decompile", config={"strategy": "strategy.py"})
+        )
+        proc._source_file = tmp_path / "processor.py"
+        proc._source_file.write_text("processor")
+        before = stage_input_digest(proc.spec, tmp_path, processor=proc)
+        strategy.write_text("after!")
+        assert stage_input_digest(proc.spec, tmp_path, processor=proc) != before
+
     def test_ram_caps_workers(self):
         # each worker ~4 GiB; bounded by cpu, ram, and the hard cap
         assert _auto_ghidra_workers(cpu=32, ram_gb=128) == _GHIDRA_MAX_AUTO_WORKERS  # hard cap

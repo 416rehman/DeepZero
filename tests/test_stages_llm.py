@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from deepzero.engine.stage import ProcessorContext, StageSpec
 from deepzero.engine.state import StageOutput
 from deepzero.stages.llm import GenericLLM
@@ -98,6 +100,21 @@ class TestGenericLLMProcess:
         result = processor.process(ctx, entry)
         assert result.status == "completed"
         mock_llm.complete.assert_not_called()
+
+    def test_a_stale_cache_is_not_read_back(self, tmp_path):
+        processor = self._make_tool(config={"prompt": "analyze", "output_file": "result.md"})
+        mock_llm = MagicMock()
+        mock_llm.complete.return_value = "a fresh answer"
+
+        ctx, entry = _make_ctx(tmp_path, llm=mock_llm)
+        (entry.sample_dir / "result.md").write_text("an answer to the old prompt")
+        entry.cache_is_valid = False
+
+        result = processor.process(ctx, entry)
+
+        assert result.status == "completed"
+        mock_llm.complete.assert_called_once()
+        assert (entry.sample_dir / "result.md").read_text() == "a fresh answer"
 
 
 class TestGenericLLMClassify:
@@ -261,33 +278,38 @@ class TestArtifactContextBudget:
         assert len(vars_["big_c"]) < 5000
 
 
+def _render(tmp_path, template_text, vars_present=None):
+    """render a prompt exactly as the stage does, from a template on disk."""
+    from deepzero.engine.stage import ProcessorContext, ProcessorEntry, StageSpec
+    from deepzero.stages.llm import GenericLLM
+
+    tpl = tmp_path / "prompt.j2"
+    tpl.write_text(template_text, encoding="utf-8")
+    sample_dir = tmp_path / "s1"
+    sample_dir.mkdir(parents=True, exist_ok=True)
+    for name, body in (vars_present or {}).items():
+        (sample_dir / name).write_text(body, encoding="utf-8")
+
+    stage = GenericLLM(
+        StageSpec(name="assess", processor="generic_llm", config={"prompt": str(tpl)})
+    )
+    ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=None)
+    entry = ProcessorEntry(
+        sample_id="s1",
+        source_path=tmp_path / "s1.sys",
+        filename="s1.sys",
+        sample_dir=sample_dir,
+    )
+    entry._history = {}
+    return stage._render_prompt(str(tpl), ctx, entry)
+
+
 class TestPromptCompleteness:
     """a prompt that silently renders empty asks the model to judge nothing, so
     a name the pipeline does not produce has to be an error."""
 
     def _render(self, tmp_path, template_text, vars_present=None):
-        from deepzero.engine.stage import ProcessorContext, ProcessorEntry, StageSpec
-        from deepzero.stages.llm import GenericLLM
-
-        tpl = tmp_path / "prompt.j2"
-        tpl.write_text(template_text, encoding="utf-8")
-        sample_dir = tmp_path / "s1"
-        sample_dir.mkdir(parents=True, exist_ok=True)
-        for name, body in (vars_present or {}).items():
-            (sample_dir / name).write_text(body, encoding="utf-8")
-
-        stage = GenericLLM(
-            StageSpec(name="assess", processor="generic_llm", config={"prompt": str(tpl)})
-        )
-        ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=None)
-        entry = ProcessorEntry(
-            sample_id="s1",
-            source_path=tmp_path / "s1.sys",
-            filename="s1.sys",
-            sample_dir=sample_dir,
-        )
-        entry._history = {}
-        return stage._render_prompt(str(tpl), ctx, entry)
+        return _render(tmp_path, template_text, vars_present)
 
     def test_unknown_value_is_reported_with_what_is_available(self, tmp_path):
         import pytest
@@ -310,3 +332,119 @@ class TestPromptCompleteness:
             "{% if missing_thing is defined %}{{ missing_thing }}{% else %}none{% endif %}",
         )
         assert "none" in out
+
+
+class TestAPromptIsPlainTextNotAWebPage:
+    """HTML escaping would change the source sent to the model."""
+
+    def test_an_interpolated_value_keeps_its_punctuation(self, tmp_path):
+        code = 'if (hdr->len & 0xFF) { memcpy(dst, "a<b", n); }'
+        out = _render(tmp_path, "Payload:\n{{ decompiled_c }}", {"decompiled.c": code})
+        assert code in out
+
+    def test_no_html_entity_reaches_the_model(self, tmp_path):
+        out = _render(
+            tmp_path,
+            "Payload:\n{{ decompiled_c }}",
+            {"decompiled.c": "a && b > c || d < e, s = \"x\", t = 'y'"},
+        )
+        for entity in ("&amp;", "&gt;", "&lt;", "&#34;", "&#39;", "&quot;"):
+            assert entity not in out
+
+
+class TestPromptDependencyFingerprints:
+    def _stage(self, tmp_path, prompt, history=None):
+        template_dir = tmp_path / "templates"
+        template_dir.mkdir()
+        (template_dir / "prompt.j2").write_text(prompt, encoding="utf-8")
+        spec = StageSpec("assess", "generic_llm", config={"prompt": "prompt.j2"})
+        stage = GenericLLM(spec)
+        ctx, entry = _make_ctx(tmp_path, history_data=history)
+        ctx.pipeline_dir = template_dir
+        return stage, ctx, entry
+
+    def _digest(self, stage, ctx):
+        from deepzero.engine.stage import stage_input_digest
+
+        return stage_input_digest(stage.spec, ctx.pipeline_dir, processor=stage)
+
+    @pytest.mark.parametrize(
+        ("prompt", "dependency"),
+        [
+            ('{% include "child.j2" %}', "before"),
+            ('{% extends "child.j2" %}', "before"),
+            (
+                '{% import "child.j2" as helpers %}{{ helpers.answer() }}',
+                "{% macro answer() %}before{% endmacro %}",
+            ),
+            (
+                '{% from "child.j2" import answer %}{{ answer() }}',
+                "{% macro answer() %}before{% endmacro %}",
+            ),
+        ],
+    )
+    def test_referenced_template_edit_invalidates_changed_prompt(
+        self, tmp_path, prompt, dependency
+    ):
+        stage, ctx, entry = self._stage(tmp_path, prompt)
+        child = ctx.pipeline_dir / "child.j2"
+        child.write_text(dependency, encoding="utf-8")
+        before = self._digest(stage, ctx)
+        assert stage._render_prompt("prompt.j2", ctx, entry) == "before"
+
+        child.write_text(dependency.replace("before", "after"), encoding="utf-8")
+
+        assert stage._render_prompt("prompt.j2", ctx, entry) == "after"
+        assert self._digest(stage, ctx) != before
+
+    def test_transitive_includes_use_main_template_loader_root(self, tmp_path):
+        stage, ctx, entry = self._stage(tmp_path, '{% include "nested/child.j2" %}')
+        (ctx.pipeline_dir / "nested").mkdir()
+        (ctx.pipeline_dir / "nested" / "child.j2").write_text(
+            '{% include "leaf.j2" %}', encoding="utf-8"
+        )
+        leaf = ctx.pipeline_dir / "leaf.j2"
+        leaf.write_text("before", encoding="utf-8")
+        before = self._digest(stage, ctx)
+
+        leaf.write_text("after", encoding="utf-8")
+
+        assert stage._render_prompt("prompt.j2", ctx, entry) == "after"
+        assert self._digest(stage, ctx) != before
+
+    def test_dynamic_include_tracks_loader_tree(self, tmp_path):
+        stage, ctx, entry = self._stage(
+            tmp_path, "{% include chosen_template %}", {"chosen_template": "nested/child.j2"}
+        )
+        (ctx.pipeline_dir / "nested").mkdir()
+        child = ctx.pipeline_dir / "nested" / "child.j2"
+        child.write_text("before", encoding="utf-8")
+        before = self._digest(stage, ctx)
+
+        child.write_text("after", encoding="utf-8")
+
+        assert stage._render_prompt("prompt.j2", ctx, entry) == "after"
+        assert self._digest(stage, ctx) != before
+
+    def test_dynamic_include_ignores_python_bytecode_cache(self, tmp_path):
+        stage, ctx, _ = self._stage(tmp_path, "{% include chosen_template %}")
+        cache = ctx.pipeline_dir / "__pycache__"
+        cache.mkdir()
+        bytecode = cache / "generated.pyc"
+        bytecode.write_bytes(b"before")
+        before = self._digest(stage, ctx)
+
+        bytecode.write_bytes(b"after")
+
+        assert self._digest(stage, ctx) == before
+
+    def test_static_include_does_not_depend_on_unreferenced_sibling(self, tmp_path):
+        stage, ctx, _ = self._stage(tmp_path, '{% include "child.j2" %}')
+        (ctx.pipeline_dir / "child.j2").write_text("used", encoding="utf-8")
+        unused = ctx.pipeline_dir / "unused.j2"
+        unused.write_text("before", encoding="utf-8")
+        before = self._digest(stage, ctx)
+
+        unused.write_text("after", encoding="utf-8")
+
+        assert self._digest(stage, ctx) == before

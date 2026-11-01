@@ -13,16 +13,25 @@ if TYPE_CHECKING:
 log = logging.getLogger("deepzero.api")
 
 
-def _extract_classification(sample) -> str:
-    # classification is stored in stage data dicts, not as a top-level attribute
+def _extract_classification(sample, key: str = "classification") -> str:
+    """Read the verdict under the pipeline's configured classification key."""
     for stage_output in sample.history.values():
-        classification = stage_output.data.get("classification", "")
+        classification = stage_output.data.get(key, "")
         if classification:
             return classification
     return ""
 
 
-def create_app(work_dir: Path):
+def _is_plain_segment(sample_id: str) -> bool:
+    """Reject IDs that could address paths outside the sample store."""
+    return bool(sample_id) and sample_id not in (".", "..") and not set(sample_id) & set("/\\")
+
+
+def _read_artifact(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def create_app(work_dir: Path, classification_key: str = "classification"):
     try:
         from starlette.applications import Starlette
         from starlette.responses import JSONResponse
@@ -63,17 +72,20 @@ def create_app(work_dir: Path):
     async def get_samples(request: Request) -> JSONResponseType:
         samples = await _run_sync(store.list_samples)
 
-        # filtering
+        # Lifecycle verdict and assessment classification are separate fields.
         verdict = request.query_params.get("verdict")
+        classification_filter = request.query_params.get("classification")
         stage = request.query_params.get("stage")
         status_filter = request.query_params.get("status")
 
         results = []
         for s in samples:
             # classification lives in the stage data dicts, not a top-level attribute
-            classification = _extract_classification(s)
+            classification = _extract_classification(s, classification_key)
 
-            if verdict and classification != verdict:
+            if verdict and s.verdict != verdict:
+                continue
+            if classification_filter and classification != classification_filter:
                 continue
             if stage and s.current_stage != stage:
                 continue
@@ -96,6 +108,9 @@ def create_app(work_dir: Path):
 
     async def get_sample(request: Request) -> JSONResponseType:
         sample_id = request.path_params["sample_id"]
+        if not _is_plain_segment(sample_id):
+            return JSONResponse({"error": "invalid sample id"}, status_code=400)
+
         state = await _run_sync(store.load_sample, sample_id)
 
         if state is None:
@@ -108,12 +123,15 @@ def create_app(work_dir: Path):
     async def get_sample_artifact(request: Request) -> JSONResponseType:
         sample_id = request.path_params["sample_id"]
         artifact_name = request.path_params["name"]
+        if not _is_plain_segment(sample_id):
+            return JSONResponse({"error": "invalid sample id"}, status_code=400)
 
-        sample_dir = store.sample_dir(sample_id)
         state = await _run_sync(store.load_sample, sample_id)
 
         if state is None:
             return JSONResponse({"error": "sample not found"}, status_code=404)
+
+        sample_dir = store.sample_dir(sample_id, create=False)
 
         # find artifact path from state
         for stage_state in state.history.values():
@@ -121,7 +139,7 @@ def create_app(work_dir: Path):
                 if aname == artifact_name:
                     full_path = sample_dir / apath
                     if full_path.exists():
-                        content = full_path.read_text(encoding="utf-8", errors="replace")
+                        content = await _run_sync(_read_artifact, full_path)
                         return JSONResponse({"artifact": artifact_name, "content": content})
 
         return JSONResponse({"error": f"artifact '{artifact_name}' not found"}, status_code=404)

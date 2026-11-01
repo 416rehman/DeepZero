@@ -7,7 +7,12 @@ from deepzero.engine.stage import IngestProcessor, ProcessorContext, Sample
 
 
 class FileDiscovery(IngestProcessor):
+    cache_global_keys = ()
     description = "generic file discovery - finds files by extension, no format parsing"
+
+    # both are recorded for every sample, in single-file mode and in directory
+    # mode alike, so a later prompt can name either one
+    provides = ("sha256", "size_bytes")
 
     def process(self, ctx: ProcessorContext, target: Path) -> list[Sample]:
         extensions = self.config.get("extensions", [])
@@ -17,8 +22,7 @@ class FileDiscovery(IngestProcessor):
             return self._discover_single(target)
 
         if not target.is_dir():
-            self.log.error("target does not exist: %s", target)
-            return []
+            raise FileNotFoundError(f"target does not exist: {target}")
 
         return self._discover_directory(target, extensions, recursive)
 
@@ -39,18 +43,20 @@ class FileDiscovery(IngestProcessor):
     ) -> list[Sample]:
         files: list[Path] = []
 
+        # a directory can carry the extension being hunted too, so both branches
+        # test for a file rather than trusting the glob to have found one
         if recursive:
             if extensions:
                 for ext in extensions:
                     ext = ext if ext.startswith(".") else f".{ext}"
-                    files.extend(directory.rglob(f"*{ext}"))
+                    files.extend(f for f in directory.rglob(f"*{ext}") if f.is_file())
             else:
                 files = [f for f in directory.rglob("*") if f.is_file()]
         else:
             if extensions:
                 for ext in extensions:
                     ext = ext if ext.startswith(".") else f".{ext}"
-                    files.extend(directory.glob(f"*{ext}"))
+                    files.extend(f for f in directory.glob(f"*{ext}") if f.is_file())
             else:
                 files = [f for f in directory.iterdir() if f.is_file()]
 

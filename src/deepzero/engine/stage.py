@@ -6,7 +6,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypedDict, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Protocol,
+    TypedDict,
+    runtime_checkable,
+)
 
 if TYPE_CHECKING:
     from deepzero.engine.state import StateStore
@@ -45,6 +53,12 @@ class GlobalConfig(TypedDict, total=False):
     settings: dict[str, Any]
     knowledge: dict[str, Any]
     model: str
+    # where the pipeline was loaded from. A config value naming a file that
+    # ships with the pipeline (a blocklist, a rule set, a template) can only be
+    # resolved against something, and the working directory is whatever the
+    # reader happened to be in. setup() receives this config and no context, so
+    # without it such a path is only ever cwd-relative.
+    pipeline_dir: str
 
 
 class ProcessorType(str, Enum):
@@ -85,6 +99,14 @@ class ProcessorEntry:
     # working directory for this sample (work/<pipeline>/samples/<id>/)
     sample_dir: Path | None = None
 
+    # whether this stage's own output on disk still describes the pipeline. A
+    # processor that adopts its previous output instead of doing the work again
+    # has to consult this: the file is only a valid cache while the stage that
+    # wrote it had the same inputs. False means the file is from a prompt, rule
+    # set or config that has since changed, and adopting it would report an
+    # answer to a question nobody is asking any more.
+    cache_is_valid: bool = True
+
     # attached automatically by the runner to enable memory-efficient lazy-loading
     _store: StateStore | None = field(default=None, repr=False, compare=False)
 
@@ -112,6 +134,21 @@ class ProcessorEntry:
         return output.data.get(key, default)
 
 
+def _conclusion_not_available(**_: Any) -> None:
+    """what ctx.conclude does in a lane that cannot soundly reach a conclusion.
+
+    A conclusion is about the whole corpus, so only a stage that sees the whole
+    corpus can author one. A map stage runs once per sample, across a thread
+    pool: several of them writing a corpus verdict would be a race whose winner
+    is whichever sample finished last. Rather than let that be written and read
+    back as an answer, the call does nothing and says why.
+    """
+    logging.getLogger("deepzero.processor").warning(
+        "ctx.conclude() is only available to a reduce or bulk_map stage, which are "
+        "the ones that see every sample at once. The call was ignored."
+    )
+
+
 @dataclass
 class ProcessorContext:
     # pipeline directory root (for resolving relative paths in config)
@@ -126,6 +163,12 @@ class ProcessorContext:
     progress: ProgressReporter = field(default_factory=_NullProgressReporter)
     # optional event to monitor for graceful or forced interruptions natively
     shutdown_event: threading.Event | None = None
+
+    # record a finding about the corpus rather than about one sample. Available
+    # to reduce and bulk_map stages, which see every sample in one call; in a map
+    # stage it does nothing and says so, because a per-sample lane cannot speak
+    # for the whole corpus without racing itself.
+    conclude: Callable[..., None] = _conclusion_not_available
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         # shorthand to grab a pipeline setting
@@ -186,7 +229,8 @@ class StageSpec:
     name: str
     # processor reference - bare name for built-in, dir/file.py for external
     processor: str
-    # processor config from yaml - parsed into a Config dataclass if the processor declares one
+    # processor config from yaml - parsed into a Config dataclass if the processor declares one.
+    # the engine reads ENGINE_CONFIG_KEYS out of it as well, whatever the processor accepts
     config: dict[str, Any] = field(default_factory=dict)
     # concurrency: how many samples to process in parallel (0 = auto/max hardware)
     parallel: int = 0
@@ -196,6 +240,95 @@ class StageSpec:
     max_retries: int = 0
     # timeout in seconds per sample (0 = no timeout)
     timeout: int = 0
+
+
+def _digest_path(path: Path, into: Any) -> None:
+    """fold a file, or a directory of files, into a running hash."""
+    try:
+        if path.is_file():
+            into.update(path.name.encode("utf-8"))
+            with path.open("rb") as source:
+                for block in iter(lambda: source.read(1024 * 1024), b""):
+                    into.update(block)
+        elif path.is_dir():
+            for child in sorted(path.rglob("*")):
+                if child.is_file():
+                    into.update(str(child.relative_to(path)).encode("utf-8"))
+                    _digest_path(child, into)
+    except OSError:
+        # Defer unreadable-input errors to the processor.
+        into.update(b"<unreadable>")
+
+
+def stage_input_digest(
+    spec: StageSpec,
+    pipeline_dir: Path | None = None,
+    *,
+    processor: Any = None,
+    global_config: GlobalConfig | None = None,
+) -> str:
+    """Fingerprint declared inputs: config files, processor source, and globals.
+
+    Corpus contents are tracked separately by discovery refresh.
+    """
+    import hashlib
+    import json
+
+    h = hashlib.sha256()
+    h.update(spec.processor.encode("utf-8"))
+    h.update(json.dumps(spec.config or {}, sort_keys=True, default=str).encode("utf-8"))
+
+    if processor is not None:
+        import inspect
+
+        # In-place code edits invalidate cached results. Extensions must declare
+        # dependencies outside these implementation files.
+        sources: set[Path] = set()
+        source_file = getattr(processor, "_source_file", None)
+        if source_file:
+            sources.add(Path(source_file).resolve())
+        for cls in type(processor).__mro__:
+            try:
+                sources.add(Path(inspect.getfile(cls)).resolve())
+            except (TypeError, OSError):
+                continue
+        for source in sorted(sources):
+            _digest_path(source, h)
+        cache_files = getattr(processor, "cache_files", None)
+        if cache_files is not None:
+            for dependency in sorted(cache_files(pipeline_dir or Path.cwd())):
+                _digest_path(Path(dependency), h)
+
+    if global_config is not None:
+        keys = getattr(processor, "cache_global_keys", None)
+        inputs = global_config if keys is None else {k: global_config.get(k) for k in keys}
+        h.update(json.dumps(inputs, sort_keys=True, default=str).encode("utf-8"))
+
+    roots = [Path.cwd()] + ([pipeline_dir] if pipeline_dir else [])
+
+    def values(value: Any):
+        if isinstance(value, dict):
+            for nested in value.values():
+                yield from values(nested)
+        elif isinstance(value, (list, tuple)):
+            for nested in value:
+                yield from values(nested)
+        else:
+            yield value
+
+    path_keys = getattr(processor, "cache_path_keys", None)
+    path_config = spec.config or {}
+    if path_keys is not None:
+        path_config = {key: path_config[key] for key in path_keys if key in path_config}
+    for value in values(path_config):
+        if not isinstance(value, str) or not value:
+            continue
+        for root in roots:
+            candidate = Path(value) if Path(value).is_absolute() else root / value
+            if candidate.exists():
+                _digest_path(candidate, h)
+                break
+    return h.hexdigest()[:16]
 
 
 # -- processor base classes --
@@ -225,10 +358,23 @@ def template_key_for_artifact(relative_path: str) -> str:
 # available to every prompt regardless of which stages ran before it
 ALWAYS_PROVIDED: tuple[str, ...] = ("sample_name", "sample_path", "history", "config")
 
+# keys the engine itself reads out of a stage's `config` block. a processor is
+# not expected to declare them, and is not warned about them.
+ENGINE_CONFIG_KEYS: frozenset[str] = frozenset({"limit"})
+
 
 class Processor(ABC):
     # which lane of the pipeline this processor operates in
     processor_type: ProcessorType
+
+    # None conservatively fingerprints all global configuration. Extensions
+    # may name just the keys they read, or () when their inputs are entirely
+    # stage configuration and upstream results.
+    cache_global_keys: ClassVar[tuple[str, ...] | None] = None
+    requires_full_cohort: ClassVar[bool] = False
+    # None follows every config path; () is useful for output/cache/tool
+    # directories. Such processors declare their actual files via cache_files.
+    cache_path_keys: ClassVar[tuple[str, ...] | None] = None
 
     # subclass with a @dataclass to declare accepted config fields.
     # the engine instantiates it from the YAML config dict at pipeline load time.
@@ -267,9 +413,21 @@ class Processor(ABC):
         self.global_config: GlobalConfig = {}
 
     def _parse_config(self, raw: dict) -> Any:
+        raw = raw or {}
         if self.Config is None:
             return raw
         valid = {f.name for f in fields(self.Config)}
+        unknown = sorted(set(raw) - valid - ENGINE_CONFIG_KEYS)
+        if unknown:
+            # a key this processor does not read does nothing at all, which is
+            # indistinguishable from it working until the run ends up wrong. a
+            # misspelling is the usual cause, so the accepted names go with it.
+            self.log.warning(
+                "config key(s) %s are not read by %s and were ignored - it accepts: %s",
+                ", ".join(unknown),
+                type(self).__name__,
+                ", ".join(sorted(valid)) or "no config fields",
+            )
         filtered = {k: v for k, v in raw.items() if k in valid}
         return self.Config(**filtered)
 
@@ -281,6 +439,10 @@ class Processor(ABC):
         #   - check that a required config field is not empty
         #   - check that an external binary exists on disk
         #   - check that a rules directory contains .yaml files
+        return []
+
+    def cache_files(self, pipeline_dir: Path) -> list[Path]:
+        """Additional inputs, such as imported templates or analysis scripts."""
         return []
 
     @property

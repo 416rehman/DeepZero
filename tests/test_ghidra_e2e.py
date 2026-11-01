@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -47,7 +48,7 @@ def test_physical_ghidra_pipeline_run(tmp_path):
 
     # Pull a real native binary to avoid JVM P-Code Analysis corruption blocks!
     if os.name == "nt":
-        sys_driver = Path(r"C:\Windows\System32\drivers\null.sys")
+        sys_driver = Path(sys.executable)
     else:
         sys_driver = Path("/bin/ls")
 

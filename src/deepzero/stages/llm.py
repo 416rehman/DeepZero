@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-import logging
-import os
 from pathlib import Path
 from typing import Any
 
 import jinja2
+from jinja2 import meta
 
 from deepzero.engine.stage import (
     MapProcessor,
@@ -15,17 +14,117 @@ from deepzero.engine.stage import (
     ProcessorResult,
     template_key_for_artifact,
 )
+from deepzero.engine.state import atomic_replace
 
-_log = logging.getLogger("deepzero.stages.llm")
+# which artifacts beside a sample a prompt can read as text. A file whose
+# extension is not here is invisible to the prompt however relevant it is, and
+# nothing reports that, so the default covers the languages a source pipeline is
+# likely to stage rather than only the C a decompiler writes. A pipeline
+# producing something else entirely names its own set in `text_extensions`.
+# .json is handled separately: it is parsed rather than pasted in.
+DEFAULT_TEXT_EXTENSIONS: tuple[str, ...] = (
+    ".c",
+    ".cc",
+    ".cfg",
+    ".cjs",
+    ".conf",
+    ".cpp",
+    ".cs",
+    ".csv",
+    ".css",
+    ".cxx",
+    ".diff",
+    ".go",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".htm",
+    ".html",
+    ".hxx",
+    ".ini",
+    ".java",
+    ".js",
+    ".jsx",
+    ".kt",
+    ".log",
+    ".lua",
+    ".md",
+    ".mjs",
+    ".patch",
+    ".php",
+    ".pl",
+    ".ps1",
+    ".py",
+    ".rb",
+    ".rs",
+    ".scala",
+    ".sh",
+    ".sql",
+    ".swift",
+    ".toml",
+    ".ts",
+    ".tsv",
+    ".tsx",
+    ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
+)
 
 
 class GenericLLM(MapProcessor):
+    cache_global_keys = ("model", "knowledge")
     description = "generic LLM assessment - sends context to an LLM via a jinja2 prompt template"
 
     # the response is also written as an artifact, but its name comes from this
     # stage's own `output_file` config, so it cannot be declared here. A prompt
     # in a later stage reaches it by that filename with the dot folded in.
     provides = ("llm_output_file", "classification")
+
+    def cache_files(self, pipeline_dir: Path) -> list[Path]:
+        """Include the local templates that can contribute to the rendered prompt."""
+        ctx = ProcessorContext(pipeline_dir=pipeline_dir, global_config={}, llm=None)
+        prompt_path = self._resolve_template(str(self.config.get("prompt", "")), ctx)
+        if prompt_path is None:
+            return []
+
+        # Jinja resolves every include/import against the main template's loader,
+        # including references found inside another template in a subdirectory.
+        loader = jinja2.FileSystemLoader(str(prompt_path.parent))
+        # This environment only parses template dependencies; it never renders.
+        env = jinja2.Environment(loader=loader, autoescape=False)  # nosec B701
+        pending = [prompt_path.resolve()]
+        dependencies: set[Path] = set()
+        while pending:
+            path = pending.pop()
+            if path in dependencies:
+                continue
+            dependencies.add(path)
+            try:
+                parsed = env.parse(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, jinja2.TemplateSyntaxError):
+                # Validation/rendering reports invalid templates. Their contents
+                # still participate in the fingerprint so a repair invalidates it.
+                continue
+            for reference in meta.find_referenced_templates(parsed):
+                if reference is None:
+                    # A runtime expression can select any file below the loader
+                    # root, so all of them are potential prompt dependencies.
+                    dependencies.update(
+                        candidate.resolve()
+                        for candidate in prompt_path.parent.rglob("*")
+                        if "__pycache__" not in candidate.relative_to(prompt_path.parent).parts
+                        and candidate.is_file()
+                    )
+                    continue
+                try:
+                    _, filename, _ = loader.get_source(env, reference)
+                except (jinja2.TemplateNotFound, OSError, UnicodeError):
+                    continue
+                if filename:
+                    pending.append(Path(filename).resolve())
+
+        return sorted(dependencies)
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         errors = []
@@ -59,7 +158,11 @@ class GenericLLM(MapProcessor):
 
         output_file = self.config.get("output_file", "assessment.md")
         output_path = entry.sample_dir / output_file
-        if output_path.exists():
+        # an answer already on disk is reused, but only while it is still an answer
+        # to this question. An edited prompt or a changed config moves the stage's
+        # input digest, and reading the old file back would record a reply to the
+        # previous prompt as though the new one had been asked.
+        if output_path.exists() and entry.cache_is_valid:
             self.log.info("output already cached: %s", output_path.name)
             content = output_path.read_text(encoding="utf-8", errors="replace")
             return self._make_result(content, output_file)
@@ -77,9 +180,12 @@ class GenericLLM(MapProcessor):
             backoff_decay=backoff_config.get("decay", 0.7),
         )
 
+        # the model has already been paid for by this point, so an output_file
+        # naming a subdirectory must not be what loses the response
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = output_path.with_suffix(".tmp")
         tmp.write_text(response, encoding="utf-8")
-        os.replace(tmp, output_path)
+        atomic_replace(tmp, output_path)
         self.log.info("response written to %s (%d chars)", output_file, len(response))
 
         return self._make_result(response, output_file)
@@ -91,7 +197,9 @@ class GenericLLM(MapProcessor):
         if classify_by:
             import re
 
-            match = re.search(classify_by, content[:200], re.IGNORECASE)
+            # Ignore verdict words quoted later in the model's reasoning.
+            window = int(self.config.get("classify_window", 200) or 200)
+            match = re.search(classify_by, content[:window], re.IGNORECASE)
             if match:
                 verdict_text = match.group(0).strip("[]").lower()
                 data["classification"] = verdict_text
@@ -110,11 +218,13 @@ class GenericLLM(MapProcessor):
 
             # a prompt that names a value the pipeline never produced would
             # otherwise render as empty and the model would be asked to judge
-            # nothing, so an unknown name is an error naming what is available
-            env = jinja2.Environment(
+            # nothing, so an unknown name is an error naming what is available.
+            #
+            # HTML escaping would alter the source sent to the model.
+            env = jinja2.Environment(  # nosec B701
                 loader=jinja2.FileSystemLoader(str(template_path.parent)),
                 undefined=jinja2.StrictUndefined,
-                autoescape=jinja2.select_autoescape(),
+                autoescape=False,
             )
             template = env.from_string(raw)
             try:
@@ -128,19 +238,37 @@ class GenericLLM(MapProcessor):
 
         return prompt_ref
 
+    def _text_extensions(self) -> set[str]:
+        configured = self.config.get("text_extensions")
+        if not configured:
+            return set(DEFAULT_TEXT_EXTENSIONS)
+        if isinstance(configured, str):
+            configured = [configured]
+        return {e if str(e).startswith(".") else f".{e}" for e in (str(x) for x in configured)}
+
     def _build_template_vars(self, ctx: ProcessorContext, entry: ProcessorEntry) -> dict[str, Any]:
+        # read once: the history is loaded from disk on each access, so asking
+        # for it twice reads every earlier stage's output twice per sample
+        history = entry.history
+
         template_vars: dict[str, Any] = {
-            "sample_name": entry.upstream_data("discover", "filename", entry.source_path.name),
+            # what the ingest named this sample, which is also the name the
+            # report gives it. Deriving it from source_path instead would name a
+            # repository after the directory its checkout happens to sit in.
+            "sample_name": entry.filename or entry.source_path.name,
             "sample_path": str(entry.source_path),
-            "history": {name: output.data for name, output in entry.history.items()},
+            "history": {name: output.data for name, output in history.items()},
             "config": self.config,
         }
 
         # flatten history data for backward compatibility with existing templates
-        for output in entry.history.values():
+        for output in history.values():
             for k, v in output.data.items():
                 if k not in template_vars:
                     template_vars[k] = v
+
+        char_budget = self.config.get("max_context_tokens", 900_000) * 4
+        text_extensions = self._text_extensions()
 
         # scan sample_dir for artifact files
         for f in entry.sample_dir.rglob("*"):
@@ -148,16 +276,14 @@ class GenericLLM(MapProcessor):
                 continue
             rel = f.relative_to(entry.sample_dir)
             key = template_key_for_artifact(rel)
+            suffix = f.suffix.lower()
 
-            max_tokens = self.config.get("max_context_tokens", 900_000)
-            char_budget = max_tokens * 4
-
-            if f.suffix == ".json":
+            if suffix == ".json":
                 # an artifact far larger than the whole prompt budget cannot be
                 # used, and parsing it costs time and memory on every sample
                 try:
                     if f.stat().st_size > char_budget:
-                        _log.warning(
+                        self.log.warning(
                             "skipping %s: %d bytes exceeds the context budget of %d",
                             f.name,
                             f.stat().st_size,
@@ -166,8 +292,8 @@ class GenericLLM(MapProcessor):
                         continue
                     template_vars[key] = json.loads(f.read_text(encoding="utf-8"))
                 except (json.JSONDecodeError, OSError) as exc:
-                    _log.debug("skipping unreadable json artifact %s: %s", f.name, exc)
-            elif f.suffix in (".c", ".h", ".txt", ".md", ".py", ".yaml", ".yml"):
+                    self.log.debug("skipping unreadable json artifact %s: %s", f.name, exc)
+            elif suffix in text_extensions:
                 try:
                     content = f.read_text(encoding="utf-8", errors="replace")
                     if len(content) > char_budget:
@@ -177,7 +303,7 @@ class GenericLLM(MapProcessor):
                         )
                     template_vars[key] = content
                 except OSError as exc:
-                    _log.debug("skipping unreadable text artifact %s: %s", f.name, exc)
+                    self.log.debug("skipping unreadable text artifact %s: %s", f.name, exc)
 
         return template_vars
 

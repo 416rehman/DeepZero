@@ -6,20 +6,7 @@ order: 1
 
 ## Быстрый старт
 
-DeepZero требует целевого корпуса файлов для анализа и [конфигурации конвейера]({{ '/ru/reference/pipeline-yaml.html' | relative_url }}), детализирующей их обработку. Мы предоставляем [полный пример конвейера]({{ '/ru/reference/included-pipeline.html' | relative_url }}), предназначенный для поиска новых уязвимых драйверов (BYOVD) в необработанных бинарных наборах данных, путем фильтрации известных хешей с использованием проекта [LOLDrivers](https://www.loldrivers.io/).
-
-### Try the local demo first
-
-First clone this repository and install its base package using the installation instructions below. Then run the included harmless text samples from the cloned repository root:
-
-```sh
-deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml
-deepzero status -p pipelines/demo/pipeline.yaml
-deepzero report -p pipelines/demo/pipeline.yaml --open
-```
-
-The demo needs no API keys, external tools, or driver corpus. It discovers two files, keeps `hello.txt`, filters `tiny.txt` by size, and writes an HTML report. It demonstrates orchestration and saved state, not vulnerability detection. Repeating the run command resumes saved results. See the [demo walkthrough](https://github.com/416rehman/DeepZero/tree/main/pipelines/demo) for details.
-
+DeepZero требует целевого корпуса файлов для анализа и [конфигурации конвейера]({{ '/ru/reference/pipeline-yaml.html' | relative_url }}), детализирующей их обработку. В комплекте идут два [полных конвейера анализа безопасности]({{ '/ru/reference/included-pipeline.html' | relative_url }}): один ищет новых кандидатов BYOVD (Bring Your Own Vulnerable Driver) в необработанных бинарных наборах данных (например, в корпусе Snappy Driver Installer), явно отфильтровывая известные хеши с помощью проекта [LOLDrivers](https://www.loldrivers.io/), второй проводит аудит исходного кода в git-репозиториях.
 
 ### 1. Установка
 
@@ -28,10 +15,41 @@ DeepZero требует **Python 3.11+**.
 ```bash
 git clone https://github.com/416rehman/DeepZero.git
 cd DeepZero
-pip install -e .
+python -m pip install -e .
 ```
 
-### 2. Настройка среды
+Базовой установки достаточно для демонстрации ниже. Два конвейера анализа безопасности требуют дополнительной настройки из шага 3.
+
+### 2. Попробуйте локальную демонстрацию
+
+После установки базового пакета запустите безопасные текстовые примеры из корня клонированного репозитория:
+
+```sh
+deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml
+deepzero status -p pipelines/demo/pipeline.yaml
+deepzero report -p pipelines/demo/pipeline.yaml --open
+```
+
+Демонстрация не требует API-ключей, внешних инструментов или корпуса драйверов. Она обнаруживает два файла, сохраняет `hello.txt`, отфильтровывает `tiny.txt` по размеру и создает HTML-отчет. Это пример оркестрации и сохранения состояния, а не поиска уязвимостей. Повтор команды возобновляет сохраненные результаты. Подробности — в [описании демонстрации](https://github.com/416rehman/DeepZero/tree/main/pipelines/demo).
+
+### 3. Настройка интеграций анализа безопасности
+
+```sh
+python -m pip install -e ".[full]"
+```
+
+Выполняйте команды из клонированного репозитория. Набор `full` включает LIEF для PE и LiteLLM для моделей с API. Только движок: `python -m pip install -e .`.
+
+Установите внешние инструменты в той же среде:
+
+- Оба конвейера анализа безопасности: **Semgrep** в PATH (`python -m pip install semgrep`) и бэкенд LLM.
+- Аудит исходников: **Git** в PATH.
+- Драйверы: **Ghidra**, **JDK, совместимый с этой версией**, и `GHIDRA_INSTALL_DIR` в `.env`, указывающий на вашу установку.
+- LLM по умолчанию: установите CLI **Claude Code** и войдите в собственную учетную запись. Используется модель CLI по умолчанию, без ключа API. Ниже можно настроить модель с API.
+
+При использовании WSL устанавливайте и запускайте инструменты, Python и DeepZero внутри этой среды.
+
+#### Настройка среды
 
 Если вы интегрируете этапы ИИ-анализа, настройте API-ключи, создав файл `.env`:
 
@@ -39,14 +57,63 @@ pip install -e .
 cp .env.example .env
 ```
 
-### 3. Выполнение конвейера
+В PowerShell: `Copy-Item .env.example .env`. Задайте `DEEPZERO_MODEL` в `.env` для обоих конвейеров анализа безопасности или передайте `-m` для одного запуска. Например, `DEEPZERO_MODEL=openai/gpt-4o` требует вашего `OPENAI_API_KEY`.
+
+Оба конвейера анализа безопасности объявляют модель `claude-code`, которая обращается к CLI Claude Code, где вы уже вошли в систему, и не требует ключа API вовсе. Вместо нее подойдет любая [модель LiteLLM]({{ '/ru/reference/pipeline-yaml.html' | relative_url }}), заданная полем `model` конвейера или флагом `-m` в командной строке, и именно для нее нужны ключи API выше.
+
+### 4. Проверка перед долгим запуском
+
+Такие запуски идут долго. Проверка ниже стоит дешево, отвечает за секунды, а не за часы, и ничего не запускает:
+
+```bash
+# разрешает каждый процессор, проверяет его предварительные требования и все промпты
+deepzero validate pipelines/loldrivers/pipeline.yaml
+```
+
+Команда выходит с кодом 1, когда сообщает об ошибке, поэтому годится как хук коммита или шаг CI, а не только как то, что читают глазами.
+
+### 5. Выполнение конвейера
 
 Запустите встроенный конвейер LOLDrivers на целевом пути:
 
 ```bash
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml
+```
+
+Замените `./drivers` путем к своему корпусу драйверов или создайте `repos.txt` с одним URL репозитория на строку. Эти примеры входных данных не входят в репозиторий.
+
+Либо аудит исходного кода, указав манифест репозиториев или каталог с уже склонированными копиями:
+
+```bash
+deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
+```
+
+Любая из этих команд принимает `--preflight`, который делает один крошечный вызов, чтобы убедиться, что бэкенд LLM действительно авторизован. Он останавливается за секунды, если бэкенд не готов, а иначе запуск идет дальше как обычно, поэтому это флаг у запуска, который вы и так собирались начать, а не отдельная проверка, которую набирают саму по себе. Иначе об этом можно узнать через несколько часов, на первом же этапе оценки:
+
+```bash
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --preflight
 ```
 
 <div class="callout">
     <p><strong>Примечание:</strong> DeepZero безопасно <a href="{{ '/ru/overview/architecture.html' | relative_url }}">распараллеливает выполнение</a> и кэширует промежуточные результаты. Для корректной остановки отправьте SIGINT (<code>Ctrl+C</code>). Последующие запуски с идентичными параметрами мгновенно возобновятся из <a href="{{ '/ru/system/state-persistence.html' | relative_url }}">сохраненного состояния на диске</a>.</p>
 </div>
+
+У каждого корпуса свой рабочий каталог, поэтому если направить тот же конвейер на вторую цель, начнется второй запуск, а не возобновление в результатах первого. Оба остаются возобновляемыми.
+
+### 6. Чтение результатов
+
+Запуск печатает URL отчета до своего первого этапа и поддерживает этот отчет в актуальном состоянии по мере появления результатов, так что его можно открыть и наблюдать за ходом работы. Чтобы собрать отчет заново в любой момент, в том числе для еще идущего запуска:
+
+```bash
+deepzero report -p loldrivers --open
+```
+
+Если назвать только конвейер, он разрешается в самый недавний его корпус и сообщает, какие еще корпуса этот конвейер видел, потому что самый свежий запуск не всегда тот, о котором спрашивают. Чтобы увидеть вместо этого все запуски под `work`, каким бы конвейером и корпусом они ни были получены, начиная с самых свежих:
+
+```bash
+deepzero runs
+```
+
+Команда перечисляет по каждому запуску его конвейер, корпус, статус и число образцов, а также печатает строку `deepzero report -w <каталог>` для просмотра одного из них. `deepzero report` без флагов отвечает на тот же вопрос напрямую: единственный запуск берется сам, а несколько превращаются в список для выбора.
+
+Отчет целиком выводится из состояния запуска, поэтому его можно удалить и пересобрать, а то, как он называет найденное, [объявляет сам конвейер]({{ '/ru/reference/pipeline-yaml.html' | relative_url }}).

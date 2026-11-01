@@ -12,11 +12,26 @@ What a pipeline can optionally declare in its yaml to shape the output:
     report:
       title: GitHub source bug hunt
       entity: repository          # what one sample is called in the ui
+      entity_plural: repositories # only needed when adding an s is wrong
+      target_label: repository list # names the run's target, shown beside it
       classification_key: verdict # stage data key holding the conclusion
-      vulnerable_when: [vulnerable, exploitable]
-      safe_when: [safe, clean]
+      positive_when: [vulnerable, exploitable]   # also spelled vulnerable_when
+      negative_when: [safe, clean]               # also spelled safe_when
       columns: [scan.finding_count, discover.stars]
       findings_files: [findings.json, sast.json]
+      lexicon:                    # what this run calls the outcomes below
+        discipline: source review
+        positive: Exploitable
+        positive_phrase: found to be exploitable
+
+`target_label` matters because the default, "corpus", assumes a pile of files on
+disk. A pipeline scanning a live web application wants "scope", one walking a
+git history wants "repository", and calling either a corpus reads as a mistake.
+
+`lexicon` matters for the same reason one step further in: the outcomes are the
+same for every run, but "Vulnerable" is the wrong word for a licence audit or a
+code-quality sweep. Every key of `Lexicon` below can be declared, and each one
+left out keeps its vulnerability-research default.
 
 Everything has a default, so a pipeline that declares nothing still gets a
 useful report.
@@ -28,10 +43,11 @@ survive a corpus of 100k artifacts:
     items/<id>.html     one page per sample worth reading, links to artifacts
     inventory.csv       every sample, one row - opens in a spreadsheet
     findings.jsonl      every finding, one json object per line
-    report.json         summary totals only
+    report.json         summary totals, plus the vocabulary they are named in
 
 Nothing is dropped silently: when a listing is capped the page says so and
-points at the csv holding the rest.
+points at the csv holding the rest, which carries the way in to every page
+that was written.
 """
 
 from __future__ import annotations
@@ -41,7 +57,7 @@ import html
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -61,31 +77,77 @@ BUCKET_FAILED = "failed"
 BUCKET_UNASSESSED = "unassessed"
 BUCKET_TIMED_OUT = "timed_out"
 
-_BUCKET_LABELS = {
-    BUCKET_VULNERABLE: "Vulnerable",
-    BUCKET_SUSPICIOUS: "Needs assessment",
-    BUCKET_FAILED: "Errored",
-    BUCKET_TIMED_OUT: "Ran out of time",
-    # these were assessed - what is missing is a verdict the pipeline recognises
-    BUCKET_UNASSESSED: "Unclear verdict",
-    BUCKET_FILTERED: "Filtered out",
-    BUCKET_CLEAN: "Clear",
-}
-_BUCKET_HELP = {
-    BUCKET_VULNERABLE: "an assessment stage concluded these are vulnerable",
-    BUCKET_SUSPICIOUS: "findings exist but no assessment confirmed them",
-    BUCKET_FAILED: "a stage errored, so these were never fully analysed",
-    BUCKET_TIMED_OUT: "a stage hit its time budget, so these were never finished",
-    BUCKET_UNASSESSED: "assessed but the verdict could not be classified",
-    BUCKET_FILTERED: "a stage excluded these, so the later stages never saw them",
-    BUCKET_CLEAN: "analysed all the way through and nothing was flagged",
-}
+
+@dataclass(frozen=True)
+class Lexicon:
+    """Pipeline vocabulary for shared outcome buckets."""
+
+    # the kind of work, shown beside the product name in the header
+    discipline: str = "vulnerability research"
+    # what an assessment confirming the thing you are looking for is called
+    positive: str = "Vulnerable"
+    positive_help: str = "an assessment stage concluded these are vulnerable"
+    # completes "12 repositories <positive_phrase>."
+    positive_phrase: str = "assessed as vulnerable"
+    # the headline when the run found nothing to act on
+    nothing_positive: str = "Nothing was confirmed vulnerable"
+    # findings exist, no assessment has ruled on them
+    unconfirmed: str = "Needs assessment"
+    # analysed all the way through, and nothing survived that analysis: either
+    # nothing was flagged, or an assessment ruled out what was
+    negative: str = "Clear"
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> Lexicon:
+        # Invalid presentation config must not prevent reading completed results.
+        if not isinstance(raw, dict):
+            return cls()
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: str(v) for k, v in raw.items() if k in known and v})
+
+
+def bucket_labels(lex: Lexicon) -> dict[str, str]:
+    return {
+        BUCKET_VULNERABLE: lex.positive,
+        BUCKET_SUSPICIOUS: lex.unconfirmed,
+        BUCKET_FAILED: "Errored",
+        BUCKET_TIMED_OUT: "Ran out of time",
+        # these were assessed - what is missing is a verdict the pipeline recognises
+        BUCKET_UNASSESSED: "Unclear verdict",
+        BUCKET_FILTERED: "Filtered out",
+        BUCKET_CLEAN: lex.negative,
+    }
+
+
+def bucket_help(lex: Lexicon) -> dict[str, str]:
+    return {
+        BUCKET_VULNERABLE: lex.positive_help,
+        BUCKET_SUSPICIOUS: "findings exist but no assessment confirmed them",
+        BUCKET_FAILED: "a stage errored, so these were never fully analysed",
+        BUCKET_TIMED_OUT: "a stage hit its time budget, so these were never finished",
+        BUCKET_UNASSESSED: "assessed but the verdict could not be classified",
+        BUCKET_FILTERED: "a stage excluded these, so the later stages never saw them",
+        BUCKET_CLEAN: "analysed all the way through with nothing left standing",
+    }
+
 
 # how each outcome is decided, shown when the label is hovered
+def bucket_rule(lex: Lexicon) -> dict[str, str]:
+    return dict(
+        _BUCKET_RULE,
+        **{
+            BUCKET_VULNERABLE: (
+                f"An assessment stage recorded a verdict this pipeline counts as "
+                f"{lex.positive.lower()}. Work through these first."
+            ),
+        },
+    )
+
+
 _BUCKET_RULE = {
     BUCKET_VULNERABLE: (
-        "An assessment stage recorded a verdict matching one of this pipeline's "
-        "vulnerable_when values. Work through these first."
+        "An assessment stage recorded a verdict this pipeline counts as a "
+        "positive result. Work through these first."
     ),
     BUCKET_SUSPICIOUS: (
         "A scan produced findings, but no assessment stage has confirmed or "
@@ -102,16 +164,18 @@ _BUCKET_RULE = {
         "largest ones. Rerun with --retry-timeouts to give them longer."
     ),
     BUCKET_UNASSESSED: (
-        "An assessment ran and produced text, but its verdict did not match "
-        "either the vulnerable_when or safe_when values this pipeline declares."
+        "An assessment ran and produced text, but its verdict matched neither "
+        "the positive nor the negative values this pipeline declares."
     ),
     BUCKET_FILTERED: (
         "A stage excluded these before the analysis finished, so the later "
         "stages never saw them. This is not a judgement about the item."
     ),
     BUCKET_CLEAN: (
-        "These went through every stage, produced no findings, and were not "
-        "flagged by an assessment."
+        "These went through every stage and came out with nothing to act on: "
+        "either no finding was raised, or an assessment considered the ones "
+        "that were and ruled them out. A count of findings on one of these is "
+        "not a contradiction, it is the second case."
     ),
 }
 
@@ -120,20 +184,27 @@ _INTERESTING_HINTS = ("count", "score", "severity", "total", "hits", "size", "st
 
 # What a pipeline concludes and what a person has checked are different claims.
 # A stage records the first; only the reader can record the second, so the report
-# carries marks they make while reading it. Deliberately generic: whether the
-# outstanding work is reproducing a crash, proving a precondition or reading a
-# diff is the pipeline's business, and this only needs somewhere to put it.
+# carries marks they make while reading it.
+#
+# Only conclusive reviews become marks; unsettled findings remain unreviewed.
 MARK_CONFIRMED = "confirmed"
 MARK_REFUTED = "refuted"
-MARK_OUTSTANDING = "outstanding"
-# checked and it holds, checked and it does not, and looked at but not settled.
-# Refuted is worth its own state rather than being folded into outstanding: it
-# is a finished piece of work with a definite answer, and a result that did not
-# hold up should never look like one nobody has examined.
+# not a mark but the absence of one, which the browser writes onto every row
+# nobody has ruled on so that it can be filtered and counted like the others
+MARK_UNREVIEWED = "unmarked"
+# Refuted results have been reviewed; they must not look unexamined.
 _MARK_LABELS = {
     MARK_CONFIRMED: "Confirmed",
     MARK_REFUTED: "Refuted",
-    MARK_OUTSTANDING: "Outstanding",
+}
+# Share labels across controls, filters, rows, and totals.
+_REVIEW_LABELS = {**_MARK_LABELS, MARK_UNREVIEWED: "Unreviewed"}
+# what each state claims, worded to serve both the control that records it and
+# the filter that narrows to it
+_MARK_HELP = {
+    MARK_CONFIRMED: "checked, and it holds",
+    MARK_REFUTED: "checked, and it did not hold up",
+    MARK_UNREVIEWED: "no review has been recorded against these yet",
 }
 _MARKS_FILE = "marks.json"
 
@@ -159,12 +230,26 @@ def _load_marks(out_dir: Path) -> dict[str, dict[str, str]]:
     return marks
 
 
+# the default wording, kept as a module constant so anything reading it without
+# a config in hand still sees what an undeclared pipeline renders
+_BUCKET_LABELS = bucket_labels(Lexicon())
+
+
 @dataclass
 class ReportConfig:
     """optional per-pipeline presentation, all defaulted."""
 
     title: str = ""
     entity: str = "sample"
+    # only needed where appending an s is wrong, e.g. repository -> repositories
+    entity_plural: str = ""
+    # what the run was pointed at. "corpus" suits a directory of files; a web
+    # assessment wants "scope", a repository sweep wants "repository list". Name
+    # the thing the header actually shows beside it, which is the run's target:
+    # "organisation" reads well and then labels a manifest path that can list
+    # repositories belonging to several of them.
+    target_label: str = "corpus"
+    lexicon: Lexicon = field(default_factory=Lexicon)
     classification_key: str = "classification"
     vulnerable_when: tuple[str, ...] = ("vulnerab", "exploitab", "confirmed")
     safe_when: tuple[str, ...] = ("safe", "not vulnerab", "benign", "clean")
@@ -186,12 +271,24 @@ class ReportConfig:
         return cls(
             title=str(raw.get("title", "") or ""),
             entity=str(raw.get("entity", "sample") or "sample"),
+            entity_plural=str(raw.get("entity_plural", "") or ""),
+            target_label=str(raw.get("target_label", "corpus") or "corpus"),
+            lexicon=Lexicon.from_dict(raw.get("lexicon")),
             classification_key=str(raw.get("classification_key", "classification")),
-            vulnerable_when=tuple(s.lower() for s in tup("vulnerable_when", cls.vulnerable_when)),
-            safe_when=tuple(s.lower() for s in tup("safe_when", cls.safe_when)),
+            vulnerable_when=tuple(
+                s.lower() for s in tup("positive_when", tup("vulnerable_when", cls.vulnerable_when))
+            ),
+            safe_when=tuple(
+                s.lower() for s in tup("negative_when", tup("safe_when", cls.safe_when))
+            ),
             columns=tup("columns", ()),
             findings_files=tup("findings_files", cls.findings_files),
         )
+
+    @property
+    def plural(self) -> str:
+        """what many samples are called, for counts like "851 drivers"."""
+        return self.entity_plural or f"{self.entity}s"
 
 
 @dataclass
@@ -202,7 +299,6 @@ class ItemReport:
     name: str = ""
     source_path: str = ""
     sha256: str = ""
-    status: str = ""
     classification: str = ""
     data: dict[str, Any] = field(default_factory=dict)  # "stage.key" -> value
     stages: dict[str, str] = field(default_factory=dict)
@@ -210,6 +306,10 @@ class ItemReport:
     skips: dict[str, str] = field(default_factory=dict)
     artifacts: dict[str, str] = field(default_factory=dict)  # label -> relative path
     texts: dict[str, str] = field(default_factory=dict)  # label -> inline text
+    # whether a stage set out to judge this sample, which is not the same as one
+    # having written text beside it. Any stage can leave a log; counting that as
+    # an assessment reported samples as judged that nothing had looked at.
+    judged: bool = False
     findings: list[dict[str, Any]] = field(default_factory=list)
     severity_counts: dict[str, int] = field(default_factory=dict)
     rule_hits: dict[str, int] = field(default_factory=dict)
@@ -256,13 +356,42 @@ def _read_json(path: Path) -> Any | None:
         return None
 
 
+def _conclusion_panel(run: dict[str, Any]) -> str:
+    """Show a corpus-wide conclusion above per-sample results."""
+    conclusion = run.get("conclusion") or {}
+    if not isinstance(conclusion, dict) or not conclusion:
+        return ""
+    headline = str(conclusion.get("headline") or conclusion.get("verdict") or "")
+    if not headline:
+        return ""
+    detail = str(conclusion.get("detail") or "")
+    stage = str(conclusion.get("stage") or "")
+    shown = {
+        k: v
+        for k, v in conclusion.items()
+        if k not in ("headline", "detail", "stage", "verdict") and v not in (None, "", [], {})
+    }
+    facts = "".join(
+        f"<div><div class='lbl'>{_esc(str(k))}</div><dd>{_esc(str(v))}</dd></div>"
+        for k, v in list(shown.items())[:6]
+    )
+    return (
+        "<section class='conclusion'>"
+        f"<div class='lbl'>what this run concluded{f' ({_esc(stage)})' if stage else ''}</div>"
+        f"<p class='head'>{_esc(headline)}</p>"
+        + (f"<p class='detail'>{_esc(detail)}</p>" if detail else "")
+        + (f"<dl class='plate'>{facts}</dl>" if facts else "")
+        + "</section>"
+    )
+
+
 def _normalize_finding(raw: Any) -> dict[str, Any] | None:
     """accept whatever shape a processor emits and pull out the common fields."""
     if not isinstance(raw, dict):
         return None
     sev = str(raw.get("severity") or raw.get("level") or raw.get("impact") or "MEDIUM").upper()
     rule = str(raw.get("rule_id") or raw.get("rule") or raw.get("check_id") or raw.get("id") or "")
-    return {
+    out = {
         "severity": sev,
         "rule_id": rule,
         "message": str(raw.get("message") or raw.get("title") or raw.get("description") or ""),
@@ -272,6 +401,27 @@ def _normalize_finding(raw: Any) -> dict[str, Any] | None:
         "line": raw.get("line_start") or raw.get("line") or raw.get("start_line") or "",
         "code": str(raw.get("matched_code") or raw.get("snippet") or raw.get("code") or ""),
     }
+
+    # a name for the thing itself, when the processor knows one. The same
+    # advisory across forty repositories, one root cause behind three thousand
+    # crashes, one taint path reached from two entry points: all of those are one
+    # finding seen many times, and without a key from the processor there is no
+    # way to tell them from many findings that merely look alike. Never derived
+    # here, because anything this module could derive would fold in the location
+    # and so never match across samples, which is the case it exists for.
+    key = raw.get("finding_id") or raw.get("key") or raw.get("fingerprint")
+    if key:
+        out["finding_id"] = str(key)
+
+    # where the evidence is a path rather than a point. A taint result is a
+    # source, a sink and the route between them, and collapsing that to one line
+    # number throws away the part that makes it judgeable.
+    for field_name in ("source", "sink", "trace", "evidence"):
+        val = raw.get(field_name)
+        if val not in (None, "", [], {}):
+            out[field_name] = val
+
+    return out
 
 
 _FINDING_FIELDS = frozenset(
@@ -285,6 +435,7 @@ _FINDING_FIELDS = frozenset(
         "rule_id",
         "rule",
         "check_id",
+        "finding_id",
     }
 )
 
@@ -311,13 +462,12 @@ def _classify(value: str, cfg: ReportConfig) -> str:
 def iter_items(work_dir: Path, cfg: ReportConfig) -> Iterator[ItemReport]:
     store = StateStore(work_dir)
     for state in store.list_samples():
-        sample_dir = store.sample_dir(state.sample_id)
+        sample_dir = store.sample_dir(state.sample_id, create=False)
         item = ItemReport(
             sample_id=state.sample_id,
             name=state.filename or state.sample_id,
             source_path=state.source_path,
             sha256=state.sha256,
-            status=str(getattr(state.verdict, "value", state.verdict)),
             sample_dir=str(sample_dir),
         )
 
@@ -352,8 +502,15 @@ def iter_items(work_dir: Path, cfg: ReportConfig) -> Iterator[ItemReport]:
                 if key.startswith("__"):
                     continue
                 item.data[f"{stage_name}.{key}"] = val
-                if key == cfg.classification_key and val:
-                    item.classification = str(val)
+                if key == cfg.classification_key:
+                    item.judged = True
+                    if val:
+                        item.classification = str(val)
+                # the built-in llm stage records this whenever it produced a
+                # response, so a judgement whose verdict went unrecognised is
+                # still visible as one that was attempted
+                if key.endswith("_output_file"):
+                    item.judged = True
 
             for label, rel in (getattr(output, "artifacts", None) or {}).items():
                 item.artifacts[label] = rel
@@ -401,7 +558,7 @@ def iter_items(work_dir: Path, cfg: ReportConfig) -> Iterator[ItemReport]:
                 bucket = BUCKET_FAILED
             elif item.findings:
                 bucket = BUCKET_SUSPICIOUS
-            elif item.classification or item.texts:
+            elif item.judged:
                 bucket = BUCKET_UNASSESSED
             elif item.filtered_at:
                 # never reached the later stages, so it was not judged clean
@@ -445,6 +602,10 @@ def collect(
     }
     buckets: dict[str, int] = {}
     rule_totals: dict[str, int] = {}
+    # finding identity -> the samples it was seen on, for the pipelines whose
+    # processors name their findings. Empty for the ones that do not, which is
+    # what keeps this out of their reports entirely.
+    finding_groups: dict[str, dict[str, Any]] = {}
     severity_totals: dict[str, int] = {}
     key_freq: dict[str, int] = {}
 
@@ -453,13 +614,29 @@ def collect(
         totals["total_findings"] += item.finding_count
         if item.findings:
             totals["with_findings"] += 1
-        if item.classification or item.texts:
+        if item.judged:
             totals["assessed"] += 1
         if item.errors:
             totals["errored"] += 1
         buckets[item.bucket] = buckets.get(item.bucket, 0) + 1
         for r, n in item.rule_hits.items():
             rule_totals[r] = rule_totals.get(r, 0) + n
+        for finding in item.findings:
+            fid = str(finding.get("finding_id") or "")
+            if not fid:
+                continue
+            group = finding_groups.setdefault(
+                fid,
+                {
+                    "finding_id": fid,
+                    "severity": finding.get("severity", ""),
+                    "message": finding.get("message", ""),
+                    "rule_id": finding.get("rule_id", ""),
+                    "samples": [],
+                },
+            )
+            if item.sample_id not in group["samples"]:
+                group["samples"].append(item.sample_id)
         for s, n in item.severity_counts.items():
             severity_totals[s] = severity_totals.get(s, 0) + n
         for k in item.data:
@@ -519,6 +696,9 @@ def collect(
             "started_at": str(getattr(run, "started_at", "") or ""),
             "heartbeat_at": str(getattr(run, "heartbeat_at", "") or ""),
             "stages": list(getattr(run, "stages", []) or []),
+            # a stage that saw every sample may have reached a finding about the
+            # corpus rather than about any one of them
+            "conclusion": dict(getattr(run, "conclusion", {}) or {}),
         }
         if run
         else {},
@@ -526,6 +706,9 @@ def collect(
         "buckets": buckets,
         "severity_totals": dict(sorted(severity_totals.items(), key=lambda kv: -kv[1])),
         "rule_totals": dict(sorted(rule_totals.items(), key=lambda kv: -kv[1])),
+        "finding_groups": sorted(
+            finding_groups.values(), key=lambda g: (-len(g["samples"]), g["finding_id"])
+        ),
         "detail_truncated": truncated,
         "items": kept,
         "rows": rows,
@@ -626,6 +809,13 @@ h1 .qty{color:var(--faint);font-weight:400;letter-spacing:-.02em}
 /* readout: the two outcomes worth acting on at full size, then the shape of
    the whole corpus, then the ones that only need acknowledging. */
 .readout{margin:var(--s5) 0 0;padding-top:var(--s5);border-top:1px solid var(--rule)}
+/* a conclusion about the corpus answers a different question from the counts
+   below it, so it is set apart rather than folded into them */
+.conclusion{margin:var(--s5) 0 0;padding:var(--s4) var(--s5);border-left:2px solid var(--review);
+  background:var(--review-wash)}
+.conclusion .head{margin:var(--s2) 0 0;font-size:1.15em;font-weight:600;color:var(--ink)}
+.conclusion .detail{margin:var(--s2) 0 0;color:var(--body)}
+.conclusion .plate{margin:var(--s4) 0 0}
 .ticks{display:flex;flex-wrap:wrap;gap:var(--s4) var(--s7)}
 .tick{cursor:help}
 .tick b{display:block;color:var(--ink);letter-spacing:-.04em;
@@ -660,7 +850,6 @@ h1 .qty{color:var(--faint);font-weight:400;letter-spacing:-.02em}
 .rest .ok i{background:var(--ok)}
 .rest .confirmed i{background:var(--ok)}
 .rest .refuted i{background:var(--positive)}
-.rest .outstanding i{background:var(--warn)}
 .rest .unmarked i{background:var(--inert)}
 .rest:empty{display:none}
 .rest b{color:var(--body);font-weight:600;margin-right:.38em}
@@ -736,7 +925,6 @@ input[type=search]::placeholder{color:var(--faint)}
 .chipf.mk i{width:6px;height:6px;border-radius:50%;background:var(--inert);flex:none}
 .chipf.mk.confirmed i{background:var(--ok)}
 .chipf.mk.refuted i{background:var(--positive)}
-.chipf.mk.outstanding i{background:var(--warn)}
 .chipf.mk[aria-pressed="true"]{
   background:var(--plate);border-color:var(--rule-hard);color:var(--ink)
 }
@@ -810,7 +998,6 @@ td.rev{width:1%;white-space:nowrap;text-align:right}
   color:var(--faint);white-space:nowrap}
 .mark.confirmed{color:var(--ok)}
 .mark.refuted{color:var(--positive)}
-.mark.outstanding{color:var(--warn)}
 .mark .note{display:block;margin-top:var(--s1);font:400 11px/1.4 var(--mono);
   letter-spacing:0;text-transform:none;color:var(--faint);max-width:34ch;
   white-space:normal;text-align:right}
@@ -828,14 +1015,13 @@ td.rev{width:1%;white-space:nowrap;text-align:right}
 .review button[aria-pressed="true"]{border-color:currentColor;color:var(--ink)}
 .review button.confirmed[aria-pressed="true"]{color:var(--ok)}
 .review button.refuted[aria-pressed="true"]{color:var(--positive)}
-.review button.outstanding[aria-pressed="true"]{color:var(--warn)}
 .review textarea{
   display:none;width:100%;margin-top:var(--s3);background:var(--plate);
   border:1px solid var(--rule-hard);color:var(--ink);padding:var(--s3);
   font:400 12.5px/1.5 var(--mono);resize:vertical;min-height:62px
 }
 .review textarea:focus{outline:0;border-color:var(--review);box-shadow:0 0 0 3px var(--review-wash)}
-.review.outstanding textarea,.review.refuted textarea{display:block}
+.review.confirmed textarea,.review.refuted textarea{display:block}
 .review .saved{margin:var(--s3) 0 0;font:400 11.5px/1 var(--mono);color:var(--faint)}
 
 /* specimen fingerprint ---------------------------------------------------- */
@@ -990,6 +1176,11 @@ _JS = """
      Held in the browser because the report is a file, and exportable so they
      can be saved next to it and stop being one person's private notes. */
   var MK = 'dz:marks:' + (document.body.dataset.corpus || location.pathname);
+  /* the page carries the wording for every review state, so a state is never
+     named one thing here and another where the html was written */
+  var LABELS = {};
+  try{ LABELS = JSON.parse(document.getElementById('review-labels').textContent) }catch(e){}
+  function label(state){ return LABELS[state] || state }
   function loadMarks(){
     var baked = {};
     try{ baked = JSON.parse(document.getElementById('baked-marks').textContent) }catch(e){}
@@ -1014,12 +1205,14 @@ _JS = """
   document.querySelectorAll('tr[data-sid]').forEach(function(row){
     var m = marks[row.dataset.sid];
     row.dataset.mark = m ? m.state : 'unmarked';
-    var cell = row.querySelector('.rev');
+    // qualified by the element: an outcome badge in this same row also carries
+    // .rev, and it sits ahead of the review cell in document order
+    var cell = row.querySelector('td.rev');
     if(!cell || !m) return;
     var note = m.note ? "<span class='note'>" + m.note.replace(/[<&]/g, function(c){
       return c === '<' ? '&lt;' : '&amp;';
     }) + "</span>" : '';
-    cell.innerHTML = "<span class='mark " + m.state + "'>" + m.state + note + "</span>";
+    cell.innerHTML = "<span class='mark " + m.state + "'>" + label(m.state) + note + "</span>";
   });
   /* what has actually been checked, counted here rather than at generation
      time because marks made in this browser have not been saved back yet */
@@ -1027,15 +1220,13 @@ _JS = """
   if(tally){
     var rows = document.querySelectorAll('tr[data-sid]');
     if(rows.length){
-      var n = {confirmed:0, refuted:0, outstanding:0, unmarked:0};
+      var n = {confirmed:0, refuted:0, unmarked:0};
       [].forEach.call(rows, function(r){ n[r.dataset.mark] = (n[r.dataset.mark]||0) + 1 });
       var parts = [];
-      [['confirmed','confirmed'],['refuted','did not hold up'],
-       ['outstanding','outstanding'],['unmarked','not yet reviewed']]
-        .forEach(function(pair){
-          if(n[pair[0]]) parts.push("<span class='" + pair[0] + "'><i></i><b>" +
-            n[pair[0]] + "</b>" + pair[1] + "</span>");
-        });
+      ['confirmed','refuted','unmarked'].forEach(function(state){
+        if(n[state]) parts.push("<span class='" + state + "'><i></i><b>" +
+          n[state] + "</b>" + label(state).toLowerCase() + "</span>");
+      });
       tally.innerHTML = parts.join('');
     }
   }
@@ -1051,17 +1242,18 @@ _JS = """
     var saved = panel.querySelector('.saved');
     var current = marks[sid] || null;
     function paint(){
-      // a result that did not hold up needs its detail as much as an open one,
-      // so both states open the note field
+      // what was run is worth recording whichever way it came out, so either
+      // answer opens the note field. Both classes have to be driven: leaving
+      // one of them alone leaves that answer's note hidden and unreachable.
       var st = current ? current.state : '';
-      panel.classList.toggle('outstanding', st === 'outstanding');
+      panel.classList.toggle('confirmed', st === 'confirmed');
       panel.classList.toggle('refuted', st === 'refuted');
       panel.querySelectorAll('button').forEach(function(b){
         b.setAttribute('aria-pressed', String(!!current && current.state === b.dataset.state));
       });
       if(box && current) box.value = current.note || '';
       saved.textContent = current
-        ? 'marked ' + current.state + (current.note ? ', with a note' : '')
+        ? 'marked ' + label(current.state).toLowerCase() + (current.note ? ', with a note' : '')
         : 'not reviewed yet';
     }
     panel.querySelectorAll('button').forEach(function(b){
@@ -1161,6 +1353,8 @@ def _page(
         f"<title>{_esc(title)}</title><style>{_CSS}</style></head>"
         f'<body{attrs}><div class="shell">{body}</div>'
         f'<script type="application/json" id="baked-marks">{baked}</script>'
+        '<script type="application/json" id="review-labels">'
+        f"{json.dumps(_REVIEW_LABELS)}</script>"
         f"<script>{_JS}{_LIVENESS_JS}</script></body></html>"
     )
 
@@ -1176,7 +1370,13 @@ def _strip(item: ItemReport, columns: list[str], limit: int = 3) -> str:
         if _short(key) in _STRIP_SUPPRESS:
             continue
         val = item.data.get(key)
-        if val in (None, "", [], {}, 0, 0.0):
+        # a bool has to be tested before the emptiness check, because False == 0
+        # in python and so `val in (..., 0, 0.0)` matched it. A pipeline that
+        # declares a boolean column does it to tell the two states apart, and
+        # False is usually the one worth reading - loldrivers declares
+        # device_on_load_path to say the device cannot be opened - so dropping
+        # it rendered the informative case as no value at all.
+        if not isinstance(val, bool) and val in (None, "", [], {}, 0, 0.0):
             continue
         if isinstance(val, list):
             shown = ", ".join(str(v) for v in val[:3])
@@ -1213,6 +1413,12 @@ _LIST_ORDER = {
     BUCKET_FAILED: 2,
     BUCKET_TIMED_OUT: 3,
     BUCKET_UNASSESSED: 4,
+    # last, because nothing here needs acting on, but listed: a page is written
+    # for anything that was assessed, and a page nothing links to cannot be read.
+    # A cleared result is also the one worth being able to question, since a
+    # false negative is the expensive mistake and the reasoning behind "nothing
+    # found" is exactly what a reader disagreeing with it wants to see.
+    BUCKET_CLEAN: 5,
 }
 
 # a pipeline names its own severities, so they are folded onto the four tiers
@@ -1246,20 +1452,18 @@ def _review_panel(item: ItemReport, entity: str) -> str:
     """where the reader records what they have actually checked.
 
     The pipeline's verdict and a person's verification are separate claims, and
-    only one of them can be made here. What counts as outstanding is left open
-    on purpose: reproducing a crash, proving a precondition or reading a diff
-    are all the same shape of unfinished work from the report's point of view.
+    only one of them can be made here. A review that reached no answer is left
+    unmarked and says why in the note, which is the same place a settled one
+    records what was run.
     """
+    opts = "".join(
+        f'<button type="button" class="{state}" data-state="{state}" aria-pressed="false"'
+        f' title="{_esc(_MARK_HELP[state])}">{_esc(_MARK_LABELS[state])}</button>'
+        for state in (MARK_CONFIRMED, MARK_REFUTED)
+    )
     return f"""<div class="review" data-sid="{_esc(item.sample_id)}">
   <span class="lbl">your review</span>
-  <div class="opts">
-    <button type="button" class="confirmed" data-state="confirmed" aria-pressed="false">
-      confirmed</button>
-    <button type="button" class="refuted" data-state="refuted" aria-pressed="false">
-      did not hold up</button>
-    <button type="button" class="outstanding" data-state="outstanding" aria-pressed="false">
-      something outstanding</button>
-  </div>
+  <div class="opts">{opts}</div>
   <textarea placeholder="what did you run, on what, and what happened? enough for
 someone to repeat it on this {_esc(entity)}"
     aria-label="what you checked and what happened"></textarea>
@@ -1346,7 +1550,7 @@ def render_item_page(
     <span class="lbl">{_esc(cfg.entity)}</span></div>
   <h1>{_esc(item.name)}</h1>
   <div class="verdict {res}">
-    <span class="res {res}">{_esc(_BUCKET_LABELS.get(item.bucket, item.bucket))}</span>
+    <span class="res {res}">{_esc(bucket_labels(cfg.lexicon).get(item.bucket, item.bucket))}</span>
     <span class="tally">{_esc(tally)}</span>
     <hr>
   </div>
@@ -1393,15 +1597,25 @@ def _run_state_cell(run: dict[str, Any], generated_at: str = "") -> str:
     """
     state = str(run.get("state", "") or "unknown").lower()
     detail = str(run.get("state_detail", "") or "")
+    recorded = str(run.get("status", "") or "").lower()
     if state == "finished" and detail:
         wording = detail  # finished, failed, interrupted - say which
+    elif state == "unknown" and recorded and recorded != "running":
+        # it never claimed to be in progress, so there is nothing to reconcile
+        # against the process: its own last word is the whole story
+        wording = recorded
     else:
         wording = _STATE_WORDING.get(state, state)
 
     attrs = f" data-beat='{_esc(generated_at)}'" if generated_at else ""
     why = _STATE_WHY.get(state, "")
-    if state == "unknown" and detail:
-        why = f"{why} {detail.capitalize()}."
+    if state == "unknown":
+        if not recorded:
+            why = "No run state was recorded in this work directory."
+        elif recorded != "running":
+            why = "This is the last status the run wrote down, and nothing has updated it since."
+        elif detail:
+            why = f"{why} {detail.capitalize()}."
 
     return (
         "<div><div class='lbl'>status</div>"
@@ -1432,17 +1646,14 @@ _LIVENESS_JS = """
   }
   function tick(){
     var s=(Date.now()-beat)/1000;
-    if(!live){ age.textContent='written '+ago(s); return; }
     // a run rewrites this page every few seconds. a gap far wider than that
     // means the page is a leftover, whatever it says about itself.
-    if(s>180){
+    if(live&&s>180){
       el.classList.remove('running'); el.classList.add('stopped');
       label.textContent='no longer updating';
-      age.textContent='last written '+ago(s);
       live=false;
-      return;
     }
-    age.textContent='updated '+ago(s);
+    age.textContent=(live?'updated ':'written ')+ago(s);
   }
   tick(); setInterval(tick,1000);
 })();
@@ -1461,8 +1672,19 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     columns: list[str] = payload["columns"]
     running = str(run.get("state", "")).lower() == "running"
     entity = cfg.entity
+    plural = cfg.plural
+    lex = cfg.lexicon
+    labels = bucket_labels(lex)
+    helps = bucket_help(lex)
+    rules = bucket_rule(lex)
 
     total = t["samples"]
+
+    # one of these reads "1 repository", the other "6 repositories", and a
+    # declared plural is the whole point of asking for one
+    def _count(n: int) -> str:
+        return f"{n:,} {_esc(entity if n == 1 else plural)}"
+
     n_pos = buckets.get(BUCKET_VULNERABLE, 0)
     n_rev = buckets.get(BUCKET_SUSPICIOUS, 0)
     n_err = buckets.get(BUCKET_FAILED, 0)
@@ -1473,41 +1695,43 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
 
     # the two outcomes somebody has to act on carry the headline; the rest are
     # acknowledged on one line, so the eye is not asked to triage five equals.
+    # Each one is named from the same place the table and the filter name it,
+    # so one outcome never reads as two.
     lead = (
-        ("pos", n_pos, "vulnerable", BUCKET_VULNERABLE),
-        ("rev", n_rev, "needs assessment", BUCKET_SUSPICIOUS),
+        ("pos", n_pos, BUCKET_VULNERABLE),
+        ("rev", n_rev, BUCKET_SUSPICIOUS),
     )
     rest = (
-        ("err", n_err, "errored", BUCKET_FAILED),
-        ("time", n_time, "ran out of time", BUCKET_TIMED_OUT),
-        ("una", n_una, "unclear verdict", BUCKET_UNASSESSED),
-        ("ok", n_ok, "clear", BUCKET_CLEAN),
-        ("set", n_set, "filtered out", BUCKET_FILTERED),
+        ("err", n_err, BUCKET_FAILED),
+        ("time", n_time, BUCKET_TIMED_OUT),
+        ("una", n_una, BUCKET_UNASSESSED),
+        ("ok", n_ok, BUCKET_CLEAN),
+        ("set", n_set, BUCKET_FILTERED),
     )
     ticks = "".join(
-        f"<div class='tick {cls}{'' if n else ' zero'}' title=\"{_esc(_BUCKET_RULE[bucket])}\">"
-        f"<b>{n:,}</b><span class='lbl'>{label}</span></div>"
-        for cls, n, label, bucket in lead
+        f"<div class='tick {cls}{'' if n else ' zero'}' title=\"{_esc(rules[bucket])}\">"
+        f"<b>{n:,}</b><span class='lbl'>{_esc(labels[bucket].lower())}</span></div>"
+        for cls, n, bucket in lead
     )
     trailing = "".join(
-        f"<span class='{cls}' title=\"{_esc(_BUCKET_RULE[bucket])}\"><i></i>"
-        f"<b>{n:,}</b>{label}</span>"
-        for cls, n, label, bucket in rest
+        f"<span class='{cls}' title=\"{_esc(rules[bucket])}\"><i></i><b>{n:,}</b>"
+        f"{_esc(labels[bucket].lower())}</span>"
+        for cls, n, bucket in rest
         if n
     )
     # the whole corpus as one line, keyed by outcome so the filter can dim it
     # down to the slice on screen. It describes the list being looked at, which
     # during a live run is also the clearest sign the corpus is still growing.
     spread = "".join(
-        f"<i class='{cls}' data-b='{bucket}' style='flex:{n}' title='{n:,} {label}'></i>"
-        for cls, n, label, bucket in lead + rest
+        f"<i class='{cls}' data-b='{bucket}' style='flex:{n}' "
+        f"title='{n:,} {_esc(labels[bucket].lower())}'></i>"
+        for cls, n, bucket in lead + rest
         if n
     )
     readout = (
         f"<div class='readout'><div class='ticks'>{ticks}</div>"
         + (
-            f"<div class='spread' role='img' aria-label='{total:,} {_esc(entity)}s by "
-            f"outcome'>{spread}</div>"
+            f"<div class='spread' role='img' aria-label='{_count(total)} by outcome'>{spread}</div>"
             if total
             else ""
         )
@@ -1524,48 +1748,34 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
         key=lambda x: (_LIST_ORDER[x.bucket], -x.risk, x.name.lower()),
     )
     shown = listed[:table_limit]
+    # the whole corpus, not the slice detail pages were capped at: a reader
+    # comparing this line with the counts above is owed the same population
+    actionable = sum(buckets.get(b, 0) for b in _LIST_ORDER)
     capped = (
-        f"<p class='aside'>Showing the {len(shown):,} highest-risk of {len(listed):,}. "
+        f"<p class='aside'>Showing the {len(shown):,} highest-risk of {actionable:,}. "
         f"Every {entity} is in <a href='inventory.csv'>inventory.csv</a>.</p>"
-        if len(listed) > len(shown)
+        if actionable > len(shown)
         else ""
     )
+    # counted over the rows the table holds, because that is what pressing a
+    # chip reveals. Counting the corpus here would promise rows this page does
+    # not have, and the line above is where the rest are accounted for.
     present: dict[str, int] = {}
-    for i in listed:
+    for i in shown:
         present[i.bucket] = present.get(i.bucket, 0) + 1
     # a control gets the short gloss; the full rule belongs on the result it
     # was applied to, which is where somebody stops to question a label
     chips = "".join(
         f"<button type='button' class='chipf {_RES_CLASS.get(b, 'non')}' data-b='{b}' "
-        f"aria-pressed='false' title=\"{_esc(_BUCKET_HELP[b])}\">"
-        f"{_esc(_BUCKET_LABELS[b])}<b>{n:,}</b></button>"
+        f"aria-pressed='false' title=\"{_esc(helps[b])}\">"
+        f"{_esc(labels[b])}<b>{n:,}</b></button>"
         for b, n in sorted(present.items(), key=lambda kv: _LIST_ORDER[kv[0]])
     )
     review_chips = "".join(
         f"<button type='button' class='chipf mk {state}' data-mark='{state}' "
-        f"aria-pressed='false' title=\"{_esc(help_text)}\"><i></i>{label}</button>"
-        for state, label, help_text in (
-            (
-                MARK_CONFIRMED,
-                "Confirmed",
-                "you marked these as checked while reading the report",
-            ),
-            (
-                MARK_REFUTED,
-                "Refuted",
-                "you checked these and they did not hold up",
-            ),
-            (
-                MARK_OUTSTANDING,
-                "Outstanding",
-                "you marked these as resting on something still unproven",
-            ),
-            (
-                "unmarked",
-                "Unreviewed",
-                "nobody has recorded a review of these yet",
-            ),
-        )
+        f"aria-pressed='false' title=\"{_esc(_MARK_HELP[state])}\"><i></i>"
+        f"{_esc(_REVIEW_LABELS[state])}</button>"
+        for state in (MARK_CONFIRMED, MARK_REFUTED, MARK_UNREVIEWED)
     )
     body_rows = "".join(
         "<tr class='{res}' data-k='{k}' data-b='{b}' data-sid='{sid}'>"
@@ -1587,8 +1797,8 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             risk=i.risk,
             sev=_severity(i),
             res=_RES_CLASS.get(i.bucket, "non"),
-            rule=_esc(_BUCKET_RULE[i.bucket]),
-            label=_esc(_BUCKET_LABELS[i.bucket]),
+            rule=_esc(rules[i.bucket]),
+            label=_esc(labels[i.bucket]),
         )
         for i in shown
     )
@@ -1614,10 +1824,10 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             f"{n:,} at {_esc(k)}" for k, n in sorted(by_stage.items(), key=lambda kv: -kv[1])
         )
         sections += (
-            f"<section><div class='shead q' title=\"{_esc(_BUCKET_RULE[BUCKET_FILTERED])}\">"
+            f"<section><div class='shead q' title=\"{_esc(rules[BUCKET_FILTERED])}\">"
             f"<h2>Filtered out</h2>"
             f"<span class='n'>{n_set:,}</span>"
-            f"<span class='of'>{_esc(_BUCKET_HELP[BUCKET_FILTERED])}</span></div>"
+            f"<span class='of'>{_esc(helps[BUCKET_FILTERED])}</span></div>"
             f"<p class='aside'>These were excluded before the analysis finished, so they are "
             f"not a judgement about the {_esc(entity)}"
             + (f": {where}." if where else ".")
@@ -1630,35 +1840,58 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
             else " The run recorded no results to review.</p></section>"
         )
 
-    rules = "".join(
+    rule_rows = "".join(
         f"<tr><td class='spec mono' style='color:var(--ink)'>{_esc(k)}</td>"
         f"<td class='r' data-v='{v}'>{v:,}</td></tr>"
         for k, v in payload["rule_totals"].items()
     )
+    groups = payload.get("finding_groups") or []
+    group_rows = "".join(
+        f"<tr><td class='spec mono' style='color:var(--ink)'>{_esc(str(g['finding_id']))}</td>"
+        f"<td>{_esc(str(g.get('message', ''))[:160])}</td>"
+        f"<td class='r' data-v='{len(g['samples'])}'>{len(g['samples']):,}</td></tr>"
+        for g in groups[:200]
+    )
+    # only for pipelines whose processors name their findings. One advisory
+    # across forty repositories is one thing to judge, not forty, and the count
+    # beside it is how many places it turned up.
+    findings_section = (
+        f"""<section>
+  <div class="shead q"><h2>Distinct findings</h2>
+    <span class="n">{len(groups):,}</span>
+    <span class="of">named by the pipeline, and where each was seen</span></div>
+  <div class="scroll"><table data-sortable><thead><tr><th>finding</th>
+  <th>what it is</th><th class="r">{_esc(plural)}</th></tr></thead>
+  <tbody>{group_rows}</tbody></table></div>
+</section>"""
+        if group_rows
+        else ""
+    )
+
     rules_section = (
         f"""<section>
   <div class="shead q"><h2>Rules that fired</h2>
     <span class="n">{len(payload["rule_totals"]):,}</span>
     <span class="of">across every {_esc(entity)} scanned</span></div>
   <div class="scroll"><table data-sortable><thead><tr><th>rule</th>
-  <th class="r">hits</th></tr></thead><tbody>{rules}</tbody></table></div>
+  <th class="r">hits</th></tr></thead><tbody>{rule_rows}</tbody></table></div>
 </section>"""
-        if rules
+        if rule_rows
         else ""
     )
 
     # say what to do next, not only what happened
     if n_pos:
         note = (
-            f"<p class='finding-note'><b>{n_pos:,} {_esc(entity)}"
-            f"{'s' if n_pos != 1 else ''} assessed as vulnerable.</b> "
+            f"<p class='finding-note'><b>{_count(n_pos)} "
+            f"{_esc(lex.positive_phrase)}.</b> "
             f"They lead the list below, ordered by the severity of what was "
             f"found {_DASH} start at the top.</p>"
         )
     elif n_rev:
         note = (
-            f"<p class='finding-note rev'><b>Nothing was confirmed vulnerable.</b> "
-            f"{n_rev:,} {_esc(entity)}{'s' if n_rev != 1 else ''} produced findings "
+            f"<p class='finding-note rev'><b>{_esc(lex.nothing_positive)}.</b> "
+            f"{_count(n_rev)} produced findings "
             f"that no assessment has confirmed or dismissed {_DASH} those are the "
             f"ones worth reading.</p>"
         )
@@ -1677,24 +1910,25 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
     plate = "".join(
         f"<div><div class='lbl'>{lbl}</div><dd>{_esc(val)}</dd></div>"
         for lbl, val in (
-            ("corpus", run.get("target", "-")),
+            (cfg.target_label, run.get("target", "-")),
             ("assessed by", run.get("model", "-")),
         )
     ) + _run_state_cell(run, str(payload.get("generated_at", "")))
 
     body = f"""<header class="mast">
   <div class="kicker"><span class="mark">DEEPZERO</span>
-    <span class="lbl">vulnerability research</span>
+    <span class="lbl">{_esc(lex.discipline)}</span>
     <span class="id">{_esc(run.get("run_id", "") or "")}</span></div>
-  <h1>{_esc(title)} <span class="qty">{t["samples"]:,} {_esc(entity)}s</span></h1>
+  <h1>{_esc(title)} <span class="qty">{_count(t["samples"])}</span></h1>
   <dl class="plate">{plate}</dl>
+  {_conclusion_panel(run)}
   {readout}
   {note}{trunc}
   <div class="files">
     <a href="inventory.csv">inventory.csv</a>
     <a href="findings.jsonl">findings.jsonl</a>
     <a href="report.json">report.json</a>
-    <a href="#" id="export-marks" title="save your review marks next to the report as marks.json, so they render for anyone who opens it">export marks</a>
+    <a href="#" id="export-marks" title="download your review marks as marks.json; put that file next to this one and they render for anyone who opens the report">export marks</a>
   </div>
 </header>
 <div class="filter">
@@ -1704,7 +1938,7 @@ def render_index(payload: dict[str, Any], out_dir: Path, *, table_limit: int = 5
   <span class="axis"><span class="lbl">reviewed</span>{review_chips}</span>
   <span class="hint" id="hint"></span>
 </div>
-{sections}{rules_section}"""
+{sections}{findings_section}{rules_section}"""
     return _page(title, body, live=running, corpus=corpus, marks=marks)
 
 
@@ -1722,15 +1956,24 @@ def write_report(
     target = out_dir or (work_dir / "report")
     (target / "items").mkdir(parents=True, exist_ok=True)
 
+    items: list[ItemReport] = payload["items"]
     rows = payload.pop("rows")
+    marks = _load_marks(target)
     # a mark saved back into the report belongs in the spreadsheet too, so it
     # can be sorted and counted with everything else rather than only viewed
-    saved_marks = _load_marks(target)
-    if saved_marks:
+    if marks:
         for r in rows:
-            mark = saved_marks.get(str(r.get("sample_id", "")))
+            mark = marks.get(str(r.get("sample_id", "")))
             r["review"] = mark["state"] if mark else ""
             r["review_note"] = mark["note"] if mark else ""
+    # the index lists only the outcomes worth working through, so a page written
+    # for anything else has nothing pointing at it. The csv holds every sample,
+    # which makes it the one place that can carry the way in.
+    paged = {it.sample_id for it in items}
+    for r in rows:
+        sid = str(r.get("sample_id", ""))
+        if sid in paged:
+            r["report_page"] = f"items/{sid}.html"
     fieldnames: list[str] = []
     for r in rows:
         for k in r:
@@ -1741,9 +1984,13 @@ def write_report(
         writer.writeheader()
         writer.writerows(rows)
 
-    items: list[ItemReport] = payload["items"]
+    # every finding, which is more than the detail pages cover: the in-memory
+    # list is capped to keep a huge corpus renderable, and this file is what a
+    # machine reads instead of the html. A second pass costs a re-read of the
+    # corpus, so it is only paid when the cap actually dropped something.
+    complete = iter_items(work_dir, cfg) if payload["detail_truncated"] else items
     with (target / "findings.jsonl").open("w", encoding="utf-8") as fh:
-        for it in items:
+        for it in complete:
             for f in it.findings:
                 fh.write(
                     json.dumps(
@@ -1762,7 +2009,6 @@ def write_report(
     run_info = payload.get("run") or {}
     pipeline = run_info.get("pipeline", "")
     corpus = f"{pipeline}:{run_info.get('target', '')}"
-    marks = _load_marks(target)
     for it in items:
         (target / "items" / f"{it.sample_id}.html").write_text(
             render_item_page(it, target / "items", cfg, pipeline, corpus, marks),
@@ -1774,7 +2020,14 @@ def write_report(
 
     summary = {k: v for k, v in payload.items() if k not in ("items", "config")}
     summary["item_pages"] = len(items)
+    # consumers of report.json render their own headings, so they need the same
+    # vocabulary the html was built with rather than having to guess a plural.
+    # The bucket keys above are structural and never change; what this pipeline
+    # calls each of them is only knowable from here.
     summary["entity"] = cfg.entity
+    summary["entity_plural"] = cfg.plural
+    summary["target_label"] = cfg.target_label
+    summary["bucket_labels"] = bucket_labels(cfg.lexicon)
     json_path = target / "report.json"
     json_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
 

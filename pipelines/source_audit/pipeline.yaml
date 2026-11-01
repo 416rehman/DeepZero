@@ -1,0 +1,131 @@
+# a source-code audit over git repositories: take each repository at one
+# revision, scan the tree with semgrep, then have a model decide which hits are
+# reachable from untrusted input and which are patterns that merely look wrong.
+#
+# point `deepzero run` at a manifest listing the repositories, or at a directory
+# of checkouts already on disk. see README.md next to this file.
+
+name: source_audit
+description: source code vulnerability audit over git repositories
+version: "1.0"
+
+# Use your Claude Code CLI default, or configure DEEPZERO_MODEL / pass -m.
+model: ${DEEPZERO_MODEL:-claude-code}
+
+# how `deepzero report` presents this pipeline's results. a repository is not a
+# file on disk, so the vocabulary is named here rather than left at the defaults
+# that assume a corpus of binaries.
+report:
+  title: Source repository audit
+  entity: repository
+  entity_plural: repositories
+  # what the run was pointed at, which is the manifest of repositories or the
+  # directory of checkouts the ingest read. Calling it an organisation would
+  # name something the header then does not show: the value beside this label is
+  # that path, and one manifest can list repositories from several owners.
+  target_label: repository list
+  classification_key: classification
+  vulnerable_when: [vulnerable]
+  safe_when: [not exploitable]
+  # a repository only reaches the assessment when the scan flagged something, so
+  # nothing here is ever untouched code: the negative outcome is a repository
+  # whose findings were read and none of them reached. The default word for it,
+  # "clear", says the opposite of that.
+  lexicon:
+    negative: Not exploitable
+  columns:
+    - scan.finding_count
+    # nothing found and nothing read both show as zero above, so how many files
+    # semgrep actually opened travels beside the count
+    - scan.files_scanned
+    - discover.source_files
+    # which rules could have fired here at all
+    - discover.primary_language
+    # a verdict is about one revision, and the next commit can invalidate it
+    - discover.commit_sha
+
+settings:
+  work_dir: work
+  max_workers: 8
+
+stages:
+  # clone each repository, or read a checkout as it stands, and record which
+  # revision everything downstream is judging
+  - name: discover
+    processor: git_ingest/git_ingest.py
+    config:
+      # only the tip is scanned, so the history is disk and network spent on
+      # something no later stage reads
+      shallow: true
+      clone_depth: 1
+      # what counts as source here: one entry per extension the languages in
+      # rules/ are written in. keep this in step with the scan stage and with
+      # rules/. an extension missing here is neither counted below nor scanned
+      # later, so the repository looks smaller and cleaner than it is; one
+      # listed here that no rule covers is walked, counted and staged for a
+      # scan that can never match it.
+      extensions: [".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".java", ".rb", ".php", ".cs"]
+      # code nobody here wrote, plus build output. the scanner takes no
+      # exclusions, so these are still scanned and can still produce findings -
+      # this only keeps the counts describing the repository's own code, and
+      # the assessment stage is where a hit in a vendored tree is discounted.
+      exclude:
+        - .git
+        - node_modules
+        - vendor
+        - third_party
+        - external
+        - dist
+        - build
+        - testdata
+      clone_timeout: 900
+
+  # drop what cannot be audited and what would swamp the scan: a checkout with
+  # no source in it at all, and a tree so large that scanning it costs more than
+  # the finding is worth. a commit reached under two names is scanned once.
+  - name: size_filter
+    processor: metadata_filter
+    config:
+      min_source_files: 1
+      max_source_files: 20000
+      max_total_loc: 5000000
+      dedup_field: commit_sha
+
+  # semgrep over each checkout. target_dir "" means the sample's own tree is
+  # what gets scanned, rather than a directory an earlier stage wrote beside it.
+  - name: scan
+    processor: semgrep_scanner/semgrep_scanner.py
+    config:
+      rules_dir: pipelines/source_audit/rules
+      target_dir: ""
+      # the same set as discover, for the same reason. see README.md
+      extensions: [".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".java", ".rb", ".php", ".cs"]
+      # a repository contributes thousands of files where a driver contributed a
+      # handful, so batches stay small: one that times out costs 25 repositories
+      # instead of the whole corpus.
+      batch_size: 25
+      timeout: 900
+      # a repository with nothing flagged gives the assessment nothing to read,
+      # so it stops here instead of costing a model call
+      min_findings: 1
+
+  # order every surviving repository by how many findings it has, worst first,
+  # so assessment works through the noisiest trees first without dropping any
+  - name: rank
+    processor: top_k
+    config:
+      metric_path: "scan.finding_count"
+      keep_top: 0
+      sort_order: desc
+
+  # a model decides which hits are reachable and which are pattern matches
+  - name: assess
+    processor: generic_llm
+    parallel: 4
+    on_failure: skip
+    config:
+      prompt: pipelines/source_audit/assessment.j2
+      output_file: assessment.md
+      classify_by: "\\[VULNERABLE\\]|\\[NOT EXPLOITABLE\\]"
+      max_context_tokens: 900000
+      max_retries: 3

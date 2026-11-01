@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import time
@@ -8,6 +9,7 @@ from types import MappingProxyType
 from typing import Any
 
 import click
+import yaml
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.markup import escape
@@ -30,6 +32,7 @@ def _ensure_utf8_streams() -> None:
 
 
 _ensure_utf8_streams()
+log = logging.getLogger("deepzero.cli")
 console = Console()
 
 
@@ -99,6 +102,161 @@ def _latest_run_dir(base: Path) -> Path | None:
     return base if (base / "run.json").exists() else None
 
 
+def _given_on_command_line(param: str) -> bool:
+    from click.core import ParameterSource
+
+    ctx = click.get_current_context(silent=True)
+    if ctx is None:
+        return False
+    return ctx.get_parameter_source(param) == ParameterSource.COMMANDLINE
+
+
+def _load_pipeline_or_exit(ref: str, **overrides: str | None) -> Any:
+    """Exit with the loader's search-path error instead of a traceback."""
+    import yaml
+
+    import deepzero.stages  # noqa: F401
+    from deepzero.engine.pipeline import load_pipeline
+
+    try:
+        return load_pipeline(ref, **overrides)
+    except (ValueError, OSError, ImportError, yaml.YAMLError) as e:
+        console.print(f"[bold red]X ERROR[/]: {escape(str(e))}")
+        raise SystemExit(1) from e
+
+
+def _require_run_dir(raw: str) -> Path:
+    """Accept a corpus directory or its pipeline root; fail if neither holds a run."""
+    path = Path(raw)
+    if not path.is_dir():
+        detail = "is not a directory" if path.exists() else "does not exist"
+        console.print(f"[bold red]X ERROR[/]: work directory {detail}: {escape(str(path))}")
+        raise SystemExit(1)
+    chosen = _latest_run_dir(path)
+    if chosen is None:
+        console.print("[yellow]no run found[/]")
+        console.print(f"      searched: {escape(str(path))}")
+        raise SystemExit(1)
+    _announce_corpus(path, chosen)
+    return chosen
+
+
+def _discover_runs(root: Path) -> list[Path]:
+    """Find runs by run.json, including custom layouts, newest first."""
+    if not root.is_dir():
+        return []
+    return sorted(
+        (p.parent for p in root.rglob("run.json")),
+        key=lambda d: (d / "run.json").stat().st_mtime,
+        reverse=True,
+    )
+
+
+def _describe_run(d: Path) -> tuple[str, str, str]:
+    """(pipeline, status, sample count) for a run directory, for listing."""
+    from deepzero.engine.state import StateStore
+
+    run_state = StateStore(d).load_run()
+    if run_state is None:
+        return "?", "unreadable", ""
+    status = getattr(run_state.status, "value", str(run_state.status))
+    total = ""
+    if isinstance(run_state.stats, dict):
+        total = str(run_state.stats.get("discovered", "") or "")
+    return (run_state.pipeline or "?"), status, total
+
+
+def _choose_run(root: Path) -> Path | None:
+    """Choose a run; prompt only for multiple runs with interactive input."""
+    found = _discover_runs(root)
+    if not found:
+        console.print(f"[yellow]no runs found under {escape(str(root))}[/]")
+        console.print("      name one with --work-dir, or a pipeline with --pipeline")
+        return None
+    if len(found) == 1:
+        console.print(f"      one run under {escape(str(root))}: [bold]{found[0].name}[/]")
+        return found[0]
+
+    table = Table(title=f"runs under {root}", title_style="bold")
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("pipeline", style="cyan")
+    table.add_column("corpus")
+    table.add_column("status")
+    table.add_column("samples", justify="right")
+    for i, d in enumerate(found, start=1):
+        name, status, total = _describe_run(d)
+        table.add_row(str(i), name, d.name, status, total)
+    console.print(table)
+
+    def _cannot_ask() -> None:
+        console.print("  [dim]several runs, and nothing to read a choice from.[/]")
+        console.print(f"  name one:  [bold]deepzero report -w {found[0]}[/]")
+
+    if not sys.stdin.isatty():
+        _cannot_ask()
+        return None
+
+    try:
+        choice = click.prompt(
+            "  which run", type=click.IntRange(1, len(found)), default=1, show_default=True
+        )
+    except (click.Abort, EOFError):
+        # Some shells report a TTY even after stdin reaches EOF.
+        console.print()
+        _cannot_ask()
+        return None
+    return found[choice - 1]
+
+
+def _report_config_for_run(work_path: Path) -> dict:
+    """Read saved report config so reports outlive their pipeline files.
+
+    Older runs fall back to pipeline lookup by name.
+    """
+    snapshot_path = work_path / "pipeline.yaml"
+    if snapshot_path.is_file():
+        try:
+            snapshot = yaml.safe_load(snapshot_path.read_text(encoding="utf-8"))
+            if isinstance(snapshot, dict):
+                from deepzero.engine.pipeline import _expand_env_vars
+
+                report = snapshot.get("report") or {}
+                if isinstance(report, dict):
+                    return _expand_env_vars(report)
+        except (OSError, yaml.YAMLError) as exc:
+            log.debug("could not read pipeline snapshot %s: %s", snapshot_path, exc)
+
+    run_json = work_path / "run.json"
+    if not run_json.exists():
+        return {}
+    try:
+        name = str(json.loads(run_json.read_text(encoding="utf-8")).get("pipeline", ""))
+    except (OSError, ValueError):
+        return {}
+    if not name:
+        return {}
+    try:
+        import deepzero.stages  # noqa: F401
+        from deepzero.engine.pipeline import load_pipeline
+
+        return load_pipeline(name).report
+    except (ImportError, OSError, ValueError):
+        # Reports remain usable after their pipeline files are removed.
+        return {}
+
+
+def _announce_corpus(base: Path, chosen: Path) -> None:
+    """Name the selected corpus when pipeline lookup could be ambiguous."""
+    if not base.exists():
+        return
+    runs = [d for d in base.iterdir() if d.is_dir() and (d / "run.json").exists()]
+    if len(runs) < 2:
+        return
+    others = sorted(d.name for d in runs if d.resolve() != chosen.resolve())
+    console.print(f"      corpus: [bold]{chosen.name}[/] (most recent of {len(runs)})")
+    console.print(f"      others: {', '.join(others)} - pass --work-dir to pick one")
+
+
 def _setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     handler = RichHandler(
@@ -156,7 +314,7 @@ def _build_runner(pipeline_def: Any, dashboard: Any = None) -> tuple[Any, Any]:
 @click.version_option(package_name="deepzero")
 @click.pass_context
 def main(ctx: click.Context):
-    """deepzero - configurable, data-driven binary analysis pipeline"""
+    """deepzero - configurable, data-driven vulnerability research pipelines"""
     ctx.ensure_object(dict)
 
 
@@ -168,9 +326,20 @@ def main(ctx: click.Context):
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
 @click.option("--clean", is_flag=True, help="permanently delete previous run data and start fresh")
 @click.option(
+    "--refresh",
+    is_flag=True,
+    help="rediscover the corpus and update its saved snapshot, keeping unchanged samples",
+)
+@click.option(
     "--preflight",
     is_flag=True,
     help="verify the LLM backend is authenticated before running (makes one tiny call)",
+)
+@click.option(
+    "--redo",
+    "redo_stages",
+    multiple=True,
+    help="re-run a stage and everything after it, keeping the earlier work",
 )
 @click.option(
     "--retry-timeouts",
@@ -191,33 +360,57 @@ def run(
     work_dir: str | None,
     verbose: bool,
     clean: bool,
+    refresh: bool,
     preflight: bool,
+    redo_stages: tuple[str, ...],
     retry_timeouts: bool,
     timeout_multiplier: float,
 ):
     """run a pipeline against a target file or directory (resumes automatically)"""
     _setup_logging(verbose)
 
+    # Zero disables timeouts; retries must allow at least the previous budget.
+    if timeout_multiplier < 1:
+        console.print(
+            "[bold red]X ERROR[/]: --timeout-multiplier is how much longer to allow, "
+            f"so it cannot be below 1; got {timeout_multiplier:g}"
+        )
+        raise SystemExit(1)
+    if not retry_timeouts and _given_on_command_line("timeout_multiplier"):
+        console.print(
+            "[yellow]![/] --timeout-multiplier only applies to --retry-timeouts, "
+            "which was not passed - ignoring it"
+        )
+
     _load_env()
 
-    # ensure built-in stages are registered
-    import deepzero.stages  # noqa: F401
-    from deepzero.engine.pipeline import load_pipeline
     from deepzero.engine.report import write_report
     from deepzero.engine.state import RunState, StateStore
 
     log_report = logging.getLogger("deepzero.report")
     target_path = Path(target).resolve()
 
-    try:
-        pipeline_def = load_pipeline(pipeline, model_override=model, work_dir_override=work_dir)
-    except ValueError as e:
-        console.print(f"[bold red]X ERROR[/]: {e}")
-        raise SystemExit(1)
+    pipeline_def = _load_pipeline_or_exit(
+        pipeline, model_override=model, work_dir_override=work_dir
+    )
 
     # scope the run to this corpus so different targets through the same pipeline
     # get isolated, independently resumable work directories under one root.
     pipeline_def.bind_corpus(target_path)
+
+    from deepzero.engine.locking import RunLock, RunLockedError
+
+    lock_path = pipeline_def.base_work_dir / ".locks" / f"{pipeline_def.corpus_key}.lock"
+    writer_lock = RunLock(lock_path)
+    try:
+        writer_lock.acquire()
+    except RunLockedError as exc:
+        raise click.ClickException(
+            f"another DeepZero process is writing this run: {pipeline_def.work_dir}"
+        ) from exc
+    except OSError as exc:
+        raise click.ClickException(f"cannot acquire the run's writer lock: {exc}") from exc
+    click.get_current_context().call_on_close(writer_lock.release)
 
     import os
     import shutil
@@ -267,6 +460,7 @@ def run(
     )
 
     runner, llm = _build_runner(pipeline_def, dashboard=dashboard)
+    runner.refresh_ingest = refresh
 
     if preflight and llm is not None:
         console.print("[dim]preflight: checking LLM backend authentication...[/]")
@@ -277,6 +471,50 @@ def run(
             )
             raise SystemExit(1)
         console.print("[green]\\[ok][/] LLM backend authenticated")
+
+    if redo_stages:
+        order = [spec.name for spec in pipeline_def.stage_specs]
+        unknown = [name for name in redo_stages if name not in order]
+        if unknown:
+            console.print(f"[bold red]X ERROR[/]: no such stage: {', '.join(unknown)}")
+            console.print(f"      this pipeline has: {', '.join(order)}")
+            raise SystemExit(1)
+        first = min(order.index(name) for name in redo_stages)
+        affected = order[first:]
+        redone = 0
+        discarded = 0
+        for state in state_store.list_samples():
+            dropped = state.clear_stages_from(list(redo_stages), order)
+            if not dropped:
+                continue
+            # Processors reuse artifacts as caches, so --redo must remove both
+            # state and recorded files.
+            sample_dir = state_store.sample_dir(state.sample_id).resolve()
+            for paths in dropped.values():
+                for rel in paths:
+                    victim = (sample_dir / rel).resolve()
+                    if not victim.is_relative_to(sample_dir) or not victim.exists():
+                        # External artifacts do not belong to this run.
+                        continue
+                    try:
+                        shutil.rmtree(victim) if victim.is_dir() else victim.unlink()
+                        discarded += 1
+                    except OSError as exc:
+                        log.debug("could not remove %s: %s", victim, exc)
+            state_store.save_sample(state)
+            redone += 1
+        if redone:
+            console.print(
+                f"[yellow]![/] re-running {', '.join(affected)} for {redone} sample(s); "
+                f"earlier stages are kept"
+            )
+            if discarded:
+                console.print(
+                    f"        discarded {discarded} output file(s) those stages had written, "
+                    f"so they are produced again rather than read back"
+                )
+        else:
+            console.print("[dim]no sample had reached those stages - nothing to redo[/]")
 
     if retry_timeouts:
         # only the stages that ran out of time are forgotten, so this costs the
@@ -308,7 +546,6 @@ def run(
             run_state.model = pipeline_def.model
     else:
         # initialize fresh state
-        state_store.save_pipeline_snapshot(pipeline_def.raw_yaml)
         run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}"
         run_state = RunState(
             run_id=run_id,
@@ -316,6 +553,16 @@ def run(
             target=str(target_path),
             model=pipeline_def.model,
         )
+
+    # Keep current configuration for report/serve even when the pipeline lives
+    # elsewhere. Start from raw YAML so environment-backed credentials stay as
+    # references rather than being copied into the run directory.
+    snapshot = pipeline_def.raw_yaml
+    if model is not None:
+        snapshot_data = yaml.safe_load(snapshot)
+        snapshot_data["model"] = pipeline_def.model
+        snapshot = yaml.safe_dump(snapshot_data, sort_keys=False, allow_unicode=True)
+    state_store.save_pipeline_snapshot(snapshot)
 
     # a live report the user can open straight away and watch fill in. it is
     # rebuilt when results actually land rather than on a timer, and rate
@@ -344,6 +591,9 @@ def run(
         _refresh_report(force=True)  # settle the final state, no reload banner
         console.print(f"\n report   [bold]{report_index.resolve().as_uri()}[/]")
 
+    if run_state.status != RunStatus.COMPLETED:
+        raise SystemExit(1)
+
 
 @main.command()
 @click.option("--pipeline", "-p", default=None, help="pipeline name or path")
@@ -361,29 +611,23 @@ def report(
 
     report_cfg: dict = {}
     if work_dir:
-        work_path = Path(work_dir)
+        work_path = _require_run_dir(work_dir)
+        report_cfg = _report_config_for_run(work_path)
     elif pipeline:
-        import deepzero.stages  # noqa: F401
-        from deepzero.engine.pipeline import load_pipeline
-
         _load_env()
-        try:
-            pipeline_def = load_pipeline(pipeline)
-        except ValueError as e:
-            console.print(f"[bold red]X ERROR[/]: {e}")
-            raise SystemExit(1)
+        pipeline_def = _load_pipeline_or_exit(pipeline)
         work_path = _latest_run_dir(pipeline_def.base_work_dir)
         if work_path is None:
             console.print(f"[bold red]X ERROR[/]: no runs found under {pipeline_def.base_work_dir}")
             raise SystemExit(1)
+        _announce_corpus(pipeline_def.base_work_dir, work_path)
         report_cfg = pipeline_def.report
     else:
-        console.print("[bold red]X ERROR[/]: pass --pipeline or --work-dir")
-        raise SystemExit(1)
-
-    if not work_path.exists():
-        console.print(f"[bold red]X ERROR[/]: work directory does not exist: {work_path}")
-        raise SystemExit(1)
+        chosen = _choose_run(Path("work"))
+        if chosen is None:
+            raise SystemExit(1)
+        work_path = chosen
+        report_cfg = _report_config_for_run(work_path)
 
     html_path, json_path = write_report(work_path, Path(out) if out else None, config=report_cfg)
     console.print(f"[green]\\[ok][/] report written to [bold]{html_path}[/]")
@@ -405,22 +649,16 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
 
     _setup_logging(verbose)
     if work_dir:
-        work_path = Path(work_dir)
+        work_path = _require_run_dir(work_dir)
     elif pipeline:
-        import deepzero.stages  # noqa: F401
-        from deepzero.engine.pipeline import load_pipeline
-
         _load_env()
-        try:
-            pipeline_def = load_pipeline(pipeline)
-        except ValueError as e:
-            console.print(f"[bold red]X ERROR[/]: {e}")
-            raise SystemExit(1)
+        pipeline_def = _load_pipeline_or_exit(pipeline)
 
         work_path = _latest_run_dir(pipeline_def.base_work_dir)
         if work_path is None:
             console.print(f"[yellow]no runs found under {pipeline_def.base_work_dir}[/]")
             raise SystemExit(1)
+        _announce_corpus(pipeline_def.base_work_dir, work_path)
     else:
         console.print("[red]specify --pipeline or --work-dir[/]")
         raise SystemExit(1)
@@ -447,7 +685,7 @@ def status(pipeline: str | None, work_dir: str | None, verbose: bool):
         console.print(f"  completed: {run_state.completed_at}")
 
     manifest = state_store.load_manifest()
-    _print_stats(run_state, manifest)
+    _print_stats(run_state)
 
     # show manifest summary
     if manifest:
@@ -474,13 +712,77 @@ def validate(pipeline_ref: str):
     console.print(f"validating pipeline: {pipeline_ref}\n")
     warnings = validate_pipeline(pipeline_ref)
 
+    failed = False
     for w in warnings:
         if w.startswith("ERROR"):
             console.print(f"  [red]X[/] {w}")
+            failed = True
         elif "valid" in w.lower():
             console.print(f"  [green]OK[/] {w}")
         else:
             console.print(f"  [yellow]![/] {w}")
+
+    if failed:
+        raise SystemExit(1)
+
+
+@main.command()
+@click.option("--work-dir", "-w", default="work", help="root to search for runs")
+@click.option("--open", "open_browser", is_flag=True, help="open the newest run's report")
+@click.option("--verbose", "-v", is_flag=True, help="verbose logging")
+def runs(work_dir: str, open_browser: bool, verbose: bool):
+    """list every run on disk, whatever pipeline or corpus produced it"""
+    _setup_logging(verbose)
+    root = Path(work_dir)
+    if not root.is_dir():
+        console.print(f"[yellow]nothing to list: {escape(str(root))} is not a directory[/]")
+        raise SystemExit(1)
+
+    found = _discover_runs(root)
+    if not found:
+        console.print(f"[yellow]no runs found under {escape(str(root))}[/]")
+        console.print("      a run writes its state as it goes, so this fills in once one starts")
+        raise SystemExit(1)
+
+    table = Table(title=f"runs under {root}", title_style="bold")
+    table.add_column("pipeline", style="cyan")
+    table.add_column("corpus")
+    table.add_column("status")
+    table.add_column("samples", justify="right")
+    table.add_column("report")
+    table.add_column("updated", style="dim")
+
+    colors = {"completed": "green", "running": "cyan", "interrupted": "yellow", "failed": "red"}
+    for d in found:
+        name, status_text, total = _describe_run(d)
+        # the report is rebuilt from state on demand, so its absence is a fact
+        # about this directory rather than about whether the results survive
+        has_report = (d / "report" / "index.html").exists()
+        table.add_row(
+            name,
+            d.name,
+            f"[{colors.get(status_text, 'white')}]{status_text}[/]",
+            total,
+            "built" if has_report else "[dim]not built[/]",
+            time.strftime("%Y-%m-%d %H:%M", time.localtime((d / "run.json").stat().st_mtime)),
+        )
+
+    console.print(table)
+    newest = found[0]
+    console.print(f"\n  browse one:  [bold]deepzero report -w {newest}[/] --open")
+    console.print(
+        "  [dim]the report is rebuilt from the run's own state, so deleting it costs"
+        " nothing and this still works long after the run finished[/]"
+    )
+
+    if open_browser:
+        from deepzero.engine.report import write_report
+
+        html, _ = write_report(newest, config=_report_config_for_run(newest))
+        console.print(f"\n[green]\\[ok][/] {escape(str(html))}")
+        import webbrowser
+
+        webbrowser.open(html.resolve().as_uri())
 
 
 @main.command("list-processors")
@@ -532,12 +834,15 @@ stages:
   - name: discover
     processor: file_discovery
     config:
-      extensions: ["*"]
+      # empty takes every file under the target; narrow it with a list of
+      # suffixes, e.g. [".c", ".py"]
+      extensions: []
       recursive: true
 
   # add your stages here
   # bare name = built-in processor, path/with/slash = external processor in processors/ dir
-  # processor types: map (1:1), reduce (N:1 ranking), batch (N:batch external)
+  # processor types: ingest (finds samples, first stage only), map (1:1),
+  #                  reduce (N:1 ranking), bulk_map (N:one external invocation)
 """
 
     target_path_yaml = pipeline_dir / "pipeline.yaml"
@@ -548,7 +853,12 @@ stages:
 
 
 @main.command()
-@click.option("--model", "-m", default="openai/gpt-4o", help="llm model for interactive mode")
+@click.option(
+    "--model",
+    "-m",
+    default="claude-code",
+    help="llm model for interactive mode",
+)
 @click.option("--work-dir", "-w", default="work", help="work directory for context")
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
 def interactive(model: str, work_dir: str, verbose: bool):
@@ -560,11 +870,33 @@ def interactive(model: str, work_dir: str, verbose: bool):
     from deepzero.engine.llm import LLMProvider
     from deepzero.engine.state import StateStore
 
+    # the same resolution the other commands do: a run lives under
+    # <work_dir>/<pipeline>/<corpus>/, so accept a pipeline root too rather than
+    # loading no context at all and never saying why
+    work_path = Path(work_dir)
+    if not work_path.is_dir():
+        detail = "is not a directory" if work_path.exists() else "does not exist"
+        console.print(f"[bold red]X ERROR[/]: work directory {detail}: {escape(str(work_path))}")
+        raise SystemExit(1)
+    run_dir = _latest_run_dir(work_path)
+    if run_dir is None:
+        console.print(
+            f"[yellow]no run found under {escape(str(work_path))} "
+            f"- answering without run context[/]"
+        )
+        run_dir = work_path
+    else:
+        _announce_corpus(work_path, run_dir)
+
     console.print(f"[bold cyan]deepzero interactive[/] - model: {model}")
     console.print("type /help for commands, /quit to exit\n")
 
     llm = LLMProvider(model)
-    state_store = StateStore(Path(work_dir))
+    state_store = StateStore(run_dir)
+    # the run says which pipeline wrote it, and the pipeline says where its
+    # findings live and what its verdict key is called, so a pipeline that names
+    # either of them itself is still readable here. resolved once, not per query
+    report_cfg = _report_config_for_run(run_dir)
     history: list[dict[str, str]] = []
 
     sys_prompt = _build_interactive_system_prompt(state_store)
@@ -585,7 +917,9 @@ def interactive(model: str, work_dir: str, verbose: bool):
 
         if user_input == "/help":
             console.print("  /status  - show pipeline run status")
-            console.print("  /findings [filter] - list findings")
+            # escaped, or rich reads the brackets as a style tag and prints
+            # nothing where the argument should be
+            console.print("  /findings \\[filter] - list findings, narrowed to what matches")
             console.print("  /clear   - clear conversation history")
             console.print("  /quit    - exit")
             continue
@@ -599,9 +933,40 @@ def interactive(model: str, work_dir: str, verbose: bool):
                 console.print("  [dim]no run data found[/]")
             continue
 
+        if user_input.startswith("/findings"):
+            from deepzero.engine.report import ReportConfig, collect
+
+            cfg = ReportConfig.from_dict(report_cfg)
+            needle = user_input[len("/findings") :].strip().lower()
+            shown = 0
+            for item in collect(run_dir, config=cfg)["items"]:
+                for finding in item.findings:
+                    line = (
+                        f"  {item.name}  {finding.get('severity', '')}  "
+                        f"{finding.get('rule_id', '')}  {finding.get('message', '')}"
+                    )
+                    if needle and needle not in line.lower():
+                        continue
+                    # a rule's own message routinely contains brackets, which
+                    # rich would either swallow or refuse to parse
+                    console.print(escape(line))
+                    shown += 1
+            if not shown:
+                console.print(
+                    "  [dim]no findings matched[/]" if needle else "  [dim]no findings[/]"
+                )
+            continue
+
         if user_input == "/clear":
             history = [history[0]]
             console.print("  [dim]history cleared[/]")
+            continue
+
+        if user_input.startswith("/"):
+            # otherwise a mistyped command is billed as a chat turn and answered
+            # by the model, which is never what was meant
+            command = escape(user_input.split()[0])
+            console.print(f"  [dim]unknown command {command} - /help lists them[/]")
             continue
 
         history.append({"role": "user", "content": user_input})
@@ -609,7 +974,7 @@ def interactive(model: str, work_dir: str, verbose: bool):
         try:
             response = llm.complete(history)
             history.append({"role": "assistant", "content": response})
-            console.print(f"\n[bold cyan]deepzero>[/] {response}\n")
+            console.print(f"\n[bold cyan]deepzero>[/] {escape(response)}\n")
         except Exception as e:
             console.print(f"[red]llm error ({type(e).__name__}): {e}[/]")
 
@@ -620,12 +985,16 @@ def interactive(model: str, work_dir: str, verbose: bool):
 @click.option("--work-dir", "-w", default="work", help="work directory")
 def serve(host: str, port: int, work_dir: str):
     """start the rest api server"""
+    # the api reads one run, so resolve to one before announcing a url: pointed
+    # at a pipeline root it would otherwise serve an empty answer for everything
+    run_dir = _require_run_dir(work_dir)
+
     if host not in ("127.0.0.1", "localhost", "::1"):
         console.print(
             f"[bold yellow]⚠ binding to {host} - server will be accessible on the network[/]"
         )
     console.print(f"[bold cyan]deepzero serve[/] - http://{host}:{port}")
-    console.print(f"  work_dir: {work_dir}")
+    console.print(f"  work_dir: {run_dir}")
 
     _load_env()
 
@@ -634,18 +1003,31 @@ def serve(host: str, port: int, work_dir: str):
     try:
         import uvicorn
     except ImportError as exc:
-        console.print("[red]uvicorn required: pip install deepzero[serve][/]")
+        # escaped, or rich reads the extra's name as a style tag and prints an
+        # install line that does not install anything
+        console.print("[red]uvicorn required: pip install deepzero\\[serve][/]")
         raise SystemExit(1) from exc
 
-    app = create_app(Path(work_dir))
+    # the run records which pipeline made it, and that pipeline names the key its
+    # verdict is stored under, so the api reports verdicts for a pipeline that
+    # renamed it rather than silently reporting none
+    classification_key = str(
+        _report_config_for_run(run_dir).get("classification_key", "classification")
+        or "classification"
+    )
+
+    try:
+        app = create_app(run_dir, classification_key)
+    except ImportError as exc:
+        console.print(f"[red]{escape(str(exc))}[/]")
+        raise SystemExit(1) from exc
+
     uvicorn.run(app, host=host, port=port)
 
 
-def _print_stats(run_state, manifest: list[dict[str, Any]] | None = None) -> None:
-    # `manifest` is accepted for caller compatibility, but current manifest
-    # entries do not persist per-stage history, so stage statistics must come
-    # from the run state's cached per-stage counters.
-    _ = manifest
+def _print_stats(run_state) -> None:
+    # manifest entries do not persist per-stage history, so stage statistics come
+    # from the run state's cached per-stage counters
     per_stage: dict[str, dict[str, int]] = dict(run_state.stats.get("per_stage", {}))
 
     if not run_state.stages:
@@ -654,49 +1036,43 @@ def _print_stats(run_state, manifest: list[dict[str, Any]] | None = None) -> Non
             console.print(f"  discovered: {discovered}")
         return
 
+    blank = "[dim white]·[/]"
+
     table = Table(show_header=True)
     table.add_column("stage", style="cyan")
     table.add_column("completed", style="green", justify="right")
     table.add_column("filtered", style="yellow", justify="right")
     table.add_column("failed", style="red", justify="right")
+    # a stage everything timed out in would otherwise read as a stage nothing
+    # reached, which is the opposite of what happened and hides the one outcome
+    # a longer budget can change
+    table.add_column("out of time", style="magenta", justify="right")
 
     for i, stage_name in enumerate(run_state.stages):
         if i == 0:
             # first stage is always ingest, stats are held in discovered
             discovered = run_state.stats.get("discovered", 0)
-            table.add_row(
-                stage_name,
-                str(discovered) if discovered else "[dim white]·[/]",
-                "[dim white]·[/]",
-                "[dim white]·[/]",
-            )
+            table.add_row(stage_name, str(discovered) if discovered else blank, blank, blank, blank)
         else:
             counts = per_stage.get(stage_name, {})
             if not counts:
                 # stage completely unstarted (force dim white to strip column colors)
-                table.add_row(
-                    f"[dim white]◦ {stage_name}[/]",
-                    "[dim white]·[/]",
-                    "[dim white]·[/]",
-                    "[dim white]·[/]",
-                )
+                table.add_row(f"[dim white]◦ {stage_name}[/]", blank, blank, blank, blank)
             else:
-                p = counts.get("completed", 0)
-                f = counts.get("filtered", 0)
-                err = counts.get("failed", 0)
-                table.add_row(
-                    stage_name,
-                    str(p) if p else "[dim white]·[/]",
-                    str(f) if f else "[dim white]·[/]",
-                    str(err) if err else "[dim white]·[/]",
-                )
+                cells = [
+                    counts.get("completed", 0),
+                    counts.get("filtered", 0),
+                    counts.get("failed", 0),
+                    counts.get("timed_out", 0),
+                ]
+                table.add_row(stage_name, *(str(n) if n else blank for n in cells))
 
     console.print(table)
 
 
 def _build_interactive_system_prompt(state_store) -> str:
     prompt_parts = [
-        "you are deepzero, an expert binary analysis assistant. "
+        "you are deepzero, an expert vulnerability research assistant. "
         "you help users understand the results of automated analysis pipelines.",
     ]
 
@@ -709,7 +1085,9 @@ def _build_interactive_system_prompt(state_store) -> str:
 
         manifest = state_store.load_manifest()
         if manifest:
-            active = [e for e in manifest if e.get("verdict") in ("active", "completed")]
+            # a sample that finishes the pipeline stays active: the lifecycle
+            # ends at filtered, failed or out of time, and nothing sets completed
+            active = [e for e in manifest if e.get("verdict") == "active"]
             prompt_parts.append(f"\ntotal samples: {len(manifest)}")
             if active:
                 prompt_parts.append(f"active/completed: {len(active)}")

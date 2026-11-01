@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 
 from deepzero.engine.report import (
     BUCKET_CLEAN,
@@ -271,7 +272,8 @@ class TestWriteReport:
 class TestPipelineAgnostic:
     """a completely different pipeline must render without code changes."""
 
-    def _github_run(self, tmp_path):
+    def _github_run(self, tmp_path, extra: int = 0):
+        """Seed one repository; extra adds repositories without findings."""
         work = tmp_path / "work" / "srchunt"
         store = StateStore(work)
         store.save_run(
@@ -305,6 +307,11 @@ class TestPipelineAgnostic:
             ),
             encoding="utf-8",
         )
+        for i in range(extra):
+            more = SampleState(sample_id=f"x{i}", filename=f"acme/lib{i}")
+            more.mark_stage_completed("discover", data={"stars": 10})
+            more.mark_stage_completed("sast", data={"finding_count": 0})
+            store.save_sample(more)
         return work
 
     def test_declared_config_shapes_the_report(self, tmp_path):
@@ -337,6 +344,86 @@ class TestPipelineAgnostic:
         assert "sample" in text
         # no verdict key configured, so nothing can confirm it either way
         assert "Needs assessment" in text
+
+    def test_the_target_is_named_in_the_pipeline_s_own_terms(self, tmp_path):
+        work = self._github_run(tmp_path)
+        index, _ = write_report(
+            work,
+            config=ReportConfig.from_dict({"entity": "repository", "target_label": "organisation"}),
+        )
+        text = index.read_text(encoding="utf-8")
+        # the label as it renders, so a passing stylesheet comment cannot satisfy this
+        assert "<div class='lbl'>organisation</div>" in text
+        assert "<div class='lbl'>corpus</div>" not in text
+
+    def test_the_target_label_defaults_to_corpus(self, tmp_path):
+        work = self._github_run(tmp_path)
+        index, _ = write_report(work)
+        assert "<div class='lbl'>corpus</div>" in index.read_text(encoding="utf-8")
+
+    def test_a_plural_that_an_s_cannot_make(self, tmp_path):
+        work = self._github_run(tmp_path, extra=2)
+        index, _ = write_report(
+            work,
+            config=ReportConfig.from_dict(
+                {"entity": "repository", "entity_plural": "repositories"}
+            ),
+        )
+        text = index.read_text(encoding="utf-8")
+        assert "repositories" in text
+        assert "repositorys" not in text
+
+    def test_a_corpus_of_one_is_not_called_plural(self, tmp_path):
+        work = self._github_run(tmp_path)
+        index, _ = write_report(
+            work,
+            config=ReportConfig.from_dict(
+                {"entity": "repository", "entity_plural": "repositories"}
+            ),
+        )
+        text = index.read_text(encoding="utf-8")
+        assert "1 repository" in text
+        assert "1 repositories" not in text
+
+    def test_the_plural_reaches_the_prose_not_only_the_headline_count(self, tmp_path):
+        work = self._github_run(tmp_path)
+        index, _ = write_report(
+            work,
+            config=ReportConfig.from_dict(
+                {
+                    "entity": "repository",
+                    "entity_plural": "repositories",
+                    "classification_key": "verdict",
+                    "vulnerable_when": ["exploitable"],
+                }
+            ),
+        )
+        text = index.read_text(encoding="utf-8")
+        assert "repositorys" not in text
+        # one flagged repository must read as singular, not "1 repositories"
+        assert "1 repository " in text
+
+    def test_the_plural_falls_back_to_adding_an_s(self, tmp_path):
+        work = self._github_run(tmp_path, extra=2)
+        index, _ = write_report(work, config=ReportConfig.from_dict({"entity": "driver"}))
+        assert "drivers" in index.read_text(encoding="utf-8")
+
+    def test_report_json_carries_the_vocabulary(self, tmp_path):
+        work = self._github_run(tmp_path)
+        write_report(
+            work,
+            config=ReportConfig.from_dict(
+                {
+                    "entity": "repository",
+                    "entity_plural": "repositories",
+                    "target_label": "organisation",
+                }
+            ),
+        )
+        summary = json.loads((work / "report" / "report.json").read_text(encoding="utf-8"))
+        assert summary["entity"] == "repository"
+        assert summary["entity_plural"] == "repositories"
+        assert summary["target_label"] == "organisation"
 
     def test_alien_finding_shape_is_normalized(self, tmp_path):
         work = self._github_run(tmp_path)
@@ -417,18 +504,18 @@ class TestTheReaderCanRecordWhatTheyChecked:
         index, _ = write_report(_seed(tmp_path))
         page = (index.parent / "items" / "aaa1.html").read_text(encoding="utf-8")
         assert 'class="review" data-sid="aaa1"' in page
-        assert 'data-state="confirmed"' in page and 'data-state="outstanding"' in page
+        assert 'data-state="confirmed"' in page and 'data-state="refuted"' in page
 
     def test_marks_saved_beside_the_report_are_rendered(self, tmp_path):
         index, _ = write_report(_seed(tmp_path))
         (index.parent / "marks.json").write_text(
-            json.dumps({"aaa1": {"state": "outstanding", "note": "ACL not checked"}}),
+            json.dumps({"aaa1": {"state": "refuted", "note": "ACL not checked"}}),
             encoding="utf-8",
         )
         index, _ = write_report(_seed(tmp_path))
         text = index.read_text(encoding="utf-8")
         # readable by json, not html-escaped: script content is never decoded
-        assert '{"aaa1": {"state": "outstanding", "note": "ACL not checked"}}' in text
+        assert '{"aaa1": {"state": "refuted", "note": "ACL not checked"}}' in text
 
     def test_a_mark_reaches_the_spreadsheet(self, tmp_path):
         work = _seed(tmp_path)
@@ -479,11 +566,12 @@ class TestAResultThatDidNotHoldUpIsItsOwnOutcome:
     """checked-and-it-failed is a finished piece of work with a definite answer.
     Folding it in with unreviewed loses the most expensive result there is."""
 
-    def test_the_control_offers_all_three(self, tmp_path):
+    def test_the_control_offers_both_answers(self, tmp_path):
         index, _ = write_report(_seed(tmp_path))
         page = (index.parent / "items" / "aaa1.html").read_text(encoding="utf-8")
-        for state in ("confirmed", "refuted", "outstanding"):
+        for state in ("confirmed", "refuted"):
             assert f'data-state="{state}"' in page
+        assert 'data-state="outstanding"' not in page
 
     def test_a_refuted_result_is_rendered_and_filterable(self, tmp_path):
         work = _seed(tmp_path)
@@ -514,3 +602,243 @@ class TestAResultThatDidNotHoldUpIsItsOwnOutcome:
         # filled in by the browser, because marks made there are not saved yet
         index, _ = write_report(_seed(tmp_path))
         assert "id='review-tally'" in index.read_text(encoding="utf-8")
+
+
+class TestTheReportSpeaksThePipelineSLanguage:
+    """the outcomes every pipeline has are structural, but the words for them
+    belong to the pipeline. A licence audit that reports "Vulnerable" over its
+    results is telling the reader something false about what was checked."""
+
+    def _audit_run(self, tmp_path):
+        work = tmp_path / "work" / "licences"
+        store = StateStore(work)
+        store.save_run(
+            RunState(
+                run_id="run_l",
+                pipeline="licences",
+                target="acme/monorepo",
+                model="claude-code/opus",
+                status=RunStatus.COMPLETED,
+            )
+        )
+        bad = SampleState(sample_id="p1", filename="left-pad", source_path="npm/left-pad")
+        bad.mark_stage_completed("resolve", data={"licence": "AGPL-3.0"})
+        bad.mark_stage_completed("check", data={"finding_count": 1})
+        bad.mark_stage_completed("judge", data={"classification": "incompatible"})
+        store.save_sample(bad)
+        return work
+
+    def _cfg(self, **over):
+        base = {
+            "entity": "package",
+            "target_label": "workspace",
+            "vulnerable_when": ["incompatible"],
+            "safe_when": ["compatible"],
+            "lexicon": {
+                "discipline": "licence audit",
+                "positive": "Incompatible",
+                "positive_help": "a review concluded these licences cannot be shipped",
+                "positive_phrase": "found to be incompatible",
+                "nothing_positive": "No incompatible licences were found",
+                "unconfirmed": "Needs review",
+                "negative": "Compatible",
+            },
+        }
+        base.update(over)
+        return ReportConfig.from_dict(base)
+
+    def test_no_vulnerability_wording_survives_a_declared_lexicon(self, tmp_path):
+        index, _ = write_report(self._audit_run(tmp_path), config=self._cfg())
+        text = index.read_text(encoding="utf-8")
+        assert "Incompatible" in text
+        assert "licence audit" in text
+        assert "found to be incompatible" in text
+        # only what a reader sees: internal bucket keys stay stable so saved
+        # marks and report.json consumers keep working across a rename
+        visible = re.sub(r"<[^>]+>", " ", text[text.index("<header") :]).lower()
+        assert "vulnerable" not in visible
+        assert "vulnerability research" not in visible
+
+    def test_the_defaults_still_read_as_vulnerability_research(self, tmp_path):
+        """a pipeline that declares no lexicon must render exactly as before,
+        because every existing pipeline relies on it."""
+        index, _ = write_report(_seed(tmp_path))
+        text = index.read_text(encoding="utf-8")
+        assert "vulnerability research" in text
+        assert "Vulnerable" in text
+        assert "assessed as vulnerable" in text
+
+    def test_a_partial_lexicon_keeps_the_defaults_for_the_rest(self, tmp_path):
+        """declaring one word must not blank out the others."""
+        cfg = ReportConfig.from_dict({"lexicon": {"positive": "Exploitable"}})
+        assert cfg.lexicon.positive == "Exploitable"
+        assert cfg.lexicon.negative == "Clear"
+        assert cfg.lexicon.discipline == "vulnerability research"
+
+    def test_an_unknown_lexicon_key_is_ignored_rather_than_crashing(self, tmp_path):
+        cfg = ReportConfig.from_dict({"lexicon": {"positive": "Bad", "nonsense": "x"}})
+        assert cfg.lexicon.positive == "Bad"
+
+
+class TestClearDoesNotClaimNothingWasFound:
+    """A sample can reach the clear bucket two ways: no finding was raised, or
+    findings were raised and an assessment ruled them out. A label saying
+    "nothing was flagged" is false in the second case, and the second case is the
+    one a reader is most likely to want to question."""
+
+    def _assessed_safe_with_findings(self, tmp_path):
+        work = tmp_path / "work" / "p"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+        s = SampleState(sample_id="a1", filename="a.sys")
+        s.mark_stage_completed("scan", data={"finding_count": 7})
+        s.mark_stage_completed(
+            "assess", artifacts={"llm_output": "a.md"}, data={"classification": "safe"}
+        )
+        store.save_sample(s)
+        (store.sample_dir("a1") / "a.md").write_text("[SAFE] every path is bounded", "utf-8")
+        (store.sample_dir("a1") / "findings.json").write_text(
+            json.dumps([{"rule_id": "r", "severity": "HIGH", "message": "m"}]), "utf-8"
+        )
+        return work
+
+    def test_findings_ruled_out_still_land_in_clear(self, tmp_path):
+        payload = collect(self._assessed_safe_with_findings(tmp_path))
+        item = payload["items"][0]
+        assert item.bucket == BUCKET_CLEAN
+        assert item.finding_count == 1
+
+    def test_the_label_does_not_deny_the_findings_it_holds(self, tmp_path):
+        from deepzero.engine.report import Lexicon, bucket_help, bucket_rule
+
+        lex = Lexicon()
+        assert "nothing was flagged" not in bucket_help(lex)[BUCKET_CLEAN]
+        assert "produced no findings" not in bucket_rule(lex)[BUCKET_CLEAN]
+        # and it explains the case a reader will otherwise read as a contradiction
+        assert "ruled" in bucket_rule(lex)[BUCKET_CLEAN]
+
+
+class TestAssessedMeansAJudgementWasAttempted:
+    """A stage can leave a log beside a sample without having judged anything.
+    Counting that as an assessment reported samples as judged that nothing had
+    looked at, and put them in the outcome that means "judged, but the verdict
+    was not recognised"."""
+
+    def _with_a_log_but_no_judgement(self, tmp_path):
+        work = tmp_path / "work" / "p"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+        s = SampleState(sample_id="a1", filename="a.bin")
+        s.mark_stage_completed("shell", artifacts={"stdout": "run.log"}, data={"exit_code": 0})
+        store.save_sample(s)
+        (store.sample_dir("a1") / "run.log").write_text("ran fine\n", encoding="utf-8")
+        return work
+
+    def test_a_log_from_an_ordinary_stage_is_not_an_assessment(self, tmp_path):
+        payload = collect(self._with_a_log_but_no_judgement(tmp_path))
+        assert payload["totals"]["assessed"] == 0
+        assert payload["items"][0].bucket != "unassessed"
+
+    def test_a_verdict_that_was_not_recognised_still_counts_as_judged(self, tmp_path):
+        """the whole point of the unrecognised outcome: something judged this and
+        the pipeline could not read the answer, which is not the same as nothing
+        having judged it."""
+        work = tmp_path / "work" / "p"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+        s = SampleState(sample_id="a1", filename="a.bin")
+        s.mark_stage_completed("assess", data={"classification": "somethingelse"})
+        store.save_sample(s)
+        payload = collect(work)
+        assert payload["totals"]["assessed"] == 1
+        assert payload["items"][0].bucket == "unassessed"
+
+    def test_an_llm_response_with_no_readable_verdict_counts_as_judged(self, tmp_path):
+        """the built-in llm stage records the file it wrote whenever it got a
+        response, so a verdict its pattern missed is still a judgement attempted
+        rather than a sample nothing looked at."""
+        work = tmp_path / "work" / "p"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+        s = SampleState(sample_id="a1", filename="a.bin")
+        s.mark_stage_completed(
+            "assess", artifacts={"llm_output": "a.md"}, data={"llm_output_file": "a.md"}
+        )
+        store.save_sample(s)
+        (store.sample_dir("a1") / "a.md").write_text("a long preamble, verdict later", "utf-8")
+        payload = collect(work)
+        assert payload["totals"]["assessed"] == 1
+        assert payload["items"][0].bucket == "unassessed"
+
+
+class TestAFindingCanBeOneThingSeenManyTimes:
+    """The same advisory across forty repositories, one root cause behind three
+    thousand crashes, one taint path reached from two entry points: each is one
+    thing to judge, not many. Only the processor knows which, so the identity is
+    read from what it emits and never derived here, since anything derivable
+    would fold in the location and so never match across samples."""
+
+    def _two_samples_sharing(self, tmp_path, finding):
+        work = tmp_path / "work" / "p"
+        store = StateStore(work)
+        store.save_run(RunState(run_id="r", pipeline="p", status=RunStatus.COMPLETED))
+        for sid in ("a", "b"):
+            s = SampleState(sample_id=sid, filename=sid)
+            s.mark_stage_completed(
+                "scan", artifacts={"findings": "findings.json"}, data={"finding_count": 1}
+            )
+            store.save_sample(s)
+            (store.sample_dir(sid) / "findings.json").write_text(
+                json.dumps([finding]), encoding="utf-8"
+            )
+        return work
+
+    def test_a_named_finding_groups_across_samples(self, tmp_path):
+        work = self._two_samples_sharing(
+            tmp_path,
+            {"finding_id": "CVE-2024-1234", "severity": "HIGH", "message": "vulnerable dep"},
+        )
+        groups = collect(work)["finding_groups"]
+        assert len(groups) == 1
+        assert groups[0]["finding_id"] == "CVE-2024-1234"
+        assert sorted(groups[0]["samples"]) == ["a", "b"]
+
+    def test_findings_with_no_name_are_not_grouped_or_shown(self, tmp_path):
+        """the shipping pipelines emit findings with no identity, and their
+        reports must not gain a section that would list every hit again with a
+        count of one."""
+        work = self._two_samples_sharing(
+            tmp_path, {"rule_id": "some.rule", "severity": "HIGH", "message": "a hit"}
+        )
+        payload = collect(work)
+        assert payload["finding_groups"] == []
+        index, _ = write_report(work)
+        assert "Distinct findings" not in index.read_text(encoding="utf-8")
+
+    def test_the_section_appears_when_findings_are_named(self, tmp_path):
+        work = self._two_samples_sharing(
+            tmp_path, {"key": "bug-7", "severity": "HIGH", "message": "one root cause"}
+        )
+        index, _ = write_report(work)
+        text = index.read_text(encoding="utf-8")
+        assert "Distinct findings" in text
+        assert "bug-7" in text
+
+    def test_a_path_is_carried_when_the_evidence_is_one(self, tmp_path):
+        """a taint result is a source, a sink and the route between them, and
+        collapsing that to a line number throws away what makes it judgeable."""
+        work = self._two_samples_sharing(
+            tmp_path,
+            {
+                "rule_id": "taint",
+                "severity": "HIGH",
+                "message": "user input reaches a query",
+                "source": "handlers/api.go:12",
+                "sink": "db/query.go:88",
+                "trace": ["api.go:12", "svc.go:40", "query.go:88"],
+            },
+        )
+        finding = collect(work)["items"][0].findings[0]
+        assert finding["source"] == "handlers/api.go:12"
+        assert finding["sink"] == "db/query.go:88"
+        assert len(finding["trace"]) == 3

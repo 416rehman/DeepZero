@@ -111,6 +111,7 @@ class PipelineDefinition:
             "settings": self.settings,
             "knowledge": self.knowledge,
             "model": self.model,
+            "pipeline_dir": str(self.pipeline_dir),
         }
 
 
@@ -131,8 +132,10 @@ def load_pipeline(
     name = data.get("name", pipeline_dir.name)
     description = data.get("description", "")
     model = model_override or data.get("model", "")
-    settings = data.get("settings", {})
-    knowledge = data.get("knowledge", {})
+    # a block written with nothing under it parses as null, not as an empty
+    # mapping, and every reader here expects to be able to look a key up
+    settings = data.get("settings") or {}
+    knowledge = data.get("knowledge") or {}
 
     if work_dir_override:
         settings["work_dir"] = work_dir_override
@@ -167,7 +170,7 @@ def load_pipeline(
         spec = StageSpec(
             name=stage_name,
             processor=processor_ref,
-            config=raw.get("config", {}),
+            config=raw.get("config") or {},
             parallel=int(raw.get("parallel", 4)),
             on_failure=on_failure,
             max_retries=int(raw.get("max_retries", 0)),
@@ -195,7 +198,7 @@ def load_pipeline(
 
 def _resolve_processors(pipeline: PipelineDefinition) -> None:
     for i, spec in enumerate(pipeline.stage_specs):
-        cls = resolve_processor_class(spec.processor)
+        cls = resolve_processor_class(spec.processor, pipeline.pipeline_dir)
         instance = cls(spec)
 
         if i == 0:
@@ -306,8 +309,6 @@ def _expand_env_vars(obj: Any) -> Any:
 
 
 def _expand_string(s: str) -> str:
-    import re
-
     def _replace(match: re.Match) -> str:
         var = match.group(1)
         if ":-" in var:
@@ -342,7 +343,8 @@ def _check_prompts(pipeline: PipelineDefinition, resolved: dict[str, type]) -> l
     available = set(ALWAYS_PROVIDED)
     # only ever parses, never renders, but it matches how the prompt is rendered
     # at run time so the two cannot disagree about what the template means
-    env = jinja2.Environment(autoescape=jinja2.select_autoescape())
+    # Plain-text prompt syntax validation; no HTML is rendered here.
+    env = jinja2.Environment(autoescape=False)  # nosec B701
 
     for spec in pipeline.stage_specs:
         prompt_ref = str((spec.config or {}).get("prompt", "") or "")
@@ -405,7 +407,7 @@ def validate_pipeline(pipeline_ref: str) -> list[str]:
     resolved: dict[str, type] = {}
     for spec in pipeline.stage_specs:
         try:
-            cls = resolve_processor_class(spec.processor)
+            cls = resolve_processor_class(spec.processor, pipeline.pipeline_dir)
             stype = getattr(cls, "processor_type", None)
             proc_types.append((spec.name, stype))
             resolved[spec.name] = cls
@@ -419,8 +421,12 @@ def validate_pipeline(pipeline_ref: str) -> list[str]:
             log.debug("processor resolution failed for '%s': %s", spec.name, exc)
             proc_types.append((spec.name, None))
 
-    has_map = any(st == ProcessorType.MAP for _, st in proc_types)
-    if not has_map:
+    # a bulk-map stage processes samples too, in one invocation instead of one
+    # per sample, so a pipeline built on one is not missing its work stage
+    processes_samples = any(
+        st in (ProcessorType.MAP, ProcessorType.BULK_MAP) for _, st in proc_types
+    )
+    if not processes_samples:
         warnings.append("no map processors found - pipeline has no sample processing stages")
 
     warnings.extend(_check_prompts(pipeline, resolved))

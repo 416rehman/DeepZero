@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
+import json
 import logging
 import os
+import shutil
 import signal
 import tempfile
 import threading
 import time
 import traceback as tb_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from rich.console import Console
 
@@ -30,8 +33,9 @@ from deepzero.engine.stage import (
     ProcessorResult,
     ReduceProcessor,
     StageSpec,
+    stage_input_digest,
 )
-from deepzero.engine.state import RunState, SampleState, StateStore
+from deepzero.engine.state import RunState, SampleState, StateStore, atomic_replace
 from deepzero.engine.types import RunStatus, SampleStatus, StageStatus, Verdict
 
 log = logging.getLogger("deepzero.runner")
@@ -77,6 +81,7 @@ class PipelineRunner:
         console: Console | None = None,
         dashboard: PipelineDashboard | None = None,
         progress_hook: Callable[[], None] | None = None,
+        refresh_ingest: bool = False,
     ):
         self.ingest = ingest
         self.stages = stages
@@ -90,6 +95,7 @@ class PipelineRunner:
         # called when new results have landed, so a caller can refresh a live
         # view. never allowed to interrupt the run
         self.progress_hook = progress_hook
+        self.refresh_ingest = refresh_ingest
         self._shutdown_event = threading.Event()
         self._original_sigint = None
 
@@ -110,13 +116,143 @@ class PipelineRunner:
         except Exception as exc:  # noqa: BLE001 - a view refresh must never fail a run
             log.debug("progress hook failed: %s", exc)
 
-    def _make_entry(self, state: SampleState) -> ProcessorEntry:
+    def _conclusion_writer(self, spec: StageSpec):
+        """the ctx.conclude a corpus-wide stage gets.
+
+        Recorded on the run rather than on any sample, because that is what it is
+        about, and saved as soon as it is written so an interrupted run still
+        carries the conclusion it had already reached.
+        """
+
+        def conclude(**fields: Any) -> None:
+            run_state = getattr(self, "_active_run_state", None)
+            if run_state is None:
+                log.warning("%s concluded before a run was open; ignored", spec.name)
+                return
+            entry = {k: v for k, v in fields.items() if v is not None}
+            entry["stage"] = spec.name
+            run_state.conclusion = {**run_state.conclusion, **entry}
+            try:
+                self.state_store.save_run(run_state)
+            except OSError as exc:
+                log.warning("could not record the conclusion from %s: %s", spec.name, exc)
+
+        return conclude
+
+    def _digest_for(self, spec: StageSpec) -> str:
+        """this stage's input fingerprint, computed once per run.
+
+        Recomputed per sample it would read the same rule set thousands of times.
+        """
+        if not hasattr(self, "_digest_cache"):
+            self._digest_cache: dict[str, str] = {}
+        if spec.name not in self._digest_cache:
+            processors = [self.ingest] + [proc for _, proc in self.stages]
+            processor = next((p for p in processors if p.spec.name == spec.name), None)
+            own_digest = stage_input_digest(
+                spec,
+                self.pipeline_dir,
+                processor=processor,
+                global_config=self.global_config,
+            )
+            ordered_specs = [self.ingest.spec] + [item for item, _ in self.stages]
+            before = ordered_specs[
+                : next(i for i, item in enumerate(ordered_specs) if item.name == spec.name)
+            ]
+            dependencies = [(item.name, self._digest_for(item)) for item in before]
+            self._digest_cache[spec.name] = hashlib.sha256(
+                json.dumps((own_digest, dependencies)).encode("utf-8")
+            ).hexdigest()[:16]
+        return self._digest_cache[spec.name]
+
+    def _invalidate_from(self, state: SampleState, spec: StageSpec, stage_names: list[str]) -> bool:
+        """Discard a stale result and its consumers, including on-disk caches."""
+        dropped = state.clear_stages_from([spec.name], stage_names)
+        if not dropped:
+            return False
+        sample_dir = self.state_store.sample_dir(state.sample_id, create=False).resolve()
+        samples_root = (self.state_store.work_dir / "samples").resolve()
+        if (
+            samples_root.parent != self.state_store.work_dir.resolve()
+            or sample_dir.parent != samples_root
+        ):
+            raise ValueError(f"cannot invalidate sample outside its store: {state.sample_id}")
+        for paths in dropped.values():
+            for relative in paths:
+                artifact = (sample_dir / relative).resolve()
+                # A processor may expose an external artifact; the engine owns
+                # only files below this sample, never its root or a linked tree.
+                if artifact == sample_dir or not artifact.is_relative_to(sample_dir):
+                    continue
+                if artifact.is_dir():
+                    shutil.rmtree(artifact)
+                else:
+                    artifact.unlink(missing_ok=True)
+        self.state_store.save_sample(state)
+        run_state = getattr(self, "_active_run_state", None)
+        if run_state and run_state.conclusion.get("stage") in dropped:
+            run_state.conclusion = {}
+        return True
+
+    def _prepare_stage(
+        self,
+        spec: StageSpec,
+        processor: Processor,
+        sample_states: dict[str, SampleState],
+        stage_names: list[str],
+    ) -> None:
+        eligible = [s for s in sample_states.values() if s.is_active() or spec.name in s.history]
+        collective = (
+            isinstance(processor, (ReduceProcessor, BulkMapProcessor))
+            or processor.requires_full_cohort
+            or bool(spec.config.get("limit", 0))
+        )
+        if collective:
+            # A barrier's inputs include its membership and upstream results.
+            # In particular, removing a sample must invalidate cached survivors.
+            upstream = stage_names[: stage_names.index(spec.name)]
+            cohort = []
+            for state in sorted(eligible, key=lambda s: s.sample_id):
+                inputs = {
+                    name: {
+                        "status": output.status,
+                        "verdict": output.verdict,
+                        "data": output.data,
+                        "artifacts": output.artifacts,
+                        "digest": output.input_digest,
+                    }
+                    for name in upstream
+                    if (output := state.history.get(name)) is not None
+                }
+                cohort.append((state.sample_id, inputs))
+            fingerprint = json.dumps(cohort, sort_keys=True, default=str).encode("utf-8")
+            base = self._digest_for(spec)
+            self._digest_cache[spec.name] = hashlib.sha256(
+                base.encode("utf-8") + fingerprint
+            ).hexdigest()[:16]
+
+        digest = self._digest_for(spec)
+        dirty = [state for state in eligible if not state.is_stage_done(spec.name, digest)]
+        # Collective stages must reconsider every member together. For maps,
+        # only stale/pending samples and the results consuming them are reset.
+        for state in eligible if collective and dirty else dirty:
+            self._invalidate_from(state, spec, stage_names)
+
+    def _make_entry(self, state: SampleState, spec: StageSpec | None = None) -> ProcessorEntry:
         # centralizes ProcessorEntry construction for map/reduce/batch
+        cache_is_valid = spec is None
+        if spec is not None:
+            previous = state.history.get(spec.name)
+            if previous is not None and previous.input_digest:
+                # the stage ran before with different inputs, so whatever it
+                # wrote beside the sample describes those inputs, not these
+                cache_is_valid = previous.input_digest == self._digest_for(spec)
         return ProcessorEntry(
             sample_id=state.sample_id,
             source_path=Path(state.source_path),
             filename=state.filename,
             sample_dir=self.state_store.sample_dir(state.sample_id),
+            cache_is_valid=cache_is_valid,
             _store=self.state_store,
         )
 
@@ -126,6 +262,8 @@ class PipelineRunner:
         run_state: RunState,
     ) -> RunState:
         self._active_run_state = run_state
+        self._digest_cache = {}
+        self._shutdown_event.clear()
         self._install_signal_handler()
         run_state.mark_running()
         self.state_store.save_run(run_state)
@@ -185,6 +323,19 @@ class PipelineRunner:
         if sample_states is None:
             return run_state
 
+        run_state.stats["per_stage"] = {}
+
+        # Removed processors must not remain visible to prompts or reports.
+        # Ledger insertion order records the old linear pipeline, so its suffix
+        # is invalidated before evaluating the current order.
+        for state in sample_states.values():
+            previous_order = list(state.history)
+            removed = [name for name in previous_order if name not in stage_names]
+            if removed:
+                self._invalidate_from(
+                    state, StageSpec(name=removed[0], processor=""), previous_order
+                )
+
         # breadth-first stage execution
         for spec, processor in self.stages:
             if self._shutdown_event.is_set():
@@ -192,6 +343,8 @@ class PipelineRunner:
                 break
 
             from deepzero.engine.state import StageStatus, Verdict
+
+            self._prepare_stage(spec, processor, sample_states, stage_names)
 
             active = []
             for s in sample_states.values():
@@ -202,11 +355,17 @@ class PipelineRunner:
 
             if not active:
                 log.info("%s: no active samples, skipping", spec.name)
+                run_state.stats["per_stage"][spec.name] = {
+                    "completed": 0,
+                    "filtered": 0,
+                    "failed": 0,
+                    "timed_out": 0,
+                }
                 if self.dashboard:
                     self.dashboard.stage_skip(spec.name)
                 continue
 
-            stage_stats = {"completed": 0, "filtered": 0, "failed": 0}
+            stage_stats = {"completed": 0, "filtered": 0, "failed": 0, "timed_out": 0}
 
             for s in active:
                 output = s.history.get(spec.name)
@@ -217,12 +376,15 @@ class PipelineRunner:
                         stage_stats["filtered"] += 1
                     elif output.status == StageStatus.FAILED:
                         stage_stats["failed"] += 1
+                    elif output.status == StageStatus.TIMED_OUT:
+                        stage_stats["timed_out"] += 1
                     elif output.status == StageStatus.COMPLETED:
                         stage_stats["completed"] += 1
 
             is_fully_cached = False
             if len(active) > 0:
-                pending_count = sum(1 for s in active if not s.is_stage_done(spec.name))
+                digest = self._digest_for(spec)
+                pending_count = sum(1 for s in active if not s.is_stage_done(spec.name, digest))
                 is_fully_cached = pending_count == 0
 
             if self.dashboard:
@@ -232,6 +394,7 @@ class PipelineRunner:
                     passed=stage_stats["completed"],
                     filtered=stage_stats["filtered"],
                     failed=stage_stats["failed"],
+                    timed_out=stage_stats["timed_out"],
                     is_fully_cached=is_fully_cached,
                 )
 
@@ -258,17 +421,24 @@ class PipelineRunner:
             passed = stage_stats["completed"]
             filtered = stage_stats["filtered"]
             failed = stage_stats["failed"]
+            timed_out = stage_stats["timed_out"]
+            # running out of time is reported on its own rather than folded into
+            # either of the outcomes it is not: those samples neither passed nor
+            # went wrong, and a longer budget is what they are waiting on
             log.info(
-                "%s: %d passed, %d filtered, %d failed (%.1fs)",
+                "%s: %d passed, %d filtered, %d failed%s (%.1fs)",
                 spec.name,
                 passed,
                 filtered,
                 failed,
+                f", {timed_out} out of time" if timed_out else "",
                 elapsed,
             )
 
             if self.dashboard:
-                self.dashboard.stage_done(spec.name, passed, filtered, failed, elapsed)
+                self.dashboard.stage_done(
+                    spec.name, passed, filtered, failed, elapsed, timed_out=timed_out
+                )
                 self.dashboard.set_transient_status("syncing state to disk...")
 
             # sync barrier
@@ -299,10 +469,21 @@ class PipelineRunner:
         stage_names: list[str],
     ) -> dict[str, SampleState] | None:
         ingest_name = self.ingest.spec.name
+        ingest_digest = self._digest_for(self.ingest.spec)
+        self._discovery_changed = False
 
-        # fast resume: if states already exist on disk, skip the expensive ingest
+        # Resume the frozen snapshot unless discovery was requested or changed.
         existing_states = self.state_store.list_samples()
-        if existing_states:
+        existing_by_id = {s.sample_id: s for s in existing_states}
+        needs_refresh = self.refresh_ingest or any(
+            ingest_name not in state.history
+            or (
+                state.history[ingest_name].input_digest
+                and state.history[ingest_name].input_digest != ingest_digest
+            )
+            for state in existing_states
+        )
+        if existing_states and not needs_refresh:
             log.info(
                 "resume: found %d existing samples, skipping ingest",
                 len(existing_states),
@@ -340,30 +521,17 @@ class PipelineRunner:
         samples = self.ingest.process(ctx, target)
         elapsed = time.monotonic() - t0
 
+        # Partial discovery after interruption must not replace the last snapshot.
+        if self._shutdown_event.is_set():
+            run_state.mark_interrupted()
+            self.state_store.save_run(run_state)
+            return None
+
         run_state.stats["discovered"] = len(samples)
         run_state.stages = stage_names
         self.state_store.save_run(run_state)
 
         log.info("%s: discovered %d samples (%.1fs)", ingest_name, len(samples), elapsed)
-
-        if not samples or self._shutdown_event.is_set():
-            if self.dashboard:
-                self.dashboard.set_transient_status(None)
-                self.dashboard.stage_done(
-                    ingest_name,
-                    len(samples) if not self._shutdown_event.is_set() else 0,
-                    0,
-                    0,
-                    elapsed,
-                )
-
-            if not samples:
-                run_state.mark_completed()
-            else:
-                run_state.mark_interrupted()
-
-            self.state_store.save_run(run_state)
-            return None
 
         if self.dashboard:
             self.dashboard.set_transient_status(
@@ -371,28 +539,112 @@ class PipelineRunner:
             )
 
         sample_states = {}
+        collisions: list[tuple[str, str, str]] = []
         for sample in samples:
-            state = SampleState(
-                sample_id=sample.sample_id,
-                sha256=sample.data.get("sha256", ""),
-                source_path=str(sample.source_path),
-                filename=sample.filename,
-                verdict=SampleStatus.ACTIVE,
+            # samples are keyed by id from here on, so two sharing one id means
+            # the second replaces the first and the corpus quietly shrinks while
+            # the discovered count still reports both. An ingest deriving its id
+            # from something insufficiently unique is an easy mistake to make and
+            # an almost impossible one to notice later, so it is named here.
+            if sample.sample_id in sample_states:
+                collisions.append(
+                    (
+                        sample.sample_id,
+                        sample_states[sample.sample_id].filename,
+                        sample.filename,
+                    )
+                )
+                continue
+            state = existing_by_id.get(sample.sample_id)
+            previous = state.history.get(ingest_name) if state else None
+            unchanged = (
+                state is not None
+                and previous is not None
+                and state.source_path == str(sample.source_path)
+                and state.filename == sample.filename
+                and previous.data == sample.data
             )
-            state.mark_stage_completed(
-                ingest_name,
-                verdict=Verdict.CONTINUE,
-                data=sample.data,
-            )
-            state.verdict = SampleStatus.ACTIVE
+            if not unchanged:
+                self._discovery_changed = True
+                if state is not None:
+                    self._invalidate_from(state, self.ingest.spec, stage_names)
+                state = SampleState(
+                    sample_id=sample.sample_id,
+                    sha256=sample.data.get("sha256", ""),
+                    source_path=str(sample.source_path),
+                    filename=sample.filename,
+                    verdict=SampleStatus.ACTIVE,
+                )
+                state.mark_stage_completed(
+                    ingest_name,
+                    verdict=Verdict.CONTINUE,
+                    data=sample.data,
+                    input_digest=ingest_digest,
+                )
+                state.verdict = SampleStatus.ACTIVE
+            else:
+                # The discovery config may change membership but leave this
+                # sample untouched, in which case its downstream outputs hold.
+                previous.input_digest = ingest_digest
             sample_states[sample.sample_id] = state
             self.state_store.save_sample(state)
 
+        if collisions:
+            log.error(
+                "%s produced %d sample(s) sharing an id with an earlier one; the "
+                "later ones were dropped. The ingest is deriving ids from "
+                "something that is not unique across this corpus.",
+                ingest_name,
+                len(collisions),
+            )
+            for sid, kept, dropped in collisions[:5]:
+                log.error("  id %s: kept %s, dropped %s", sid, kept, dropped)
+            if len(collisions) > 5:
+                log.error("  ... and %d more", len(collisions) - 5)
+
+        removed_ids = set(existing_by_id) - set(sample_states)
+        self._discovery_changed = self._discovery_changed or bool(removed_ids)
+        for sample_id in removed_ids:
+            sample_dir = self.state_store.sample_dir(sample_id, create=False)
+            samples_root = (self.state_store.work_dir / "samples").resolve()
+            # Keep retired artifacts outside the active store. Never move a
+            # directory that resolves outside the sample store, including links.
+            if (
+                samples_root.parent != self.state_store.work_dir.resolve()
+                or sample_dir.resolve().parent != samples_root
+            ):
+                raise ValueError(f"cannot retire sample outside its store: {sample_id}")
+            archive_root = self.state_store.work_dir / "retired_samples"
+            if archive_root.resolve().parent != self.state_store.work_dir.resolve():
+                raise ValueError("cannot retire samples outside the run directory")
+            archive_root.mkdir(parents=True, exist_ok=True)
+            archive_path = archive_root / f"{sample_dir.name}-{time.time_ns()}"
+            if archive_path.resolve().parent != archive_root.resolve():
+                raise ValueError(f"cannot retire sample outside its archive: {sample_id}")
+            sample_dir.rename(archive_path)
+
+        if self._discovery_changed:
+            run_state.conclusion = {}
+            run_state.stats.pop("per_stage", None)
+        if needs_refresh:
+            log.info(
+                "%s: refreshed snapshot, %d present and %d retired",
+                ingest_name,
+                len(sample_states),
+                len(removed_ids),
+            )
+        run_state.stats["discovered"] = len(sample_states)
         self.state_store.save_manifest(list(sample_states.values()))
+        self.state_store.save_run(run_state)
 
         if self.dashboard:
             self.dashboard.set_transient_status(None)
-            self.dashboard.stage_done(ingest_name, len(samples), 0, 0, elapsed)
+            self.dashboard.stage_done(ingest_name, len(sample_states), 0, 0, elapsed)
+
+        if not sample_states:
+            run_state.mark_completed()
+            self.state_store.save_run(run_state)
+            return None
 
         return sample_states
 
@@ -427,20 +679,21 @@ class PipelineRunner:
 
     def _resolve_parallelism(self, spec: StageSpec, processor: Processor) -> int:
         # explicit `parallel: N` is honored as-is; `parallel: 0` auto-scales to
-        # cpu count but is clamped to the processor's declared ceiling (if any)
+        # cpu count but is clamped to whatever the pipeline's `max_workers`
+        # setting allows and to the processor's own declared ceiling (if any),
         # so heavy stages don't spawn one worker per core.
         parallelism = spec.parallel
         if parallelism > 0:
             return parallelism
         parallelism = os.cpu_count() or 4
-        ceiling = processor.max_parallelism()
-        if ceiling is not None and 0 < ceiling < parallelism:
-            log.info(
-                "%s: capping auto concurrency to %d workers (processor limit)", spec.name, ceiling
-            )
-            parallelism = ceiling
-        else:
-            log.debug("%s: auto-scaled to %d workers", spec.name, parallelism)
+        for ceiling, why in (
+            (processor.max_parallelism(), "processor limit"),
+            (self.default_max_workers, "max_workers setting"),
+        ):
+            if ceiling is not None and 0 < ceiling < parallelism:
+                log.info("%s: capping auto concurrency to %d workers (%s)", spec.name, ceiling, why)
+                parallelism = ceiling
+        log.debug("%s: auto-scaled to %d workers", spec.name, parallelism)
         return parallelism
 
     def _run_map(
@@ -452,7 +705,8 @@ class PipelineRunner:
     ) -> None:
 
         # filter out samples that already completed this stage (resume granularity)
-        pending = [s for s in active if not s.is_stage_done(spec.name)]
+        digest = self._digest_for(spec)
+        pending = [s for s in active if not s.is_stage_done(spec.name, digest)]
         cached = len(active) - len(pending)
         if cached > 0:
             log.info("%s: %d cached, %d pending", spec.name, cached, len(pending))
@@ -534,6 +788,7 @@ class PipelineRunner:
                             passed=1 if outcome == "completed" else 0,
                             filtered=1 if outcome == "filtered" else 0,
                             failed=1 if outcome == "failed" else 0,
+                            timed_out=1 if outcome == "timed_out" else 0,
                         )
                     if len(dirty) >= 50 or time.monotonic() - last_flush > 10:
                         for s in dirty:
@@ -565,6 +820,7 @@ class PipelineRunner:
                     verdict=result.verdict,
                     artifacts=result.artifacts,
                     data=result.data,
+                    input_digest=self._digest_for(spec),
                 )
         elif result.status == StageStatus.TIMED_OUT:
             budget = int((result.data or {}).get("__timeout_budget", spec.timeout) or 0)
@@ -579,6 +835,10 @@ class PipelineRunner:
             state.mark_stage_failed(spec.name, result.error or "processor returned failed status")
             if result.error:
                 log.error("[%s] %s failed: %s", spec.name, state.filename, result.error)
+
+        # Failed, filtered, timed-out and cached outcomes also belong to these
+        # inputs. A changed config can then reconsider them on the next run.
+        state.history[spec.name].input_digest = self._digest_for(spec)
 
         if persist:
             self.state_store.save_sample(state)
@@ -602,7 +862,7 @@ class PipelineRunner:
             progress=_UIProgressAdapter(self.dashboard, spec.name),
             shutdown_event=self._shutdown_event,
         )
-        entry = self._make_entry(state)
+        entry = self._make_entry(state, spec)
         sample_dir.mkdir(parents=True, exist_ok=True)
 
         # optional skip hook (e.g. cached decompilation)
@@ -667,7 +927,7 @@ class PipelineRunner:
                 try:
                     os.write(fd, tb_module.format_exc().encode("utf-8"))
                     os.close(fd)
-                    os.replace(tmp, str(err_log))
+                    atomic_replace(Path(tmp), err_log)
                 except OSError as exc:
                     try:
                         os.close(fd)
@@ -699,6 +959,44 @@ class PipelineRunner:
 
         return ProcessorResult.fail("processor max attempts exceeded")
 
+    def _invoke_stage(
+        self, spec: StageSpec, call: Callable[[], Any]
+    ) -> tuple[Any, Exception | None]:
+        """run a whole-corpus stage under its failure policy.
+
+        Reduce and bulk-map stages are one invocation for the entire corpus
+        rather than one per sample, so `on_failure: retry` and `max_retries`
+        apply to that invocation. Returns what the call produced, or the error
+        it ended on; deciding what a failure means for the samples is the
+        caller's, because a barrier and a batch answer that differently.
+        """
+        attempts = 0
+        max_attempts = spec.max_retries + 1 if spec.on_failure == FailurePolicy.RETRY else 1
+        last: Exception | None = None
+
+        while attempts < max_attempts:
+            attempts += 1
+            try:
+                return call(), None
+            except PROCESSOR_ERRORS as exc:
+                last = exc
+                if self._shutdown_event.is_set():
+                    return None, exc
+                if attempts < max_attempts:
+                    backoff = min(2**attempts, 30)
+                    log.warning(
+                        "[%s] stage failed (attempt %d/%d), retrying in %ds: %s",
+                        spec.name,
+                        attempts,
+                        max_attempts,
+                        backoff,
+                        exc,
+                    )
+                    if self._shutdown_event.wait(backoff):
+                        return None, exc
+
+        return None, last
+
     @staticmethod
     def _reorder(sample_states: dict[str, SampleState], order: list[str]) -> None:
         ranked = [sid for sid in order if sid in sample_states]
@@ -719,6 +1017,20 @@ class PipelineRunner:
         stage_stats: dict[str, int],
     ) -> list[str]:
         """run a reduce stage. returns the ids it kept, in the order it chose."""
+        digest = self._digest_for(spec)
+        if all(state.is_stage_done(spec.name, digest) for state in active):
+            kept = [
+                state
+                for state in active
+                if state.history[spec.name].status == StageStatus.COMPLETED
+                and state.history[spec.name].verdict == Verdict.CONTINUE
+            ]
+            return [
+                state.sample_id
+                for state in sorted(
+                    kept, key=lambda s: s.history[spec.name].data.get("__reduce_order", 0)
+                )
+            ]
         log.info("%s: reducing %d active samples", spec.name, len(active))
         ctx = ProcessorContext(
             pipeline_dir=self.pipeline_dir,
@@ -726,25 +1038,41 @@ class PipelineRunner:
             llm=self.llm,
             progress=_UIProgressAdapter(self.dashboard, spec.name),
             shutdown_event=self._shutdown_event,
+            conclude=self._conclusion_writer(spec),
         )
-        entries = [self._make_entry(state) for state in active]
-        try:
-            results = processor.process(ctx, entries)
-        except PROCESSOR_ERRORS as exc:
-            log.error("  reduce processor '%s' crashed: %s", spec.name, exc)
+        entries = [self._make_entry(state, spec) for state in active]
+        results, error = self._invoke_stage(spec, lambda: processor.process(ctx, entries))
+        if error is not None:
+            # a barrier decides who survives, so a barrier that did not run has
+            # nothing to apply: every active sample carries on, unranked. Said
+            # plainly, because a corpus meant to be cut to its best few arriving
+            # at the next stage whole is expensive and easy to miss in a log.
+            log.error(
+                "%s: reduce processor crashed (%s) - nothing was ranked or dropped, "
+                "all %d active samples continue",
+                spec.name,
+                error,
+                len(active),
+            )
+            if spec.on_failure == FailurePolicy.ABORT:
+                self._shutdown_event.set()
             return []
 
         kept_ids = set(results)
+        ranks = {sample_id: i for i, sample_id in enumerate(results)}
         for state in active:
             if state.sample_id in kept_ids:
-                if not state.is_stage_done(spec.name):
-                    state.mark_stage_completed(spec.name, verdict=Verdict.CONTINUE)
-                    stage_stats["completed"] += 1
+                state.mark_stage_completed(
+                    spec.name,
+                    verdict=Verdict.CONTINUE,
+                    data={"__reduce_order": ranks[state.sample_id]},
+                    input_digest=digest,
+                )
+                stage_stats["completed"] += 1
             else:
-                if not state.is_stage_done(spec.name):
-                    state.verdict = SampleStatus.FILTERED
-                    state.mark_stage_skipped(spec.name, "filtered by reduce")
-                    stage_stats["filtered"] += 1
+                state.mark_stage_skipped(spec.name, "filtered by reduce")
+                state.history[spec.name].input_digest = digest
+                stage_stats["filtered"] += 1
             self.state_store.save_sample(state)
 
         return list(results)
@@ -759,7 +1087,7 @@ class PipelineRunner:
         stage_stats: dict[str, int],
     ) -> None:
         # filter out already-completed samples (resume)
-        pending = [s for s in active if not s.is_stage_done(spec.name)]
+        pending = [s for s in active if not s.is_stage_done(spec.name, self._digest_for(spec))]
         cached = len(active) - len(pending)
         if cached > 0:
             log.info("  %d already completed (cached), %d pending", cached, len(pending))
@@ -769,26 +1097,31 @@ class PipelineRunner:
         if not pending:
             return
 
-        entries = [self._make_entry(state) for state in pending]
+        entries = [self._make_entry(state, spec) for state in pending]
 
         log.info("%s: batch processing %d samples", spec.name, len(entries))
 
-        try:
-            ctx = ProcessorContext(
-                pipeline_dir=self.pipeline_dir,
-                global_config=self.global_config,
-                llm=self.llm,
-                progress=_UIProgressAdapter(self.dashboard, spec.name),
-                shutdown_event=self._shutdown_event,
-            )
-            results = processor.process(ctx, entries)
-        except PROCESSOR_ERRORS as exc:
+        ctx = ProcessorContext(
+            pipeline_dir=self.pipeline_dir,
+            global_config=self.global_config,
+            llm=self.llm,
+            progress=_UIProgressAdapter(self.dashboard, spec.name),
+            shutdown_event=self._shutdown_event,
+            conclude=self._conclusion_writer(spec),
+        )
+        results, error = self._invoke_stage(spec, lambda: processor.process(ctx, entries))
+
+        if error is not None:
+            # a crash immediately after ctrl+c is the shutdown reaching the
+            # external process, not the batch failing, so let the flag arrive
+            # before every sample is blamed for it
             if self._shutdown_event.wait(0.25):
                 return
-            log.error("  batch processor '%s' crashed: %s", spec.name, exc)
+            log.error("  batch processor '%s' crashed: %s", spec.name, error)
             for state in pending:
-                state.mark_stage_failed(spec.name, f"batch processor crashed: {exc}")
-                self.state_store.save_sample(state)
+                self._apply_result(
+                    state, spec, ProcessorResult.fail(f"batch processor crashed: {error}")
+                )
                 stage_stats["failed"] += 1
                 if self.dashboard:
                     self.dashboard.stage_update(spec.name, advance=1, failed=1)
@@ -801,21 +1134,12 @@ class PipelineRunner:
 
             if i < len(results):
                 result = results[i]
-                if result.status == StageStatus.COMPLETED:
-                    state.mark_stage_completed(
-                        spec.name,
-                        verdict=result.verdict,
-                        artifacts=result.artifacts,
-                        data=result.data,
-                    )
-                else:
-                    state.mark_stage_failed(spec.name, result.error or "batch item failed")
             else:
-                state.mark_stage_failed(
-                    spec.name, "batch processor returned fewer results than entries"
-                )
+                result = ProcessorResult.fail("batch processor returned fewer results than entries")
 
-            self.state_store.save_sample(state)
+            # the same path a map stage's result takes, so a batch honors
+            # on_failure and records running out of time the same way
+            self._apply_result(state, spec, result)
             outcome = self._classify_outcome(state, spec.name)
             stage_stats[outcome] += 1
             if self.dashboard:
@@ -835,7 +1159,7 @@ class PipelineRunner:
             return "failed"
         if output.status == StageStatus.COMPLETED and output.verdict == Verdict.FILTER:
             return "filtered"
-        if output.status in (StageStatus.FILTERED, StageStatus.FAILED):
+        if output.status in (StageStatus.FILTERED, StageStatus.FAILED, StageStatus.TIMED_OUT):
             return output.status.value
         return "completed"
 
@@ -849,12 +1173,34 @@ class PipelineRunner:
         if timeout <= 0:
             return processor.process(ctx, entry)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(processor.process, ctx, entry)
+        outcome: dict[str, Any] = {}
+        finished = threading.Event()
+
+        def _call() -> None:
             try:
-                return future.result(timeout=timeout)
-            except concurrent.futures.TimeoutError:
-                raise TimeoutError(f"processor timed out after {timeout}s")
+                outcome["result"] = processor.process(ctx, entry)
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the calling thread
+                outcome["error"] = exc
+            finally:
+                finished.set()
+
+        # a bare daemon thread rather than a pool: nothing can stop a thread
+        # that is already running, so the only way to honor the budget is to
+        # stop waiting on it. A pool joins its worker on the way out, which
+        # would hand back "timed out after 30s" half an hour later, and a
+        # non-daemon thread would go on to hold the interpreter open at exit.
+        # The stage moves on and the sample is recorded as out of time.
+        worker = threading.Thread(
+            target=_call, name=f"deepzero-{entry.sample_id[:12]}", daemon=True
+        )
+        worker.start()
+        if not finished.wait(timeout):
+            raise TimeoutError(f"processor timed out after {timeout}s")
+
+        error = outcome.get("error")
+        if error is not None:
+            raise error
+        return outcome["result"]
 
     def _generate_context_files(self, sample_states: dict[str, SampleState]) -> None:
         active_items = [(sid, state) for sid, state in sample_states.items() if state.is_active()]
@@ -895,8 +1241,8 @@ class PipelineRunner:
             try:
                 processor.teardown()
             except (RuntimeError, ValueError, OSError, AttributeError) as e:
-                errors.append(f"{processor.name}: {e}")
-                log.warning("processor '%s' teardown error: %s", processor.name, e)
+                errors.append(f"{processor.spec.name}: {e}")
+                log.warning("processor '%s' teardown error: %s", processor.spec.name, e)
         try:
             self.ingest.teardown()
         except (RuntimeError, ValueError, OSError, AttributeError) as e:

@@ -41,6 +41,11 @@ class StageInfo:
     passed: int = 0
     filtered: int = 0
     failed: int = 0
+    # a sample that ran out of time neither passed nor went wrong. Without a
+    # bucket of its own it advanced the bar and incremented nothing, so the
+    # row's counters summed to less than the stage's input and the one outcome
+    # a longer budget can change was the one the table did not show.
+    timed_out: int = 0
     elapsed_s: float = 0.0
     is_ingest: bool = False
     is_fully_cached: bool = False
@@ -119,6 +124,7 @@ class PipelineDashboard:
         filtered: int = 0,
         failed: int = 0,
         is_fully_cached: bool = False,
+        timed_out: int = 0,
     ) -> None:
         info = self._stages.get(name)
         if not info:
@@ -128,6 +134,7 @@ class PipelineDashboard:
         info.passed = passed
         info.filtered = filtered
         info.failed = failed
+        info.timed_out = timed_out
         info.is_fully_cached = is_fully_cached
         self._active_stage = name
 
@@ -148,12 +155,14 @@ class PipelineDashboard:
         passed: int = 0,
         filtered: int = 0,
         failed: int = 0,
+        timed_out: int = 0,
     ) -> None:
         info = self._stages.get(name)
         if info:
             info.passed += passed
             info.filtered += filtered
             info.failed += failed
+            info.timed_out += timed_out
 
         if self._progress_task_id is not None and self._active_stage == name:
             if advance:
@@ -172,6 +181,7 @@ class PipelineDashboard:
         filtered: int,
         failed: int,
         elapsed_s: float,
+        timed_out: int = 0,
     ) -> None:
         info = self._stages.get(name)
         if not info:
@@ -180,6 +190,7 @@ class PipelineDashboard:
         info.passed = passed
         info.filtered = filtered
         info.failed = failed
+        info.timed_out = timed_out
         info.elapsed_s = elapsed_s
 
         # clear progress bar
@@ -256,6 +267,10 @@ class PipelineDashboard:
         table.add_column("passed", justify="right", style="green", min_width=7)
         table.add_column("filtered", justify="right", style="yellow", min_width=8)
         table.add_column("failed", justify="right", style="red", min_width=7)
+        # magenta rather than red: running out of time is not a failure, and the
+        # colour matches the same column in `deepzero status` so one outcome does
+        # not read as two different things across the two surfaces
+        table.add_column("out of time", justify="right", style="magenta", min_width=11)
         table.add_column("time", justify="right", style="dim", min_width=7)
 
         for name in self._stage_order:
@@ -264,6 +279,7 @@ class PipelineDashboard:
             if info.state == StageState.PENDING:
                 table.add_row(
                     f"[dim]{_GLYPH_PENDING} {info.name}[/]",
+                    "[dim]·[/]",
                     "[dim]·[/]",
                     "[dim]·[/]",
                     "[dim]·[/]",
@@ -279,11 +295,13 @@ class PipelineDashboard:
                     f"{info.passed:,}",
                     _zero_or_val(info.filtered, info.is_ingest),
                     _zero_or_val(info.failed, info.is_ingest),
+                    _zero_or_val(info.timed_out, info.is_ingest),
                     "[dim]…[/]",
                 )
             elif info.state == StageState.SKIPPED:
                 table.add_row(
                     f"[dim]{_GLYPH_SKIPPED} {info.name}[/]",
+                    "[dim]·[/]",
                     "[dim]·[/]",
                     "[dim]·[/]",
                     "[dim]·[/]",
@@ -299,6 +317,7 @@ class PipelineDashboard:
                     f"{info.passed:,}",
                     _zero_or_val(info.filtered, info.is_ingest),
                     _zero_or_val(info.failed, info.is_ingest),
+                    _zero_or_val(info.timed_out, info.is_ingest),
                     time_str,
                 )
             elif info.state == StageState.DONE:
@@ -314,6 +333,7 @@ class PipelineDashboard:
                     f"{info.passed:,}",
                     _zero_or_val(info.filtered, info.is_ingest),
                     _zero_or_val(info.failed, info.is_ingest),
+                    _zero_or_val(info.timed_out, info.is_ingest),
                     time_str,
                 )
 
@@ -323,7 +343,9 @@ class PipelineDashboard:
 def _zero_or_val(count: int, is_ingest: bool) -> str:
     if is_ingest:
         return "[dim]·[/]"
-    return str(count) if count > 0 else "[dim]·[/]"
+    # grouped like the `in` and `passed` columns beside it: a five-figure filtered
+    # count rendered as 12595 next to 12,595 reads as a different magnitude
+    return f"{count:,}" if count > 0 else "[dim]·[/]"
 
 
 def _format_elapsed(seconds: float) -> str:

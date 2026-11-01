@@ -1,0 +1,851 @@
+# untrusted input reaching an interpreter: SQL, the shell, a template engine,
+# an LDAP filter, a document query.
+#
+# every rule here is taint mode. the shape of a query or a command says nothing
+# on its own - the same call is correct with a literal and fatal with a request
+# parameter - so matching the sink alone is what buries a reviewer in results.
+#
+# the anchors below are the request accessors each framework exposes. they are
+# shared by every rule in this file, so a source added once is picked up by all
+# of them.
+
+x-shared:
+  # flask and quart resolve through the import. django and DRF take the request
+  # as a parameter, so it can only be recognised by the parameter name.
+  python-request-sources: &python-request-sources
+    - pattern-either:
+        - pattern: flask.request.args
+        - pattern: flask.request.form
+        - pattern: flask.request.values
+        - pattern: flask.request.json
+        - pattern: flask.request.data
+        - pattern: flask.request.files
+        - pattern: flask.request.cookies
+        - pattern: flask.request.headers
+        - pattern: flask.request.get_json(...)
+        - pattern: flask.request.get_data(...)
+    - patterns:
+        - pattern-inside: |
+            def $VIEW(..., $REQ, ...):
+                ...
+        - metavariable-regex:
+            metavariable: $REQ
+            regex: ^(request|req)$
+        - pattern-either:
+            - pattern: $REQ.GET
+            - pattern: $REQ.POST
+            - pattern: $REQ.body
+            - pattern: $REQ.data
+            - pattern: $REQ.query_params
+            - pattern: $REQ.COOKIES
+            - pattern: $REQ.headers
+            - pattern: $REQ.FILES
+
+  javascript-request-sources: &javascript-request-sources
+    - patterns:
+        - pattern-either:
+            - pattern: $REQ.query
+            - pattern: $REQ.body
+            - pattern: $REQ.params
+            - pattern: $REQ.cookies
+            - pattern: $REQ.headers
+            - pattern: $REQ.get(...)
+        - metavariable-regex:
+            metavariable: $REQ
+            regex: ^(req|request|ctx|ctx\.request|context\.request)$
+
+  go-request-sources: &go-request-sources
+    - pattern-either:
+        - pattern: $R.URL.Query()
+        - pattern: $R.URL.RawQuery
+        - pattern: $R.URL.Path
+        - pattern: $R.FormValue(...)
+        - pattern: $R.PostFormValue(...)
+        - pattern: $R.Form
+        - pattern: $R.PostForm
+        - pattern: $R.MultipartForm
+        - pattern: $R.Header.Get(...)
+        - pattern: $R.Body
+        - pattern: mux.Vars($R)
+    - patterns:
+        - pattern-either:
+            - pattern: $C.Param(...)
+            - pattern: $C.Query(...)
+            - pattern: $C.DefaultQuery(...)
+            - pattern: $C.PostForm(...)
+            - pattern: $C.GetHeader(...)
+        - metavariable-regex:
+            metavariable: $C
+            regex: ^(c|ctx|g|gc)$
+
+  java-request-sources: &java-request-sources
+    - pattern-either:
+        - pattern: $REQ.getParameter(...)
+        - pattern: $REQ.getParameterValues(...)
+        - pattern: $REQ.getParameterMap()
+        - pattern: $REQ.getHeader(...)
+        - pattern: $REQ.getQueryString()
+        - pattern: $REQ.getCookies()
+        - pattern: $REQ.getInputStream()
+        - pattern: $REQ.getReader()
+        - pattern: $REQ.getPathInfo()
+    # spring binds the request onto annotated handler parameters, so every use
+    # of one of those parameters is untrusted
+    - patterns:
+        - pattern-either:
+            - pattern-inside: |
+                $RET $HANDLER(..., @$ANN(...) $TYPE $P, ...) { ... }
+            - pattern-inside: |
+                $RET $HANDLER(..., @$ANN $TYPE $P, ...) { ... }
+        - metavariable-regex:
+            metavariable: $ANN
+            regex: ^(RequestParam|PathVariable|RequestBody|RequestHeader|CookieValue|ModelAttribute|RequestPart)$
+        - pattern: $P
+
+  # `params` is the rails idiom; a non-rails local of that name is the price
+  ruby-request-sources: &ruby-request-sources
+    - pattern-either:
+        - pattern: params
+        - pattern: request.params
+        - pattern: request.query_parameters
+        - pattern: request.request_parameters
+        - pattern: request.body
+        - pattern: request.headers[...]
+        - pattern: cookies
+
+  # $_SERVER is deliberately absent: most of it is set by the deployment, and
+  # DOCUMENT_ROOT reaching a file path is not a finding
+  php-request-sources: &php-request-sources
+    - pattern-either:
+        - pattern: $_GET
+        - pattern: $_POST
+        - pattern: $_REQUEST
+        - pattern: $_COOKIE
+        - pattern: $_FILES
+        - pattern: file_get_contents("php://input")
+
+  csharp-request-sources: &csharp-request-sources
+    - pattern-either:
+        - pattern: $REQ.Query
+        - pattern: $REQ.Form
+        - pattern: $REQ.QueryString
+        - pattern: $REQ.Params
+        - pattern: $REQ.Headers
+        - pattern: $REQ.Cookies
+        - pattern: $REQ.Body
+        - pattern: $REQ.ReadFormAsync(...)
+
+rules:
+  # ---------------------------------------------------------------- SQL ------
+
+  - id: python-sql-injection
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is concatenated into a SQL statement. An attacker who
+      controls this parameter can read or modify every table the database
+      account can reach, and on most engines escalate to reading files on
+      the database host.
+    metadata:
+      vuln_class: "SQL Injection"
+      cwe: "CWE-89"
+      exploitability: "HIGH"
+      confidence: "high: only the statement argument is a sink, so placeholder parameters are not flagged"
+    pattern-sources: *python-request-sources
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      - pattern: psycopg2.sql.Identifier(...)
+      - pattern: psycopg2.sql.Literal(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $CURSOR.execute($QUERY, ...)
+              - pattern: $CURSOR.executemany($QUERY, ...)
+              - pattern: $CURSOR.executescript($QUERY)
+              - pattern: sqlalchemy.text($QUERY)
+              - pattern: $MODEL.objects.raw($QUERY, ...)
+              - pattern: $MODEL.raw($QUERY, ...)
+          - focus-metavariable: $QUERY
+
+  - id: javascript-sql-injection
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is concatenated into a SQL statement. An attacker who
+      controls this parameter can read or modify every table the database
+      account can reach, and stack a second statement on drivers that allow it.
+    metadata:
+      vuln_class: "SQL Injection"
+      cwe: "CWE-89"
+      exploitability: "HIGH"
+      confidence: "high: only the statement argument is a sink, so bound parameters and escaped values are not flagged"
+    pattern-sources: *javascript-request-sources
+    pattern-sanitizers:
+      - pattern: $X.escape(...)
+      - pattern: $X.escapeId(...)
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.query($QUERY, ...)
+              - pattern: $DB.execute($QUERY, ...)
+              - pattern: $DB.raw($QUERY, ...)
+              - pattern: $DB.unsafe($QUERY, ...)
+              - pattern: $DB.$M.query($QUERY, ...)
+              - pattern: sequelize.query($QUERY, ...)
+              - pattern: knex.raw($QUERY, ...)
+          - focus-metavariable: $QUERY
+
+  - id: go-sql-injection
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a SQL statement string. An attacker who controls
+      this value can read or modify every table the database account can
+      reach; database/sql placeholders would have made the value inert.
+    metadata:
+      vuln_class: "SQL Injection"
+      cwe: "CWE-89"
+      exploitability: "HIGH"
+      confidence: "high: only the statement argument is a sink, so values passed as query arguments are not flagged"
+    pattern-sources: *go-request-sources
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+      - pattern: strconv.ParseFloat(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.Query($QUERY, ...)
+              - pattern: $DB.QueryRow($QUERY, ...)
+              - pattern: $DB.Exec($QUERY, ...)
+              - pattern: $DB.Prepare($QUERY)
+              - pattern: $DB.QueryContext($CTX, $QUERY, ...)
+              - pattern: $DB.QueryRowContext($CTX, $QUERY, ...)
+              - pattern: $DB.ExecContext($CTX, $QUERY, ...)
+              - pattern: $DB.Raw($QUERY, ...)
+              - pattern: $DB.Where($QUERY, ...)
+          - focus-metavariable: $QUERY
+
+  - id: java-sql-injection
+    languages: [java]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is concatenated into a SQL or JPQL statement. An attacker
+      who controls this parameter can read or modify every table the database
+      account can reach, and on some drivers stack a second statement.
+    metadata:
+      vuln_class: "SQL Injection"
+      cwe: "CWE-89"
+      exploitability: "HIGH"
+      confidence: "high: only the statement argument is a sink, so a PreparedStatement built from a constant with bound parameters is not flagged"
+    pattern-sources: *java-request-sources
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: UUID.fromString(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $STMT.executeQuery($QUERY)
+              - pattern: $STMT.executeUpdate($QUERY)
+              - pattern: $STMT.execute($QUERY)
+              - pattern: $STMT.addBatch($QUERY)
+              - pattern: $CONN.prepareStatement($QUERY, ...)
+              - pattern: $CONN.prepareCall($QUERY, ...)
+              - pattern: $EM.createQuery($QUERY, ...)
+              - pattern: $EM.createNativeQuery($QUERY, ...)
+              - pattern: $JDBC.query($QUERY, ...)
+              - pattern: $JDBC.queryForObject($QUERY, ...)
+              - pattern: $JDBC.queryForList($QUERY, ...)
+              - pattern: $JDBC.update($QUERY, ...)
+          - focus-metavariable: $QUERY
+
+  - id: ruby-sql-injection
+    languages: [ruby]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is interpolated into a SQL fragment. An attacker who
+      controls this parameter can read or modify every table the database
+      account can reach; the array or hash form of the same call would have
+      bound it instead.
+    metadata:
+      vuln_class: "SQL Injection"
+      cwe: "CWE-89"
+      exploitability: "HIGH"
+      confidence: "medium: `params` is matched by name, so a non-rails local called params reads as untrusted"
+    pattern-sources: *ruby-request-sources
+    pattern-sanitizers:
+      - pattern: $X.to_i
+      - pattern: $X.to_f
+      - pattern: Integer(...)
+      - pattern: $CONN.quote(...)
+      - pattern: ActiveRecord::Base.connection.quote(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $M.where($QUERY, ...)
+              - pattern: $M.find_by_sql($QUERY, ...)
+              - pattern: $M.order($QUERY, ...)
+              - pattern: $M.group($QUERY, ...)
+              - pattern: $M.having($QUERY, ...)
+              - pattern: $M.joins($QUERY, ...)
+              - pattern: $M.select($QUERY, ...)
+              - pattern: $CONN.execute($QUERY, ...)
+              - pattern: $CONN.exec_query($QUERY, ...)
+          - focus-metavariable: $QUERY
+
+  - id: php-sql-injection
+    languages: [php]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is concatenated into a SQL statement. An attacker who
+      controls this parameter can read or modify every table the database
+      account can reach, and on MySQL read local files through the same query.
+    metadata:
+      vuln_class: "SQL Injection"
+      cwe: "CWE-89"
+      exploitability: "HIGH"
+      confidence: "high: only the statement argument is a sink, so prepared statements with bound parameters are not flagged"
+    pattern-sources: *php-request-sources
+    pattern-sanitizers:
+      - pattern: intval(...)
+      - pattern: floatval(...)
+      - pattern: mysqli_real_escape_string(...)
+      - pattern: $CONN->real_escape_string(...)
+      - pattern: $CONN->quote(...)
+      - pattern: pg_escape_literal(...)
+      - pattern: pg_escape_string(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: mysqli_query($CONN, $QUERY, ...)
+              - pattern: mysqli_multi_query($CONN, $QUERY)
+              - pattern: mysqli_prepare($CONN, $QUERY)
+              - pattern: mysql_query($QUERY, ...)
+              - pattern: pg_query($CONN, $QUERY)
+              - pattern: $CONN->query($QUERY, ...)
+              - pattern: $CONN->exec($QUERY)
+              - pattern: $CONN->prepare($QUERY, ...)
+          - focus-metavariable: $QUERY
+
+  - id: csharp-sql-injection
+    languages: [csharp]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is concatenated into a SQL statement. An attacker who
+      controls this parameter can read or modify every table the database
+      account can reach, and stack a second statement after it.
+    metadata:
+      vuln_class: "SQL Injection"
+      cwe: "CWE-89"
+      exploitability: "HIGH"
+      confidence: "high: only the command text is a sink, so SqlParameter values are not flagged"
+    pattern-sources: *csharp-request-sources
+    pattern-sanitizers:
+      - pattern: int.Parse(...)
+      - pattern: Int32.Parse(...)
+      - pattern: int.TryParse(...)
+      - pattern: Guid.Parse(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: new SqlCommand($QUERY, ...)
+              - pattern: new SqlDataAdapter($QUERY, ...)
+              - pattern: new MySqlCommand($QUERY, ...)
+              - pattern: new NpgsqlCommand($QUERY, ...)
+              - pattern: new OleDbCommand($QUERY, ...)
+              - pattern: $CMD.CommandText = $QUERY
+              - pattern: $CTX.Database.ExecuteSqlRaw($QUERY, ...)
+              - pattern: $CTX.Database.ExecuteSqlCommand($QUERY, ...)
+              - pattern: $SET.FromSqlRaw($QUERY, ...)
+          - focus-metavariable: $QUERY
+
+  # ------------------------------------------------------------ command ------
+
+  - id: python-command-injection
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a shell command line. An attacker who controls this
+      parameter runs arbitrary commands as the service account, with its
+      filesystem access and its network position.
+    metadata:
+      vuln_class: "OS Command Injection"
+      cwe: "CWE-78"
+      exploitability: "CRITICAL"
+      confidence: "high: sinks are limited to calls that invoke a shell, so an argument list passed to subprocess without shell=True is not flagged"
+    pattern-sources: *python-request-sources
+    pattern-sanitizers:
+      - pattern: shlex.quote(...)
+      - pattern: int(...)
+    pattern-sinks:
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - pattern: subprocess.getoutput(...)
+      - pattern: subprocess.getstatusoutput(...)
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.run($CMD, ..., shell=True, ...)
+              - pattern: subprocess.call($CMD, ..., shell=True, ...)
+              - pattern: subprocess.check_call($CMD, ..., shell=True, ...)
+              - pattern: subprocess.check_output($CMD, ..., shell=True, ...)
+              - pattern: subprocess.Popen($CMD, ..., shell=True, ...)
+          - focus-metavariable: $CMD
+
+  - id: javascript-command-injection
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a shell command line. An attacker who controls this
+      parameter runs arbitrary commands as the node process, which on most
+      deployments owns the application code it is serving.
+    metadata:
+      vuln_class: "OS Command Injection"
+      cwe: "CWE-78"
+      exploitability: "CRITICAL"
+      confidence: "high: exec and execSync always spawn a shell; spawn with an argument array is not flagged"
+    pattern-sources: *javascript-request-sources
+    pattern-sanitizers:
+      - pattern: shellQuote.quote(...)
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $CP.exec($CMD, ...)
+              - pattern: $CP.execSync($CMD, ...)
+              - pattern: child_process.exec($CMD, ...)
+              - pattern: child_process.execSync($CMD, ...)
+              - pattern: exec($CMD, ...)
+              - pattern: execSync($CMD, ...)
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern-either:
+              - pattern: "$CP.spawn($CMD, ..., {..., shell: true, ...}, ...)"
+              - pattern: "$CP.spawnSync($CMD, ..., {..., shell: true, ...}, ...)"
+          - focus-metavariable: $CMD
+
+  - id: go-command-injection
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data chooses the program to run or the shell line to run it with.
+      An attacker who controls this value executes arbitrary commands as the
+      service account.
+    metadata:
+      vuln_class: "OS Command Injection"
+      cwe: "CWE-78"
+      exploitability: "CRITICAL"
+      confidence: "high: taint is required on the program name or on the -c argument, so tainted values passed as separate argv entries are not flagged"
+    pattern-sources: *go-request-sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command($CMD, ...)
+              - pattern: exec.CommandContext($CTX, $CMD, ...)
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command($SH, "-c", $CMD, ...)
+              - pattern: exec.CommandContext($CTX, $SH, "-c", $CMD, ...)
+          - focus-metavariable: $CMD
+
+  - id: java-command-injection
+    languages: [java]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a process launch. An attacker who controls this
+      parameter runs arbitrary commands as the application server account,
+      which normally can read the application's own credentials.
+    metadata:
+      vuln_class: "OS Command Injection"
+      cwe: "CWE-78"
+      exploitability: "CRITICAL"
+      confidence: "high: Runtime.exec with a single string goes through a shell-like split, and a tainted element of a ProcessBuilder list still chooses arguments"
+    pattern-sources: *java-request-sources
+    pattern-sinks:
+      - pattern: $RT.exec(...)
+      - pattern: new ProcessBuilder(...)
+      - pattern: $PB.command(...)
+
+  - id: ruby-command-injection
+    languages: [ruby]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a shell command line. An attacker who controls this
+      parameter runs arbitrary commands as the application account.
+    metadata:
+      vuln_class: "OS Command Injection"
+      cwe: "CWE-78"
+      exploitability: "CRITICAL"
+      confidence: "medium: the single-string form of these calls goes through a shell; the multi-argument form does not, and is not distinguished here"
+    pattern-sources: *ruby-request-sources
+    pattern-sanitizers:
+      - pattern: Shellwords.escape(...)
+      - pattern: Shellwords.shellescape(...)
+      - pattern: $X.to_i
+    pattern-sinks:
+      - pattern: system(...)
+      - pattern: exec(...)
+      - pattern: spawn(...)
+      - pattern: IO.popen(...)
+      - pattern: Open3.capture2(...)
+      - pattern: Open3.capture3(...)
+      - pattern: Open3.popen3(...)
+      - pattern: Kernel.system(...)
+      - pattern: Kernel.exec(...)
+
+  - id: php-command-injection
+    languages: [php]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a shell command line. An attacker who controls this
+      parameter runs arbitrary commands as the web server account and can write
+      a webshell into the document root.
+    metadata:
+      vuln_class: "OS Command Injection"
+      cwe: "CWE-78"
+      exploitability: "CRITICAL"
+      confidence: "high: every sink here passes its argument to a shell"
+    pattern-sources: *php-request-sources
+    pattern-sanitizers:
+      - pattern: escapeshellarg(...)
+      - pattern: escapeshellcmd(...)
+      - pattern: intval(...)
+    pattern-sinks:
+      - pattern: system(...)
+      - pattern: exec(...)
+      - pattern: shell_exec(...)
+      - pattern: passthru(...)
+      - pattern: popen(...)
+      - pattern: proc_open(...)
+
+  - id: csharp-command-injection
+    languages: [csharp]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a process launch. An attacker who controls the file
+      name or the argument string runs arbitrary commands as the application
+      pool identity.
+    metadata:
+      vuln_class: "OS Command Injection"
+      cwe: "CWE-78"
+      exploitability: "CRITICAL"
+      confidence: "high: the argument string is passed to the target unparsed, and cmd.exe or powershell as the target makes it a full shell"
+    pattern-sources: *csharp-request-sources
+    pattern-sinks:
+      - pattern: Process.Start(...)
+      - pattern: new ProcessStartInfo(...)
+      - pattern: $PSI.FileName = $X
+      - pattern: $PSI.Arguments = $X
+
+  # --------------------------------------------------- code and template -----
+
+  - id: python-code-injection
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is evaluated as Python. An attacker who controls this
+      parameter executes arbitrary code in the process, with every credential
+      and connection the process holds.
+    metadata:
+      vuln_class: "Code Injection"
+      cwe: "CWE-94"
+      exploitability: "CRITICAL"
+      confidence: "high: eval and exec have no safe use on request data, and ast.literal_eval is treated as a sanitizer"
+    pattern-sources: *python-request-sources
+    pattern-sanitizers:
+      - pattern: ast.literal_eval(...)
+      - pattern: json.loads(...)
+      - pattern: int(...)
+    pattern-sinks:
+      - pattern: eval(...)
+      - pattern: exec(...)
+
+  - id: python-template-injection
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data becomes the template source rather than template data. In
+      Jinja that is remote code execution: the attacker reaches Python objects
+      through the template globals and runs commands from there.
+    metadata:
+      vuln_class: "Template Injection"
+      cwe: "CWE-1336"
+      exploitability: "CRITICAL"
+      confidence: "high: render_template_string and Template take source, not context; passing untrusted values as context variables is not flagged"
+    pattern-sources: *python-request-sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: flask.render_template_string($TPL, ...)
+              - pattern: jinja2.Template($TPL, ...)
+              - pattern: jinja2.Environment(...).from_string($TPL, ...)
+              - pattern: $ENV.from_string($TPL, ...)
+              - pattern: django.template.Template($TPL, ...)
+          - focus-metavariable: $TPL
+
+  - id: javascript-code-injection
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is evaluated as JavaScript. An attacker who controls this
+      parameter executes arbitrary code in the node process; the vm module is
+      not a security boundary and does not contain it.
+    metadata:
+      vuln_class: "Code Injection"
+      cwe: "CWE-94"
+      exploitability: "CRITICAL"
+      confidence: "high: every sink here compiles its argument"
+    pattern-sources: *javascript-request-sources
+    pattern-sanitizers:
+      - pattern: JSON.parse(...)
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+    pattern-sinks:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: vm.runInNewContext(...)
+      - pattern: vm.runInThisContext(...)
+      - pattern: vm.runInContext(...)
+      - pattern: new vm.Script(...)
+
+  - id: javascript-template-injection
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data becomes the template source rather than template data. Every
+      engine here compiles the template to a function, so the attacker executes
+      arbitrary code in the node process.
+    metadata:
+      vuln_class: "Template Injection"
+      cwe: "CWE-1336"
+      exploitability: "CRITICAL"
+      confidence: "high: only the template argument is a sink, so untrusted values passed as render data are not flagged"
+    pattern-sources: *javascript-request-sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: pug.compile($TPL, ...)
+              - pattern: pug.render($TPL, ...)
+              - pattern: ejs.compile($TPL, ...)
+              - pattern: ejs.render($TPL, ...)
+              - pattern: handlebars.compile($TPL, ...)
+              - pattern: Handlebars.compile($TPL, ...)
+              - pattern: _.template($TPL, ...)
+              - pattern: lodash.template($TPL, ...)
+          - focus-metavariable: $TPL
+
+  - id: java-expression-injection
+    languages: [java]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is evaluated as an expression. SpEL, OGNL, MVEL and the
+      script engines all reach arbitrary Java from an expression string, so
+      this is remote code execution as the application server account.
+    metadata:
+      vuln_class: "Code Injection"
+      cwe: "CWE-94"
+      exploitability: "CRITICAL"
+      confidence: "high: these evaluators have no restricted mode by default"
+    pattern-sources: *java-request-sources
+    pattern-sinks:
+      - pattern: $PARSER.parseExpression(...)
+      - pattern: $ENGINE.eval(...)
+      - pattern: Ognl.getValue(...)
+      - pattern: Ognl.parseExpression(...)
+      - pattern: MVEL.eval(...)
+      - pattern: MVEL.evalToBoolean(...)
+
+  - id: ruby-code-injection
+    languages: [ruby]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is evaluated as Ruby, or chooses which method to invoke.
+      Either way an attacker who controls this parameter executes arbitrary
+      code in the application process.
+    metadata:
+      vuln_class: "Code Injection"
+      cwe: "CWE-94"
+      exploitability: "CRITICAL"
+      confidence: "high for eval; send with an untrusted method name is exploitable whenever any reachable object exposes a dangerous method"
+    pattern-sources: *ruby-request-sources
+    pattern-sinks:
+      - pattern: eval(...)
+      - pattern: $X.instance_eval(...)
+      - pattern: $X.class_eval(...)
+      - pattern: $X.module_eval(...)
+      - patterns:
+          - pattern-either:
+              - pattern: $X.send($METH, ...)
+              - pattern: $X.public_send($METH, ...)
+          - focus-metavariable: $METH
+
+  - id: php-code-injection
+    languages: [php]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is evaluated as PHP. An attacker who controls this parameter
+      executes arbitrary code as the web server account, which is a webshell in
+      one request.
+    metadata:
+      vuln_class: "Code Injection"
+      cwe: "CWE-94"
+      exploitability: "CRITICAL"
+      confidence: "high: eval and assert with a string argument both compile it"
+    pattern-sources: *php-request-sources
+    pattern-sinks:
+      - pattern: eval(...)
+      - pattern: assert(...)
+      - pattern: create_function(...)
+
+  # ----------------------------------------------------- ldap and nosql ------
+
+  - id: python-ldap-injection
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is concatenated into an LDAP filter. An attacker who
+      controls this parameter rewrites the filter to match any entry, which
+      typically means logging in as another user or reading the whole
+      directory.
+    metadata:
+      vuln_class: "LDAP Injection"
+      cwe: "CWE-90"
+      exploitability: "HIGH"
+      confidence: "high: only the filter argument is a sink, and ldap.filter.escape_filter_chars is treated as a sanitizer"
+    pattern-sources: *python-request-sources
+    pattern-sanitizers:
+      - pattern: ldap.filter.escape_filter_chars(...)
+      - pattern: ldap3.utils.conv.escape_filter_chars(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $CONN.search_s($BASE, $SCOPE, $FILTER, ...)
+              - pattern: $CONN.search_st($BASE, $SCOPE, $FILTER, ...)
+              - pattern: $CONN.search_ext_s($BASE, $SCOPE, $FILTER, ...)
+              - pattern: $CONN.search($BASE, $FILTER, ...)
+          - focus-metavariable: $FILTER
+
+  - id: java-ldap-injection
+    languages: [java]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is concatenated into an LDAP filter. An attacker who
+      controls this parameter rewrites the filter to match any entry, which
+      typically means authenticating as another user or dumping the directory.
+    metadata:
+      vuln_class: "LDAP Injection"
+      cwe: "CWE-90"
+      exploitability: "HIGH"
+      confidence: "high: only the filter argument is a sink, so the search base and controls are ignored"
+    pattern-sources: *java-request-sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $CTX.search($BASE, $FILTER, ...)
+              - pattern: $TPL.search($BASE, $FILTER, ...)
+          - focus-metavariable: $FILTER
+
+  - id: csharp-ldap-injection
+    languages: [csharp]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data is concatenated into an LDAP filter. An attacker who
+      controls this parameter rewrites the filter to match any directory
+      entry, which typically means authenticating as another user.
+    metadata:
+      vuln_class: "LDAP Injection"
+      cwe: "CWE-90"
+      exploitability: "HIGH"
+      confidence: "high: the filter is the only sink and DirectorySearcher applies no escaping of its own"
+    pattern-sources: *csharp-request-sources
+    pattern-sinks:
+      - pattern: new DirectorySearcher(...)
+      - pattern: $SEARCHER.Filter = $X
+
+  - id: javascript-nosql-where-injection
+    languages: [javascript, typescript]
+    severity: ERROR
+    mode: taint
+    message: >
+      Request data reaches a MongoDB server-side JavaScript clause. The
+      expression runs on the database server, so an attacker who controls it
+      reads any document in the database and can stall the server outright.
+    metadata:
+      vuln_class: "NoSQL Injection"
+      cwe: "CWE-943"
+      exploitability: "HIGH"
+      confidence: "high: $where, mapReduce and eval all take code, and none of them has a safe use on request data"
+    pattern-sources: *javascript-request-sources
+    pattern-sinks:
+      - pattern: "$COLL.find({..., $where: $X, ...}, ...)"
+      - pattern: $COLL.mapReduce($X, ...)
+      - pattern: $DB.eval(...)
+
+  - id: javascript-nosql-operator-injection
+    languages: [javascript, typescript]
+    severity: WARNING
+    mode: taint
+    message: >
+      A request value is used as a MongoDB query value without being coerced to
+      a scalar. A JSON body or a query string can make it an object, so the
+      attacker sends {"$ne": null} or {"$gt": ""} and the filter matches every
+      document, which turns a login check into a bypass.
+    metadata:
+      vuln_class: "NoSQL Injection"
+      cwe: "CWE-943"
+      confidence: "medium: exploitable only where the value can arrive as an object, so a schema validation layer ahead of this call makes it a false positive"
+    pattern-sources: *javascript-request-sources
+    pattern-sanitizers:
+      - pattern: String(...)
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: $X.toString()
+      - pattern: mongoose.Types.ObjectId(...)
+      - pattern: ObjectId(...)
+      - pattern: $SCHEMA.validate(...)
+      - pattern: $SCHEMA.parse(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $COLL.find($QUERY, ...)
+              - pattern: $COLL.findOne($QUERY, ...)
+              - pattern: $COLL.findOneAndUpdate($QUERY, ...)
+              - pattern: $COLL.findOneAndDelete($QUERY, ...)
+              - pattern: $COLL.deleteOne($QUERY, ...)
+              - pattern: $COLL.deleteMany($QUERY, ...)
+              - pattern: $COLL.updateOne($QUERY, ...)
+              - pattern: $COLL.updateMany($QUERY, ...)
+              - pattern: $COLL.countDocuments($QUERY, ...)
+          # a $where clause is the sharper finding above, and reporting both
+          # costs a triage slot for one bug
+          - pattern-not: "$COLL.$M({..., $where: $W, ...}, ...)"
+          - focus-metavariable: $QUERY

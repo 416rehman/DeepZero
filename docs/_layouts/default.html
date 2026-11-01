@@ -26,6 +26,9 @@
     <meta name="keywords"
         content="{{ page.keywords | default: site.keywords | default: 'vulnerability research, zero-day, BYOVD, orchestration, AI security, automated exploit discovery, Ghidra, Semgrep, LLM security' }}">
     <meta name="author" content="{{ site.author | default: 'DeepZero Team' }}">
+    <!-- absolute_url prepends site.url AND site.baseurl; site.url alone drops the
+         /DeepZero prefix the site is actually served under, so every canonical and
+         social URL pointed at a page that does not exist -->
     <link rel="canonical" href="{{ page.url | replace: 'index.html', '' | absolute_url }}">
 
     <!-- Favicon -->

@@ -1,33 +1,25 @@
 # Source audit
 
-A source-code audit over git repositories. Each repository is taken at one revision,
-scanned with semgrep, and then read by a model whose job is to separate a real
-vulnerability from a rule matching a shape in the code.
-
-The two halves matter in that order. Semgrep is cheap and finds every place worth
-looking; almost all of those places are fine. The assessment stage is where a finding
-either gains a path from attacker input to the sink or is written off, by name, as
-unreachable.
+Scans Git repositories with Semgrep and uses an LLM to assess reported findings
+at the recorded revision.
 
 ## Stages
 
 | Stage | Processor | What it does |
 |-------|-----------|--------------|
 | `discover` | `git_ingest/git_ingest.py` | Clones each repository at depth 1, or reads a checkout already on disk, and records the revision and what is in the tree |
-| `size_filter` | `metadata_filter` | Drops checkouts with no source in them and trees too large to be worth scanning, and scans a commit once however many names reach it |
+| `size_filter` | `metadata_filter` | Applies configured source-count and size limits, and deduplicates commit revisions |
 | `scan` | `semgrep_scanner/semgrep_scanner.py` | Runs `rules/` over each checkout. A repository with nothing flagged stops here |
-| `rank` | `top_k` | Orders every surviving repository by finding count, worst first, dropping none |
+| `rank` | `top_k` | Sorts repositories by descending finding count without dropping any |
 | `assess` | `generic_llm` | Renders `assessment.j2` per repository and records the verdict |
 
-The assessment answers one question per finding: does untrusted input reach the sink,
-what does an attacker get, and what would confirm it. Its first line is `[VULNERABLE]`
-or `[NOT EXPLOITABLE]`, which is what the report groups on.
+The assessment checks whether untrusted input reaches the sink, describes the
+potential impact, and suggests verification steps. The report groups results by
+the first line: `[VULNERABLE]` or `[NOT EXPLOITABLE]`.
 
-`min_findings: 1` means a repository only reaches the assessment when the scan flagged
-something, so a rendered prompt with no findings in it means the scan output could not
-be read back, not that the tree is clean. The prompt says so and asks for neither
-marker, which lands the repository under "Unclear verdict" rather than among the
-repositories something actually looked at.
+With `min_findings: 1`, only repositories with scan findings reach assessment.
+If the prompt cannot read those findings, it requests neither verdict marker;
+the report classifies the result as "Unclear verdict".
 
 ## What to point it at
 

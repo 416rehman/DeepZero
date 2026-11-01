@@ -1,13 +1,9 @@
 # loldrivers_filter
 
-A `MapProcessor` that drops a sample whose sha256 is already published on
-loldrivers.io. What survives is what nobody has reported yet, which is the point
-of putting it early in a pipeline: everything downstream costs decompilation time
-or model calls, and neither is worth spending on a driver that is already in the
-blocklist.
+A `MapProcessor` that filters samples whose SHA-256 matches an entry in the
+LOLDrivers database.
 
-The comparison is local. The whole database is fetched once and compared against
-in memory, so nothing about the corpus is sent anywhere.
+The database is fetched once and compared locally. Sample data is not uploaded.
 
 ## Where the database comes from
 

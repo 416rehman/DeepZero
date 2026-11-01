@@ -1,9 +1,7 @@
 # git_ingest
 
-An `IngestProcessor` that turns git repositories into samples, so a pipeline can
-research source code the way the shipped one researches binaries. One sample is
-one repository, and its `source_path` is the checkout root, which is what a
-source scanner wants to be pointed at.
+An `IngestProcessor` that creates one sample per Git repository. Each sample's
+`source_path` is the checkout root.
 
 ## Pointing it at repositories
 

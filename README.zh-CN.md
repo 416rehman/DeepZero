@@ -3,7 +3,7 @@
   <img src=".github/banner.svg" alt="DeepZero" width="700">
   <br><br>
   <p><b>自动化漏洞研究流水线引擎</b></p>
-  <p>使用 YAML 定义流水线。DeepZero 负责编排、并行计算、容错处理以及状态管理。</p>
+  <p>使用 YAML 定义流水线，并行处理样本，并恢复中断的运行。</p>
   <p>
     <a href="https://github.com/416rehman/DeepZero/actions"><img src="https://img.shields.io/github/actions/workflow/status/416rehman/DeepZero/ci.yml?branch=main&style=flat-square" alt="CI"></a>
     <a href="https://github.com/416rehman/DeepZero/blob/main/LICENSE"><img src="https://img.shields.io/github/license/416rehman/DeepZero?style=flat-square" alt="License"></a>
@@ -29,7 +29,7 @@
 </table>
 
 <div align="center">
-  <sub>同一个引擎，两个领域。报告的措辞来自流水线：同样的代码在左侧显示 <b>6 repositories</b> / <b>not exploitable</b>，在右侧显示 <b>6 drivers</b> / <b>clear</b>。图中为示意数据。</sub>
+  <sub>使用示例数据生成的报告。</sub>
 </div>
 
 <br>
@@ -40,29 +40,24 @@
 
 <br>
 
-- 🔗 **基于 YAML 的流水线** - 声明式串联数据摄取、过滤、转换和 LLM 评估阶段
-- 🧭 **与领域无关** - 引擎本身对二进制文件、代码仓库或网络端点一无所知；领域知识由流水线提供，内置流水线只是示例，而非引擎的用途所在
-- ⚡ **并行执行** - 支持每个阶段可配置并发数的 ThreadPoolExecutor
-- 💾 **可恢复的运行状态** - 将每个样本的原子状态按语料库分别保存在磁盘上；按 Ctrl+C 中断后，再次运行即可从中断处恢复
-- 🔁 **自动识别过期结果** - 每个阶段都会为自己的输入生成指纹，因此修改提示词、规则集或配置后，只会重跑读取过它们的那些阶段，之前的阶段一概不动
-- 🤖 **LLM 集成** - 结合 Jinja2 提示词模板，既可通过 [LiteLLM](https://github.com/BerriAI/litellm) 使用 API 密钥，也可完全不用 API 密钥，直接使用你的 Claude Code 订阅
-- 📊 **可浏览的报告** - `deepzero report` 会依据运行状态生成一份自包含的 HTML 报告；每条流水线都用自己的词汇来称呼它的实体和裁决
-- 🌐 **REST API (正在开发中)** - 通过 HTTP 查询运行状态和样本数据（目前处于实验阶段，尚未完成）
-- 🧩 **高可扩展性** - 将自定义处理器编写为 Python 类，并在 YAML 中通过路径引用它们
+- **YAML 流水线** - 组合数据摄取、过滤、转换和 LLM 评估阶段。
+- **并行执行** - 按阶段设置并发数。
+- **状态保存** - 使用磁盘上的结果恢复中断的运行。
+- **增量重跑** - 提示词、规则或配置变化后，重新运行受影响的阶段及其后续阶段。
+- **LLM 后端** - 通过 [LiteLLM](https://github.com/BerriAI/litellm) 或 Claude Code CLI 使用 Jinja2 提示词。
+- **HTML 报告** - 使用 `deepzero report` 生成自包含的报告。
+- **自定义处理器** - 编写 Python 类，并在 YAML 中通过路径引用。
+- **实验性 REST API** - 通过 HTTP 查询运行状态和样本数据。
 
 ---
 
 ## 📚 官方文档
 
-DeepZero 提供了全面详细的文档，涵盖架构设计、流水线 Schema、命令行参考指南以及自定义处理器开发。
-
-👉 **[点击阅读官方文档](https://blog.ahmadz.ai/DeepZero/zh-CN/)**
+[架构、流水线配置、命令行参考及自定义处理器](https://blog.ahmadz.ai/DeepZero/zh-CN/)。
 
 ---
 
 ## ⚡️ 快速开始
-
-DeepZero 需要一个待分析的目标语料库，以及一份用于说明如何处理它的流水线配置文件。
 
 首次体验可先运行[本地演示](https://blog.ahmadz.ai/DeepZero/zh-CN/overview/quickstart.html)：只需 `python -m pip install -e .`，无需 API 密钥或外部工具。下方步骤用于配置两条安全分析流水线。
 
@@ -89,8 +84,7 @@ DeepZero 需要一个待分析的目标语料库，以及一份用于说明如�
    cp .env.example .env
    ```
 
-   在 PowerShell 中请使用 `Copy-Item .env.example .env`。在 `.env` 中设置 `DEEPZERO_MODEL` 可覆盖两条安全分析流水线的后端和模型，或使用 `-m` 仅覆盖一次运行。例如，`DEEPZERO_MODEL=openai/gpt-4o` 需要设置你自己的 `OPENAI_API_KEY`。
-   两条安全分析流水线默认使用 `claude-code`，即你自己的 Claude Code CLI 的默认模型。请先安装该 CLI 并登录。也可以通过 `DEEPZERO_MODEL` 或 `-m` 选择 LiteLLM 模型，并设置你自己的 API 密钥。
+   在 PowerShell 中请使用 `Copy-Item .env.example .env`。两条流水线默认使用 `claude-code`，即 Claude Code CLI 的默认模型。要使用 LiteLLM 模型，可在 `.env` 中设置 `DEEPZERO_MODEL`，或使用 `-m` 仅覆盖一次运行。例如，`DEEPZERO_MODEL=openai/gpt-4o` 需要设置你自己的 `OPENAI_API_KEY`。
 
 3. **运行一条流水线**
    ```bash
@@ -104,13 +98,13 @@ DeepZero 需要一个待分析的目标语料库，以及一份用于说明如�
    请将 `./drivers` 替换为你自己的驱动语料库路径，或创建每行一个仓库 URL 的 `repos.txt`。仓库中不包含这些示例输入。
 
    `deepzero validate pipelines/loldrivers/pipeline.yaml` / `deepzero validate pipelines/source_audit/pipeline.yaml`
-   `--preflight` 会在昂贵的阶段开始之前先确认 LLM 后端已就绪，而不是等到几小时后跑到第一个评估阶段才发现问题。
+   `--preflight` 在处理开始前检查 LLM 后端。
 
 4. **查看结果**
    ```bash
    deepzero report -p loldrivers --open
    ```
-   运行过程中执行也是安全的。报告完全依据运行状态构建，因此随时可以删除后重建。`deepzero runs` 会列出磁盘上的所有运行记录，无论出自哪条流水线或哪个语料库；直接执行 `deepzero report` 而不带任何参数，它会自行判断你指的是哪一次运行。
+   可以在运行过程中或结束后生成报告。`deepzero runs` 列出 `work/` 下的运行记录，也可通过 `--work-dir` 指定其他目录。不带参数的 `deepzero report` 会使用 `work/` 下唯一的运行记录；存在多条记录时，会提示选择。在脚本中请使用 `--work-dir` 指定运行记录。
 
 有关详细的设置说明和示例语料库，请参阅[快速开始文档](https://blog.ahmadz.ai/DeepZero/zh-CN/overview/quickstart.html)。
 
@@ -133,7 +127,7 @@ processors/              # 外部处理器 (作为示例提供)
 └── semgrep_scanner/     # semgrep 批量扫描器 (BulkMapProcessor)
 
 pipelines/
-├── demo/                # local first run; no API keys or external tools
+├── demo/                # 本地演示，无需 API 密钥或外部工具
 ├── loldrivers/          # BYOVD 内核驱动程序漏洞研究流水线
 │   ├── pipeline.yaml
 │   ├── assessment.j2    # LLM 提示词模板

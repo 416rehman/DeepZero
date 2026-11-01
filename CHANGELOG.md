@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.5.0](https://github.com/416rehman/DeepZero/compare/deepzero-v0.4.0...deepzero-v0.5.0) (2026-11-01)
+
+
+### Features
+
+* **cli:** report with nothing named works out what to build ([8a6b518](https://github.com/416rehman/DeepZero/commit/8a6b5184b60c2174537dc67ea23e56e1e24285fd))
+* **engine:** let a stage conclude something about the whole corpus ([e0f683d](https://github.com/416rehman/DeepZero/commit/e0f683d26ae76c4a66c1e0087b07c70222c18872))
+* **engine:** stop requiring a pipeline's processors to sit next to the caller ([66e2293](https://github.com/416rehman/DeepZero/commit/66e2293c216e0d4b48856d553561298e8cec7f7e))
+* **engine:** tell a processor where its pipeline lives ([6f47939](https://github.com/416rehman/DeepZero/commit/6f47939d7439e17aa04344041e5e033c6071b021))
+* **engine:** work out for itself which stages are stale ([cae2c6a](https://github.com/416rehman/DeepZero/commit/cae2c6af50b5792afc574d6cf9a30ce4e3f18cf2))
+* generalize research pipelines and prepare the public release ([108dc4c](https://github.com/416rehman/DeepZero/commit/108dc4cefb585b6b4dbdc0ea8bdbdfd7671bb92b))
+* **pipelines:** add a source-code vulnerability research pipeline ([5e4ce29](https://github.com/416rehman/DeepZero/commit/5e4ce29065827adb2908d8fae1f60a6d7e20d721))
+* **report:** a finding can be one thing seen many times ([030d418](https://github.com/416rehman/DeepZero/commit/030d418d9499bb3e9c3d88ef5f492d17b1a7134e))
+* **report:** let a pipeline declare the words for its own outcomes ([886e36d](https://github.com/416rehman/DeepZero/commit/886e36d9d2409a509513ac232a0b1d3716000f9a))
+* **report:** name the target and the plural in the pipeline's own words ([505a5ce](https://github.com/416rehman/DeepZero/commit/505a5ce50126dfed7e9e74b477a4f570022ab6f0))
+* **run:** re-run one stage without discarding the work before it ([994a325](https://github.com/416rehman/DeepZero/commit/994a325989afdbca1a5afab811f48f0dff1fbd2e))
+
+
+### Bug Fixes
+
+* assessed means something judged the sample, not that a file was written ([e146480](https://github.com/416rehman/DeepZero/commit/e146480aa497622054a8d93b238a1c888d14ce9c))
+* **cli:** keep a run's own wording when reporting by work directory ([c09cbd9](https://github.com/416rehman/DeepZero/commit/c09cbd9ae2c8335526e37fb97b2a54f3bb68a770))
+* **cli:** let validate fail, and stop advertising a driver tool ([5a64c9c](https://github.com/416rehman/DeepZero/commit/5a64c9ccd3fbcb61b24e3c300cd766e8f16188d2))
+* **docs:** publish canonical URLs with the project path ([#33](https://github.com/416rehman/DeepZero/issues/33)) ([90828f6](https://github.com/416rehman/DeepZero/commit/90828f648fa22416049befc9d1c66b102e26ab4b))
+* **engine:** reconsider deduplication after corpus refresh ([104ecbc](https://github.com/416rehman/DeepZero/commit/104ecbc131152cf9a6e7b74a07ecaddea2fd399a))
+* **engine:** say so when an ingest gives two samples the same id ([dbba509](https://github.com/416rehman/DeepZero/commit/dbba509897ffb1a454e432b9bee28664f5dfe6f7))
+* harden public setup and resumable pipeline execution ([07aaeda](https://github.com/416rehman/DeepZero/commit/07aaedada9c3eb9ef3d0f48f626f3ef177ea7b57))
+* **llm:** stop html-escaping the values interpolated into a prompt ([df4929b](https://github.com/416rehman/DeepZero/commit/df4929b9ec6f55f5bd4ca68220f00a94061036fe))
+* reading a sample that does not exist no longer creates it ([e2f7091](https://github.com/416rehman/DeepZero/commit/e2f70915457e8f7e786f1e070f8baf7af8239054))
+* **report:** a corpus of one is not called plural ([3207241](https://github.com/416rehman/DeepZero/commit/32072413bc098a36fe865eb89fd8e3c07280cc95))
+* **report:** clear does not mean nothing was found ([0ebf4dd](https://github.com/416rehman/DeepZero/commit/0ebf4dd087f5d6bfbbe8484356359bd791cf7cea))
+* **report:** use the declared plural in the summary sentence too ([a62f8ab](https://github.com/416rehman/DeepZero/commit/a62f8abc44ae1dde52d89b822a6f31db6e131abc))
+* **run:** make --redo discard the output a stage cached on disk ([5e3a134](https://github.com/416rehman/DeepZero/commit/5e3a134c876e9d4f3568b8c9793306ff10bb54e5))
+* stop a read, an open, or a rename from behaving unlike its name ([6513efe](https://github.com/416rehman/DeepZero/commit/6513efe55550df2cb2834722a30a20024cb70cac))
+* stop a stale result from being read back as a fresh one ([dbe648c](https://github.com/416rehman/DeepZero/commit/dbe648c2795db7469d03c0cce1395db4d711c9c7))
+* **ui:** group the filtered and failed counts like the columns beside them ([15e7004](https://github.com/416rehman/DeepZero/commit/15e7004237d8d91877c531cbd546e1f99233dfa9))
+
+
+### Refactors
+
+* **stages:** the two reducers read a metric the same way ([68cb688](https://github.com/416rehman/DeepZero/commit/68cb688dfc6723ace1d1a339278644056ab78e16))
+
+
+### Documentation
+
+* add a runnable local demo for first-time users ([#31](https://github.com/416rehman/DeepZero/issues/31)) ([27b284f](https://github.com/416rehman/DeepZero/commit/27b284f947171667ee7c278fa0372f71e1e233b4))
+* align contribution guide with CI ([#35](https://github.com/416rehman/DeepZero/issues/35)) ([1bf1818](https://github.com/416rehman/DeepZero/commit/1bf1818f81adbc9e1c748648374390c2a2061902))
+* clarify that the local demo requires a checkout ([#34](https://github.com/416rehman/DeepZero/issues/34)) ([cdf4e7c](https://github.com/416rehman/DeepZero/commit/cdf4e7c23dddc615970f4cbe29ec1c75d9f4239a))
+* **contributing:** stop naming figures that go stale on their own ([1481bf3](https://github.com/416rehman/DeepZero/commit/1481bf389631727ad48f1ae46d77db079872d8fd))
+* correct every claim the code had moved away from, in six languages ([e4c0bfe](https://github.com/416rehman/DeepZero/commit/e4c0bfed6e44369fd8ba01197cbd48a2e86491fd))
+* correct the reference against the engine it describes ([a1ebeaa](https://github.com/416rehman/DeepZero/commit/a1ebeaafde01b76f8716f6020dfa7cd3115ba00e))
+* describe the engine the repository actually ships ([380931f](https://github.com/416rehman/DeepZero/commit/380931f90189984d07b66fb45564597167c89ec3))
+* describe what the tool does today, in every language ([e080270](https://github.com/416rehman/DeepZero/commit/e08027018754fc36124417014d6b3bbdb768b970))
+* regenerate the screenshots from the pipelines they claim to show ([ec83f80](https://github.com/416rehman/DeepZero/commit/ec83f80467a2805a56de3d33e8acecec5f358e46))
+* **report:** stop recommending a target_label that mislabels the header ([2c47043](https://github.com/416rehman/DeepZero/commit/2c47043456909d89efd420c376fff6285095e32f))
+
 ## [0.4.0](https://github.com/416rehman/DeepZero/compare/deepzero-v0.3.0...deepzero-v0.4.0) (2026-07-27)
 
 

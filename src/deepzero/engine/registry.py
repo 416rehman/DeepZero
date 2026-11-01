@@ -80,7 +80,11 @@ def _resolve_from_processors_dir(processor_ref: str, pipeline_dir: Path | None =
     class_name = None
     path_part = processor_ref
     if ":" in processor_ref:
-        path_part, class_name = processor_ref.rsplit(":", 1)
+        candidate_path, candidate_class = processor_ref.rsplit(":", 1)
+        # A Windows drive prefix belongs to the path. Only a later colon can
+        # select a class, e.g. C:\processors\mine.py:MyProcessor.
+        if not (len(candidate_path) == 1 and candidate_path.isalpha()):
+            path_part, class_name = candidate_path, candidate_class
 
     tried: list[Path] = []
     abs_path = None

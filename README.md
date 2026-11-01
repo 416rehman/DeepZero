@@ -68,23 +68,32 @@ DeepZero requires a target corpus to analyze and a pipeline configuration detail
    ```bash
    git clone https://github.com/416rehman/DeepZero.git
    cd DeepZero
-   pip install -e .
+   python -m pip install -e ".[full]"
    ```
+
+   The `full` extra includes PE parsing, API-backed LLMs, and the experimental API server. The engine alone needs only `python -m pip install -e .`.
+
+   Run the commands below from the cloned repository. Both example pipelines need **Semgrep** on PATH (`python -m pip install semgrep`) and an LLM backend. The source audit also needs **Git**. The driver pipeline needs **Ghidra**, its supported **JDK**, and `GHIDRA_INSTALL_DIR` pointing to your installation. Install these tools in the environment where DeepZero runs; if using WSL, use its Linux environment consistently.
 
 2. **Configure Environment**
    ```bash
    cp .env.example .env
    ```
-   Both bundled pipelines declare `model: claude-code/claude-opus-5`, which drives the Claude Code CLI you are already signed in to. Use `-m` for any LiteLLM model instead.
+   In PowerShell, use `Copy-Item .env.example .env`. Set your own Ghidra path in `.env` for driver analysis.
+
+   Both bundled pipelines default to `claude-code`, which uses your Claude Code CLI's default model. Install that CLI and sign in with your own account first. To use an API-backed model instead, set its API key and `DEEPZERO_MODEL` in `.env`, or pass `-m`, for example `-m openai/gpt-4o`.
 
 3. **Run a Pipeline**
    ```bash
    # kernel drivers on disk
-   deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
+   deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --preflight
 
    # or source code, from a manifest of repositories or a directory of checkouts
-   deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
+   deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml --preflight
    ```
+   Replace `./drivers` with your driver corpus, or create `repos.txt` with one repository URL per line for source audits. These are example inputs; neither is included in the repository.
+
+   Check tool and pipeline prerequisites before starting: `deepzero validate pipelines/loldrivers/pipeline.yaml` (or `pipelines/source_audit/pipeline.yaml`).
    `--preflight` confirms the LLM backend is ready before the expensive stages run, rather than finding out hours later at the first assessment stage.
 
 4. **Read the Results**

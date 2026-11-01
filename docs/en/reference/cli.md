@@ -73,6 +73,7 @@ deepzero run <TARGET> -p <pipeline> [options]
 | `-m, --model` | pipeline's `model` | LLM model override for this run, e.g. `openai/gpt-4o`. |
 | `-w, --work-dir` | pipeline's `work_dir` setting | Replaces the root the run directory is built under. |
 | `--clean` | off | Permanently delete previous run data and start fresh. |
+| `--refresh` | off | Re-run discovery and merge the current corpus into the saved run. |
 | `--preflight` | off | Verify the LLM backend is authenticated before running. Makes one tiny call. |
 | `--redo` | none | Re-run a named stage and everything after it, keeping the earlier work and deleting the output those stages recorded. Repeatable. |
 | `--retry-timeouts` | off | Attempt the samples that ran out of time again, keeping every other result. |
@@ -87,6 +88,18 @@ recorded: the run state is updated to name the model that will actually be calle
 `--clean` renames the previous directory aside and deletes it in the background, so a
 corpus with hundreds of thousands of files does not hold the command open while it is
 removed.
+
+#### Refreshing the discovered corpus
+
+A resumed run uses the saved discovery snapshot by default. Use `--refresh` to discover new or changed inputs at the same target path. Samples with unchanged discovery metadata keep their cached results; changed samples and their downstream results are reprocessed. Removed samples move out of the active run into `retired_samples/` with their artifacts preserved. `--redo discover` also repeats discovery for the bundled pipelines. Detection depends on the metadata the ingest processor records; it does not monitor arbitrary file or network changes.
+
+For git manifests, also set `refresh: true` in the ingest stage config to fetch newer remote commits; `--refresh` alone revisits cached clones.
+
+```bash
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --refresh
+```
+
+A completed run exits 0. A failed or interrupted run exits 1. Individual sample failures handled by a stage's `on_failure: skip` policy remain visible in the report and can still belong to a completed run.
 
 #### Where a run's state lives
 
@@ -326,7 +339,7 @@ deepzero interactive -w work/loldrivers/drivers-1a2b3c4d
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-m, --model` | `claude-code/claude-opus-5` | Model for the conversation. Any model string the backends accept. |
+| `-m, --model` | `claude-code` | Model for the conversation. Any model string the backends accept. |
 | `-w, --work-dir` | `work` | Run directory to load context from. |
 | `-v, --verbose` | off | Verbose logging. |
 

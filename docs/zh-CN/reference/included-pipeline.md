@@ -13,7 +13,7 @@ DeepZero 自带两条完整的流水线。它们既是拿来直接运行的，�
 | `pipelines/loldrivers` | 磁盘上的 Windows 内核驱动程序 | BYOVD 候选目标：无需硬件即可触及的 IOCTL 攻击面 |
 | `pipelines/source_audit` | Git 仓库 | 可从不可信输入触及的源码级漏洞 |
 
-两者都声明了 `model: claude-code/claude-opus-5`，因此它们跑在 Claude Code 订阅上，无需 API 密钥。用 `-m` 可以改用任意 LiteLLM 模型。参阅 [选择模型]({{ '/zh-CN/reference/pipeline-yaml.html' | relative_url }})。
+两者默认使用 `claude-code`，因此它们跑在 Claude Code 订阅上，无需 API 密钥。用 `-m` 可以改用任意 LiteLLM 模型。参阅 [选择模型]({{ '/zh-CN/reference/pipeline-yaml.html' | relative_url }})。
 
 ---
 
@@ -68,6 +68,7 @@ DeepZero 自带两条完整的流水线。它们既是拿来直接运行的，�
 
 ### 前置条件
 
+- PE 解析依赖 LIEF：在仓库根目录运行 `python -m pip install -e ".[pe]"`。
 - Ghidra，并已设置 `GHIDRA_INSTALL_DIR`。如果存在 `JAVA_HOME` 也会被读取。
 - PATH 上的 `semgrep`：`pip install semgrep`。
 
@@ -99,7 +100,7 @@ DeepZero 自带两条完整的流水线。它们既是拿来直接运行的，�
 deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
 
 # 或者一个存放了已在磁盘上的检出目录的目录
-deepzero run C:\code\vendor -p pipelines/source_audit/pipeline.yaml
+deepzero run ./checkouts -p pipelines/source_audit/pipeline.yaml
 ```
 
 克隆结果存放在摄取阶段自己的缓存目录中，而不是工作目录中，因此重新运行不产生网络开销，`--clean` 也不会把它们丢掉。

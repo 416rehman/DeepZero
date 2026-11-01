@@ -9,7 +9,8 @@ name: source_audit
 description: source code vulnerability audit over git repositories
 version: "1.0"
 
-model: claude-code/claude-opus-5
+# Use your Claude Code CLI default, or configure DEEPZERO_MODEL / pass -m.
+model: ${DEEPZERO_MODEL:-claude-code}
 
 # how `deepzero report` presents this pipeline's results. a repository is not a
 # file on disk, so the vocabulary is named here rather than left at the defaults

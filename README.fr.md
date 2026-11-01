@@ -68,23 +68,40 @@ DeepZero nécessite un corpus cible à analyser et une configuration de pipeline
    ```bash
    git clone https://github.com/416rehman/DeepZero.git
    cd DeepZero
-   pip install -e .
+   python -m pip install -e ".[full]"
    ```
+
+   Exécutez les commandes depuis le dépôt cloné. L'extra `full` installe notamment LIEF (analyse PE) et LiteLLM (modèles avec clé API). Pour le moteur seul : `python -m pip install -e .`.
+
+   Installez aussi les outils externes dans le même environnement :
+
+   - Les deux pipelines : **Semgrep** dans PATH (`python -m pip install semgrep`) et un backend LLM.
+   - Audit de code : **Git** dans PATH.
+   - Pilotes : **Ghidra**, le **JDK compatible avec cette version**, et `GHIDRA_INSTALL_DIR` dans `.env` pointant vers votre installation.
+   - LLM par défaut : installez la CLI **Claude Code** et connectez votre propre compte. Son modèle par défaut est utilisé sans clé API. Un modèle avec clé API peut aussi être configuré ci-dessous.
+
+   Avec WSL, installez et exécutez les outils, Python et DeepZero dans cet environnement.
 
 2. **Configurer l'Environnement**
    ```bash
    cp .env.example .env
    ```
-   Les deux pipelines fournis déclarent `model: claude-code/claude-opus-5`, qui pilote la CLI Claude Code à laquelle vous êtes déjà connecté. Utilisez `-m` pour n'importe quel modèle LiteLLM à la place.
+
+   Dans PowerShell : `Copy-Item .env.example .env`. Définissez `DEEPZERO_MODEL` dans `.env` pour les deux pipelines, ou passez `-m` pour une exécution. Par exemple, `DEEPZERO_MODEL=openai/gpt-4o` nécessite votre `OPENAI_API_KEY`.
+   Les deux pipelines utilisent `claude-code` par défaut, donc le modèle choisi dans votre propre CLI Claude Code. Installez cette CLI et connectez-vous avant de lancer une analyse. Utilisez `DEEPZERO_MODEL` ou `-m` pour un modèle LiteLLM avec votre clé API.
 
 3. **Exécuter un Pipeline**
    ```bash
    # des pilotes noyau sur le disque
-   deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
+   deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --preflight
 
    # ou du code source, depuis un manifeste de dépôts ou un répertoire de copies de travail
-   deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
+   deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml --preflight
    ```
+
+   Remplacez `./drivers` par votre corpus de pilotes, ou créez `repos.txt` avec une URL de dépôt par ligne. Ces entrées ne sont pas fournies dans le dépôt.
+
+   `deepzero validate pipelines/loldrivers/pipeline.yaml` / `deepzero validate pipelines/source_audit/pipeline.yaml`
    `--preflight` confirme que le backend LLM est prêt avant que les étapes coûteuses ne s'exécutent, plutôt que de l'apprendre des heures plus tard, à la première étape d'évaluation.
 
 4. **Lire les Résultats**

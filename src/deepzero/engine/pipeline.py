@@ -343,7 +343,8 @@ def _check_prompts(pipeline: PipelineDefinition, resolved: dict[str, type]) -> l
     available = set(ALWAYS_PROVIDED)
     # only ever parses, never renders, but it matches how the prompt is rendered
     # at run time so the two cannot disagree about what the template means
-    env = jinja2.Environment(autoescape=False)
+    # Plain-text prompt syntax validation; no HTML is rendered here.
+    env = jinja2.Environment(autoescape=False)  # nosec B701
 
     for spec in pipeline.stage_specs:
         prompt_ref = str((spec.config or {}).get("prompt", "") or "")

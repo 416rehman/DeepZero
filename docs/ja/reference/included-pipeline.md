@@ -13,7 +13,7 @@ DeepZero には完全なパイプラインが 2 つ同梱されています。�
 | `pipelines/loldrivers` | ディスク上の Windows カーネルドライバー | BYOVD 候補。ハードウェアなしで到達できる IOCTL 表面 |
 | `pipelines/source_audit` | git リポジトリ | 信頼できない入力から到達できるソースレベルの脆弱性 |
 
-どちらも `model: claude-code/claude-opus-5` を宣言しているため、API キーなしで Claude Code のサブスクリプションを使って実行されます。任意の LiteLLM モデルを使うには `-m` で上書きしてください。[モデルの選択]({{ '/ja/reference/pipeline-yaml.html' | relative_url }})を参照してください。
+どちらも既定では `claude-code` を使うため、API キーなしで Claude Code のサブスクリプションを使って実行されます。任意の LiteLLM モデルを使うには `-m` で上書きしてください。[モデルの選択]({{ '/ja/reference/pipeline-yaml.html' | relative_url }})を参照してください。
 
 ---
 
@@ -68,6 +68,7 @@ DeepZero には完全なパイプラインが 2 つ同梱されています。�
 
 ### 前提条件
 
+- PE 解析用 LIEF: リポジトリ直下で `python -m pip install -e ".[pe]"` を実行します。
 - Ghidra。`GHIDRA_INSTALL_DIR` を設定しておくこと。`JAVA_HOME` は設定されていれば読み取られます。
 - PATH 上の `semgrep`: `pip install semgrep`。
 
@@ -99,7 +100,7 @@ git リポジトリを対象としたソースコード監査で、`pipelines/so
 deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
 
 # または、すでにディスク上にあるチェックアウトのディレクトリを監査する
-deepzero run C:\code\vendor -p pipelines/source_audit/pipeline.yaml
+deepzero run ./checkouts -p pipelines/source_audit/pipeline.yaml
 ```
 
 クローンはワークディレクトリではなく、インジェストステージ自身のキャッシュディレクトリに置かれます。そのため再実行にネットワークのコストはかからず、`--clean` でも捨てられません。

@@ -15,19 +15,32 @@ DeepZero requires **Python 3.11+**.
 ```bash
 git clone https://github.com/416rehman/DeepZero.git
 cd DeepZero
-pip install -e .
+python -m pip install -e ".[full]"
 ```
+
+Run the commands below from the cloned repository. The `full` extra installs optional Python dependencies, including LIEF for PE parsing and LiteLLM for API-backed models. The engine alone can be installed with `python -m pip install -e .`.
+
+Before running an example pipeline, install its external tools in the same environment:
+
+- Both pipelines: **Semgrep** on PATH (`python -m pip install semgrep`) and an LLM backend.
+- Source audit: **Git** on PATH.
+- Driver analysis: **Ghidra** and the **JDK supported by that Ghidra release**; set `GHIDRA_INSTALL_DIR` to your installation in `.env`.
+- Default LLM: install the **Claude Code CLI** and sign in with your own account. Its default model is used; no API key is required. Alternatively, configure an API-backed model and its key below.
+
+If using WSL, install and run the tools, Python, and DeepZero inside that environment.
 
 ### 2. Environment Configuration
 
-If integrating AI analysis stages, configure API keys by creating a `.env` file:
+Copy the environment template for your tool paths and optional API keys:
 
 ```bash
 cp .env.example .env
 ```
 
-Both bundled pipelines declare a `claude-code` model, which drives the Claude Code CLI
-you are already signed in to and needs no API key at all. Any [LiteLLM model]({{ '/en/reference/pipeline-yaml.html' | relative_url }}) works instead, via the pipeline's `model` field or `-m` on the command line, and that is what the API keys above are for.
+In PowerShell, use `Copy-Item .env.example .env`. Set `DEEPZERO_MODEL` in `.env` to override the backend/model for both bundled pipelines, or pass `-m` for one run. For example, `DEEPZERO_MODEL=openai/gpt-4o` requires your `OPENAI_API_KEY`.
+
+Both bundled pipelines default to `claude-code`, which uses the default model of your
+installed, signed-in Claude Code CLI and needs no API key. Any [LiteLLM model]({{ '/en/reference/pipeline-yaml.html' | relative_url }}) works instead, via the pipeline's `model` field or `-m` on the command line, and that is what the API keys above are for.
 
 ### 3. Check Before You Commit to a Run
 
@@ -47,13 +60,15 @@ than only as something to read.
 Execute the included LOLDrivers pipeline against a target path:
 
 ```bash
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml
 ```
+
+Replace `./drivers` with your driver corpus path, or create `repos.txt` with one repository URL per line. These example inputs are not included in the repository.
 
 Or the source audit, against a manifest of repositories or a directory of checkouts:
 
 ```bash
-deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
+deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
 ```
 
 Either of those takes `--preflight`, which makes one tiny call to confirm the LLM
@@ -63,7 +78,7 @@ rather than a check to type on its own. The alternative is finding out several h
 in, at the first assessment stage:
 
 ```bash
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --preflight
 ```
 
 <div class="callout">

@@ -72,6 +72,7 @@ deepzero run <TARGET> -p <pipeline> [options]
 | `-m, --model` | le `model` du pipeline | Remplace le modèle LLM pour cette exécution, par exemple `openai/gpt-4o`. |
 | `-w, --work-dir` | le réglage `work_dir` du pipeline | Remplace la racine sous laquelle le répertoire d'exécution est construit. |
 | `--clean` | désactivé | Supprime définitivement les données de l'exécution précédente et repart de zéro. |
+| `--refresh` | désactivé | Relance la découverte et fusionne le corpus actuel avec l'exécution enregistrée. |
 | `--preflight` | désactivé | Vérifie que le backend LLM est authentifié avant l'exécution. Effectue un unique appel minimal. |
 | `--redo` | aucun | Réexécute une étape nommée et toutes celles qui la suivent, en conservant le travail antérieur et en supprimant la sortie que ces étapes avaient enregistrée. Répétable. |
 | `--retry-timeouts` | désactivé | Retente les échantillons qui ont manqué de temps, en conservant tous les autres résultats. |
@@ -81,6 +82,18 @@ deepzero run <TARGET> -p <pipeline> [options]
 Une exécution sans état derrière elle repart de zéro ; une exécution avec état reprend, et l'en-tête indique quelle exécution est reprise. Modifier `--model` entre deux exécutions est autorisé et enregistré : l'état de l'exécution est mis à jour pour nommer le modèle qui sera réellement appelé, afin que `status` et le rapport ne décrivent pas un modèle qui n'est plus utilisé.
 
 `--clean` déplace le répertoire précédent sous un autre nom et le supprime en arrière-plan, afin qu'un corpus de plusieurs centaines de milliers de fichiers ne retienne pas la commande pendant sa suppression.
+
+#### Actualiser le corpus découvert
+
+Par défaut, une reprise utilise le dernier instantané de découverte. `--refresh` recherche les entrées nouvelles ou modifiées au même chemin cible. Des métadonnées de découverte identiques conservent les résultats ; les échantillons modifiés et leurs résultats en aval sont retraités. Les échantillons retirés sont déplacés dans `retired_samples/` avec leurs artefacts. `--redo discover` relance aussi la découverte des pipelines fournis. La détection dépend des métadonnées produites par le processeur d'ingestion ; elle ne surveille pas toutes les modifications de fichiers ou du réseau.
+
+Pour un manifeste git, activez aussi `refresh: true` dans la configuration de l'ingestion pour récupérer de nouveaux commits distants ; `--refresh` seul réexamine les clones en cache.
+
+```bash
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --refresh
+```
+
+Une exécution terminée sort avec le code 0 ; un échec ou une interruption avec le code 1. Les échecs individuels traités par `on_failure: skip` restent visibles dans le rapport sans nécessairement faire échouer toute l'exécution.
 
 #### Où réside l'état d'une exécution
 
@@ -236,7 +249,7 @@ deepzero interactive -w work/loldrivers/drivers-1a2b3c4d
 
 | Drapeau | Défaut | Description |
 |---------|---------|-------------|
-| `-m, --model` | `claude-code/claude-opus-5` | Modèle pour la conversation. N'importe quelle chaîne de modèle acceptée par les backends. |
+| `-m, --model` | `claude-code` | Modèle pour la conversation. N'importe quelle chaîne de modèle acceptée par les backends. |
 | `-w, --work-dir` | `work` | Répertoire d'exécution depuis lequel charger le contexte. |
 | `-v, --verbose` | désactivé | Journalisation détaillée. |
 

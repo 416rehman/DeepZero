@@ -13,7 +13,7 @@ Deux pipelines complets sont fournis avec DeepZero. Ils existent pour être exé
 | `pipelines/loldrivers` | Pilotes noyau Windows sur le disque | Candidats BYOVD : surfaces IOCTL atteignables sans le matériel |
 | `pipelines/source_audit` | Dépôts git | Vulnérabilités au niveau du code source atteignables depuis une entrée non fiable |
 
-Tous deux déclarent `model: claude-code/claude-opus-5` : ils s'exécutent donc via un abonnement Claude Code, sans clé d'API. Remplacez-le avec `-m` pour n'importe quel modèle LiteLLM. Consultez [Choisir un Modèle]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}).
+Tous deux utilisent `claude-code` par défaut : ils s'exécutent donc via un abonnement Claude Code, sans clé d'API. Remplacez-le avec `-m` pour n'importe quel modèle LiteLLM. Consultez [Choisir un Modèle]({{ '/fr/reference/pipeline-yaml.html' | relative_url }}).
 
 ---
 
@@ -68,6 +68,7 @@ La taille mérite d'être surveillée, car le mode de défaillance est ici silen
 
 ### Prérequis
 
+- LIEF pour analyser les PE : `python -m pip install -e ".[pe]"` depuis la racine du dépôt.
 - Ghidra, avec `GHIDRA_INSTALL_DIR` défini. `JAVA_HOME` est lu s'il est présent.
 - `semgrep` dans le PATH : `pip install semgrep`.
 
@@ -99,7 +100,7 @@ Les deux moitiés comptent, dans cet ordre. Semgrep coûte peu et trouve tous le
 deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
 
 # ou un répertoire de copies de travail déjà présentes sur le disque
-deepzero run C:\code\vendor -p pipelines/source_audit/pipeline.yaml
+deepzero run ./checkouts -p pipelines/source_audit/pipeline.yaml
 ```
 
 Les clones résident dans le répertoire de cache propre à l'étape d'ingestion plutôt que dans le répertoire de travail : une nouvelle exécution ne coûte donc aucun accès réseau, et `--clean` ne les jette pas.

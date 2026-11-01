@@ -126,11 +126,7 @@ Este espacio de nombres impide de forma permanente que colisionen campos entre t
 
 ### Huellas de las Entradas de una Etapa
 
-Cada `StageOutput` lleva además un `input_digest`: una huella de todo lo que decide qué produce
-esa etapa, es decir, su procesador, su configuración y cualquier archivo al que esa
-configuración apunte, como un prompt, un conjunto de reglas o un script de análisis. Se registra
-cuando la etapa termina y se compara cuando una ejecución reanudada pregunta si esa etapa ya
-está hecha.
+Cada `StageOutput` lleva un `input_digest`: una huella del procesador, la configuración y los archivos seguidos según los controles descritos abajo. Se registra al terminar la etapa y se compara al reanudar para detectar resultados obsoletos.
 
 Cuando ambos resúmenes están presentes y no coinciden, el resultado guardado describe unas
 entradas que la canalización ya no tiene, así que cuenta como obsoleto en lugar de como hecho y
@@ -141,6 +137,20 @@ una pregunta sin respuesta posible no es motivo para descartar un trabajo que pu
 costado horas, así que los resultados escritos antes de que se registrara el resumen se dan por
 buenos en lugar de rehacerse.
 
-El corpus en sí no forma parte de la huella. Ya está indexado por el directorio de trabajo, y
-leer todas las muestras para decidir si hay que leer todas las muestras costaría más que la
-propia etapa que la comprobación protege.
+Las huellas incluyen el código del procesador, los archivos referenciados recursivamente por su configuración y la configuración global que declara leer. Cambiar el modelo invalida la evaluación LLM y sus descendientes, conservando el trabajo no LLM incluido, como la descompilación. La invalidación previa también elimina los estados y artefactos posteriores. Un reductor recalcula su grupo cuando cambian los resultados previos o sus miembros.
+
+Los procesadores personalizados incluyen toda la configuración global salvo que declaren `cache_global_keys` (`()` si solo usan su propia configuración). Declare las dependencias de archivos en la configuración. Los recursos externos y las variables de entorno leídos dentro del código no se rastrean automáticamente; use `--redo <stage>` cuando cambien.
+
+`cache_path_keys` selecciona las claves de configuración de nivel superior que se siguen como dependencias de archivos o directorios (`None`: todas; `()`: ninguna). Declare scripts o metadatos de versión con `cache_files(pipeline_dir)`, en vez de calcular huellas de instalaciones completas o directorios de salida y caché.
+
+### Actualizar el corpus descubierto
+
+La reanudación utiliza por defecto la instantánea de descubrimiento guardada. Use `--refresh` para descubrir entradas nuevas o modificadas en la misma ruta. Las muestras con metadatos idénticos conservan sus resultados; las modificadas y sus resultados posteriores se procesan de nuevo. Las muestras retiradas se mueven con sus artefactos a `retired_samples/`. `--redo discover` también repite el descubrimiento de las canalizaciones incluidas. La detección depende de los metadatos del procesador de ingesta; no vigila todos los cambios de archivos o de red.
+
+Para manifiestos git, configure también `refresh: true` en la ingesta para obtener nuevos commits remotos; `--refresh` por sí solo revisa los clones en caché.
+
+```bash
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --refresh
+```
+
+Cada canalización/corpus admite un solo escritor. Un bloqueo del sistema rechaza otro `deepzero run` antes de limpiar, repetir etapas o actualizar; se libera al salir el proceso, sin necesidad de borrar manualmente el archivo de bloqueo.

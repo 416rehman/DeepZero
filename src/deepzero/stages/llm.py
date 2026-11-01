@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import jinja2
+from jinja2 import meta
 
 from deepzero.engine.stage import (
     MapProcessor,
@@ -72,12 +73,58 @@ DEFAULT_TEXT_EXTENSIONS: tuple[str, ...] = (
 
 
 class GenericLLM(MapProcessor):
+    cache_global_keys = ("model", "knowledge")
     description = "generic LLM assessment - sends context to an LLM via a jinja2 prompt template"
 
     # the response is also written as an artifact, but its name comes from this
     # stage's own `output_file` config, so it cannot be declared here. A prompt
     # in a later stage reaches it by that filename with the dot folded in.
     provides = ("llm_output_file", "classification")
+
+    def cache_files(self, pipeline_dir: Path) -> list[Path]:
+        """Include the local templates that can contribute to the rendered prompt."""
+        ctx = ProcessorContext(pipeline_dir=pipeline_dir, global_config={}, llm=None)
+        prompt_path = self._resolve_template(str(self.config.get("prompt", "")), ctx)
+        if prompt_path is None:
+            return []
+
+        # Jinja resolves every include/import against the main template's loader,
+        # including references found inside another template in a subdirectory.
+        loader = jinja2.FileSystemLoader(str(prompt_path.parent))
+        # This environment only parses template dependencies; it never renders.
+        env = jinja2.Environment(loader=loader, autoescape=False)  # nosec B701
+        pending = [prompt_path.resolve()]
+        dependencies: set[Path] = set()
+        while pending:
+            path = pending.pop()
+            if path in dependencies:
+                continue
+            dependencies.add(path)
+            try:
+                parsed = env.parse(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, jinja2.TemplateSyntaxError):
+                # Validation/rendering reports invalid templates. Their contents
+                # still participate in the fingerprint so a repair invalidates it.
+                continue
+            for reference in meta.find_referenced_templates(parsed):
+                if reference is None:
+                    # A runtime expression can select any file below the loader
+                    # root, so all of them are potential prompt dependencies.
+                    dependencies.update(
+                        candidate.resolve()
+                        for candidate in prompt_path.parent.rglob("*")
+                        if "__pycache__" not in candidate.relative_to(prompt_path.parent).parts
+                        and candidate.is_file()
+                    )
+                    continue
+                try:
+                    _, filename, _ = loader.get_source(env, reference)
+                except (jinja2.TemplateNotFound, OSError, UnicodeError):
+                    continue
+                if filename:
+                    pending.append(Path(filename).resolve())
+
+        return sorted(dependencies)
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         errors = []
@@ -181,7 +228,8 @@ class GenericLLM(MapProcessor):
             # and html-escaping them sends the model `hdr-&gt;len` where the file
             # says `hdr->len`. select_autoescape() escapes string templates by
             # default, which is why this has to be said explicitly.
-            env = jinja2.Environment(
+            # Plain-text LLM prompts: escaping would alter the source being assessed.
+            env = jinja2.Environment(  # nosec B701
                 loader=jinja2.FileSystemLoader(str(template_path.parent)),
                 undefined=jinja2.StrictUndefined,
                 autoescape=False,

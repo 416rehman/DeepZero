@@ -36,6 +36,7 @@ def _split_command(template: str) -> list[str]:
 
 
 class GenericCommand(MapProcessor):
+    cache_global_keys = ()
     description = "runs any external command as a pipeline stage - the universal escape hatch"
 
     # the exit code is recorded for every sample the command ran on. Anything

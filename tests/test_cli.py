@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import yaml
 from click.testing import CliRunner
 
 from deepzero.cli import main
@@ -115,6 +116,178 @@ class TestRunCommand:
         result = runner.invoke(main, ["run", str(target)])
         assert result.exit_code != 0
         assert "pipeline" in result.output.lower()
+
+    def test_run_missing_target_does_not_create_a_run(self, tmp_path):
+        pipeline_file = tmp_path / "pipeline.yaml"
+        pipeline_file.write_text(
+            "name: test\nstages:\n  - name: discover\n    processor: file_discovery\n"
+        )
+        work_root = tmp_path / "work"
+
+        result = CliRunner().invoke(
+            main,
+            ["run", str(tmp_path / "missing"), "-p", str(pipeline_file), "-w", str(work_root)],
+        )
+
+        assert result.exit_code != 0
+        assert "does not exist" in result.output
+        assert not work_root.exists()
+
+    def _run_with_processor(self, tmp_path, source):
+        from deepzero.engine.pipeline import corpus_segment
+
+        (tmp_path / "processor.py").write_text(source, encoding="utf-8")
+        pipeline_file = tmp_path / "pipeline.yaml"
+        pipeline_file.write_text(
+            "name: failure_demo\nstages:\n"
+            "  - name: discover\n    processor: file_discovery\n"
+            "  - name: custom\n    processor: ./processor.py\n    parallel: 1\n",
+            encoding="utf-8",
+        )
+        target = tmp_path / "input.bin"
+        target.write_bytes(b"input")
+        work_root = tmp_path / "work"
+        result = CliRunner().invoke(
+            main, ["run", str(target), "-p", str(pipeline_file), "-w", str(work_root)]
+        )
+        run_dir = work_root / "failure_demo" / corpus_segment(target)
+        return result, run_dir
+
+    def test_run_setup_failure_returns_nonzero_and_keeps_report(self, tmp_path):
+        from deepzero.engine.locking import RunLock
+
+        result, run_dir = self._run_with_processor(
+            tmp_path,
+            "from deepzero.engine.stage import MapProcessor\n"
+            "class Failing(MapProcessor):\n"
+            "    def setup(self, config):\n"
+            "        raise RuntimeError('setup exploded')\n"
+            "    def process(self, ctx, entry):\n"
+            "        raise AssertionError('setup should prevent processing')\n",
+        )
+
+        assert result.exit_code == 1, result.output
+        state = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        assert state["status"] == "failed"
+        assert state["stats"]["error"] == "setup exploded"
+        assert (run_dir / "report" / "index.html").is_file()
+        with RunLock(run_dir.parent / ".locks" / f"{run_dir.name}.lock"):
+            pass
+
+    def test_run_interrupted_returns_nonzero_and_keeps_report(self, tmp_path):
+        result, run_dir = self._run_with_processor(
+            tmp_path,
+            "from deepzero.engine.stage import MapProcessor, ProcessorResult\n"
+            "class Interrupted(MapProcessor):\n"
+            "    def process(self, ctx, entry):\n"
+            "        ctx.shutdown_event.set()\n"
+            "        return ProcessorResult.ok()\n",
+        )
+
+        assert result.exit_code == 1, result.output
+        state = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        assert state["status"] == "interrupted"
+        assert (run_dir / "report" / "index.html").is_file()
+
+    def test_refresh_updates_a_resumed_corpus_snapshot(self, tmp_path):
+        from deepzero.engine.pipeline import corpus_segment
+        from deepzero.engine.state import StateStore
+
+        pipeline_file = tmp_path / "pipeline.yaml"
+        pipeline_file.write_text(
+            "name: refresh_demo\nstages:\n  - name: discover\n    processor: file_discovery\n"
+        )
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "first.txt").write_text("first")
+        work_root = tmp_path / "work"
+        args = ["run", str(corpus), "-p", str(pipeline_file), "-w", str(work_root)]
+        store = StateStore(work_root / "refresh_demo" / corpus_segment(corpus))
+
+        result = CliRunner().invoke(main, args)
+        assert result.exit_code == 0, result.output
+        assert {state.filename for state in store.list_samples()} == {"first.txt"}
+
+        (corpus / "second.txt").write_text("second")
+        result = CliRunner().invoke(main, args)
+        assert result.exit_code == 0, result.output
+        assert {state.filename for state in store.list_samples()} == {"first.txt"}
+
+        result = CliRunner().invoke(main, [*args, "--refresh"])
+        assert result.exit_code == 0, result.output
+        assert {state.filename for state in store.list_samples()} == {"first.txt", "second.txt"}
+
+    def test_clean_is_refused_while_another_writer_holds_the_run(self, tmp_path):
+        from deepzero.engine.locking import RunLock
+        from deepzero.engine.pipeline import corpus_segment
+
+        pipeline_file = tmp_path / "pipeline.yaml"
+        pipeline_file.write_text(
+            "name: locked_demo\nstages:\n  - name: discover\n    processor: file_discovery\n"
+        )
+        target = tmp_path / "input.bin"
+        target.write_bytes(b"input")
+        work_root = tmp_path / "work"
+        corpus_key = corpus_segment(target)
+        run_dir = work_root / "locked_demo" / corpus_key
+        run_dir.mkdir(parents=True)
+        marker = run_dir / "prior-results.txt"
+        marker.write_text("keep until the writer finishes")
+        args = ["run", str(target), "-p", str(pipeline_file), "-w", str(work_root), "--clean"]
+
+        with RunLock(run_dir.parent / ".locks" / f"{corpus_key}.lock"):
+            result = CliRunner().invoke(main, args)
+            assert result.exit_code == 1, result.output
+            assert "another DeepZero process is writing this run" in result.output
+            assert marker.read_text() == "keep until the writer finishes"
+            assert not (run_dir / "pipeline.yaml").exists()
+
+        result = CliRunner().invoke(main, args)
+        assert result.exit_code == 0, result.output
+        assert not marker.exists()
+
+    def test_resume_updates_snapshot_without_expanding_secrets(self, tmp_path, monkeypatch):
+        from deepzero.cli import _report_config_for_run
+        from deepzero.engine.pipeline import corpus_segment
+
+        monkeypatch.setenv("DEEPZERO_TEST_SECRET", "private-token-not-for-the-snapshot")
+        monkeypatch.setattr("deepzero.engine.llm.LLMProvider", lambda model: None)
+        pipeline_file = tmp_path / "pipeline.yaml"
+        source = (
+            "name: snapshot_demo\n"
+            "model: original-model\n"
+            "settings:\n  api_key: ${DEEPZERO_TEST_SECRET}\n"
+            "report:\n  title: Initial report\n  entity_plural: artifacts\n"
+            "stages:\n  - name: discover\n    processor: file_discovery\n"
+        )
+        pipeline_file.write_text(source, encoding="utf-8")
+        target = tmp_path / "input.bin"
+        target.write_bytes(b"input")
+        work_root = tmp_path / "work"
+        args = ["run", str(target), "-p", str(pipeline_file), "-w", str(work_root)]
+        run_dir = work_root / "snapshot_demo" / corpus_segment(target)
+
+        result = CliRunner().invoke(main, [*args, "-m", "first-model"])
+        assert result.exit_code == 0, result.output
+        assert yaml.safe_load((run_dir / "pipeline.yaml").read_text())["model"] == "first-model"
+
+        pipeline_file.write_text(
+            source.replace("Initial report", "Updated report"), encoding="utf-8"
+        )
+        result = CliRunner().invoke(main, [*args, "-m", "second-model"])
+        assert result.exit_code == 0, result.output
+        snapshot_text = (run_dir / "pipeline.yaml").read_text(encoding="utf-8")
+        snapshot = yaml.safe_load(snapshot_text)
+        assert snapshot["model"] == "second-model"
+        assert snapshot["report"]["title"] == "Updated report"
+        assert snapshot["settings"]["api_key"] == "${DEEPZERO_TEST_SECRET}"
+        assert "private-token-not-for-the-snapshot" not in snapshot_text
+
+        pipeline_file.unlink()
+        assert _report_config_for_run(run_dir)["title"] == "Updated report"
+        result = CliRunner().invoke(main, ["report", "-w", str(run_dir)])
+        assert result.exit_code == 0, result.output
+        assert "Updated report" in (run_dir / "report" / "index.html").read_text(encoding="utf-8")
 
     def test_run_garbage_collection_cleans_trash(self, tmp_path, monkeypatch):
         import threading

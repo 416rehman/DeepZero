@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
+import json
 import logging
 import os
+import shutil
 import signal
 import tempfile
 import threading
@@ -78,6 +81,7 @@ class PipelineRunner:
         console: Console | None = None,
         dashboard: PipelineDashboard | None = None,
         progress_hook: Callable[[], None] | None = None,
+        refresh_ingest: bool = False,
     ):
         self.ingest = ingest
         self.stages = stages
@@ -91,6 +95,7 @@ class PipelineRunner:
         # called when new results have landed, so a caller can refresh a live
         # view. never allowed to interrupt the run
         self.progress_hook = progress_hook
+        self.refresh_ingest = refresh_ingest
         self._shutdown_event = threading.Event()
         self._original_sigint = None
 
@@ -142,12 +147,98 @@ class PipelineRunner:
         if not hasattr(self, "_digest_cache"):
             self._digest_cache: dict[str, str] = {}
         if spec.name not in self._digest_cache:
-            self._digest_cache[spec.name] = stage_input_digest(spec, self.pipeline_dir)
+            processors = [self.ingest] + [proc for _, proc in self.stages]
+            processor = next((p for p in processors if p.spec.name == spec.name), None)
+            own_digest = stage_input_digest(
+                spec,
+                self.pipeline_dir,
+                processor=processor,
+                global_config=self.global_config,
+            )
+            ordered_specs = [self.ingest.spec] + [item for item, _ in self.stages]
+            before = ordered_specs[
+                : next(i for i, item in enumerate(ordered_specs) if item.name == spec.name)
+            ]
+            dependencies = [(item.name, self._digest_for(item)) for item in before]
+            self._digest_cache[spec.name] = hashlib.sha256(
+                json.dumps((own_digest, dependencies)).encode("utf-8")
+            ).hexdigest()[:16]
         return self._digest_cache[spec.name]
+
+    def _invalidate_from(self, state: SampleState, spec: StageSpec, stage_names: list[str]) -> bool:
+        """Discard a stale result and its consumers, including on-disk caches."""
+        dropped = state.clear_stages_from([spec.name], stage_names)
+        if not dropped:
+            return False
+        sample_dir = self.state_store.sample_dir(state.sample_id, create=False).resolve()
+        samples_root = (self.state_store.work_dir / "samples").resolve()
+        if (
+            samples_root.parent != self.state_store.work_dir.resolve()
+            or sample_dir.parent != samples_root
+        ):
+            raise ValueError(f"cannot invalidate sample outside its store: {state.sample_id}")
+        for paths in dropped.values():
+            for relative in paths:
+                artifact = (sample_dir / relative).resolve()
+                # A processor may expose an external artifact; the engine owns
+                # only files below this sample, never its root or a linked tree.
+                if artifact == sample_dir or not artifact.is_relative_to(sample_dir):
+                    continue
+                if artifact.is_dir():
+                    shutil.rmtree(artifact)
+                else:
+                    artifact.unlink(missing_ok=True)
+        self.state_store.save_sample(state)
+        run_state = getattr(self, "_active_run_state", None)
+        if run_state and run_state.conclusion.get("stage") in dropped:
+            run_state.conclusion = {}
+        return True
+
+    def _prepare_stage(
+        self,
+        spec: StageSpec,
+        processor: Processor,
+        sample_states: dict[str, SampleState],
+        stage_names: list[str],
+    ) -> None:
+        eligible = [s for s in sample_states.values() if s.is_active() or spec.name in s.history]
+        collective = isinstance(processor, (ReduceProcessor, BulkMapProcessor)) or bool(
+            spec.config.get("limit", 0)
+        )
+        if collective:
+            # A barrier's inputs include its membership and upstream results.
+            # In particular, removing a sample must invalidate cached survivors.
+            upstream = stage_names[: stage_names.index(spec.name)]
+            cohort = []
+            for state in sorted(eligible, key=lambda s: s.sample_id):
+                inputs = {
+                    name: {
+                        "status": output.status,
+                        "verdict": output.verdict,
+                        "data": output.data,
+                        "artifacts": output.artifacts,
+                        "digest": output.input_digest,
+                    }
+                    for name in upstream
+                    if (output := state.history.get(name)) is not None
+                }
+                cohort.append((state.sample_id, inputs))
+            fingerprint = json.dumps(cohort, sort_keys=True, default=str).encode("utf-8")
+            base = self._digest_for(spec)
+            self._digest_cache[spec.name] = hashlib.sha256(
+                base.encode("utf-8") + fingerprint
+            ).hexdigest()[:16]
+
+        digest = self._digest_for(spec)
+        dirty = [state for state in eligible if not state.is_stage_done(spec.name, digest)]
+        # Collective stages must reconsider every member together. For maps,
+        # only stale/pending samples and the results consuming them are reset.
+        for state in eligible if collective and dirty else dirty:
+            self._invalidate_from(state, spec, stage_names)
 
     def _make_entry(self, state: SampleState, spec: StageSpec | None = None) -> ProcessorEntry:
         # centralizes ProcessorEntry construction for map/reduce/batch
-        cache_is_valid = True
+        cache_is_valid = spec is None
         if spec is not None:
             previous = state.history.get(spec.name)
             if previous is not None and previous.input_digest:
@@ -169,6 +260,8 @@ class PipelineRunner:
         run_state: RunState,
     ) -> RunState:
         self._active_run_state = run_state
+        self._digest_cache = {}
+        self._shutdown_event.clear()
         self._install_signal_handler()
         run_state.mark_running()
         self.state_store.save_run(run_state)
@@ -228,6 +321,19 @@ class PipelineRunner:
         if sample_states is None:
             return run_state
 
+        run_state.stats["per_stage"] = {}
+
+        # Removed processors must not remain visible to prompts or reports.
+        # Ledger insertion order records the old linear pipeline, so its suffix
+        # is invalidated before evaluating the current order.
+        for state in sample_states.values():
+            previous_order = list(state.history)
+            removed = [name for name in previous_order if name not in stage_names]
+            if removed:
+                self._invalidate_from(
+                    state, StageSpec(name=removed[0], processor=""), previous_order
+                )
+
         # breadth-first stage execution
         for spec, processor in self.stages:
             if self._shutdown_event.is_set():
@@ -235,6 +341,8 @@ class PipelineRunner:
                 break
 
             from deepzero.engine.state import StageStatus, Verdict
+
+            self._prepare_stage(spec, processor, sample_states, stage_names)
 
             active = []
             for s in sample_states.values():
@@ -245,6 +353,12 @@ class PipelineRunner:
 
             if not active:
                 log.info("%s: no active samples, skipping", spec.name)
+                run_state.stats["per_stage"][spec.name] = {
+                    "completed": 0,
+                    "filtered": 0,
+                    "failed": 0,
+                    "timed_out": 0,
+                }
                 if self.dashboard:
                     self.dashboard.stage_skip(spec.name)
                 continue
@@ -353,10 +467,21 @@ class PipelineRunner:
         stage_names: list[str],
     ) -> dict[str, SampleState] | None:
         ingest_name = self.ingest.spec.name
+        ingest_digest = self._digest_for(self.ingest.spec)
+        self._discovery_changed = False
 
-        # fast resume: if states already exist on disk, skip the expensive ingest
+        # Resume the frozen snapshot unless discovery was requested or changed.
         existing_states = self.state_store.list_samples()
-        if existing_states:
+        existing_by_id = {s.sample_id: s for s in existing_states}
+        needs_refresh = self.refresh_ingest or any(
+            ingest_name not in state.history
+            or (
+                state.history[ingest_name].input_digest
+                and state.history[ingest_name].input_digest != ingest_digest
+            )
+            for state in existing_states
+        )
+        if existing_states and not needs_refresh:
             log.info(
                 "resume: found %d existing samples, skipping ingest",
                 len(existing_states),
@@ -394,30 +519,17 @@ class PipelineRunner:
         samples = self.ingest.process(ctx, target)
         elapsed = time.monotonic() - t0
 
+        # Partial discovery after interruption must not replace the last snapshot.
+        if self._shutdown_event.is_set():
+            run_state.mark_interrupted()
+            self.state_store.save_run(run_state)
+            return None
+
         run_state.stats["discovered"] = len(samples)
         run_state.stages = stage_names
         self.state_store.save_run(run_state)
 
         log.info("%s: discovered %d samples (%.1fs)", ingest_name, len(samples), elapsed)
-
-        if not samples or self._shutdown_event.is_set():
-            if self.dashboard:
-                self.dashboard.set_transient_status(None)
-                self.dashboard.stage_done(
-                    ingest_name,
-                    len(samples) if not self._shutdown_event.is_set() else 0,
-                    0,
-                    0,
-                    elapsed,
-                )
-
-            if not samples:
-                run_state.mark_completed()
-            else:
-                run_state.mark_interrupted()
-
-            self.state_store.save_run(run_state)
-            return None
 
         if self.dashboard:
             self.dashboard.set_transient_status(
@@ -441,19 +553,37 @@ class PipelineRunner:
                     )
                 )
                 continue
-            state = SampleState(
-                sample_id=sample.sample_id,
-                sha256=sample.data.get("sha256", ""),
-                source_path=str(sample.source_path),
-                filename=sample.filename,
-                verdict=SampleStatus.ACTIVE,
+            state = existing_by_id.get(sample.sample_id)
+            previous = state.history.get(ingest_name) if state else None
+            unchanged = (
+                state is not None
+                and previous is not None
+                and state.source_path == str(sample.source_path)
+                and state.filename == sample.filename
+                and previous.data == sample.data
             )
-            state.mark_stage_completed(
-                ingest_name,
-                verdict=Verdict.CONTINUE,
-                data=sample.data,
-            )
-            state.verdict = SampleStatus.ACTIVE
+            if not unchanged:
+                self._discovery_changed = True
+                if state is not None:
+                    self._invalidate_from(state, self.ingest.spec, stage_names)
+                state = SampleState(
+                    sample_id=sample.sample_id,
+                    sha256=sample.data.get("sha256", ""),
+                    source_path=str(sample.source_path),
+                    filename=sample.filename,
+                    verdict=SampleStatus.ACTIVE,
+                )
+                state.mark_stage_completed(
+                    ingest_name,
+                    verdict=Verdict.CONTINUE,
+                    data=sample.data,
+                    input_digest=ingest_digest,
+                )
+                state.verdict = SampleStatus.ACTIVE
+            else:
+                # The discovery config may change membership but leave this
+                # sample untouched, in which case its downstream outputs hold.
+                previous.input_digest = ingest_digest
             sample_states[sample.sample_id] = state
             self.state_store.save_sample(state)
 
@@ -470,11 +600,49 @@ class PipelineRunner:
             if len(collisions) > 5:
                 log.error("  ... and %d more", len(collisions) - 5)
 
+        removed_ids = set(existing_by_id) - set(sample_states)
+        self._discovery_changed = self._discovery_changed or bool(removed_ids)
+        for sample_id in removed_ids:
+            sample_dir = self.state_store.sample_dir(sample_id, create=False)
+            samples_root = (self.state_store.work_dir / "samples").resolve()
+            # Keep retired artifacts outside the active store. Never move a
+            # directory that resolves outside the sample store, including links.
+            if (
+                samples_root.parent != self.state_store.work_dir.resolve()
+                or sample_dir.resolve().parent != samples_root
+            ):
+                raise ValueError(f"cannot retire sample outside its store: {sample_id}")
+            archive_root = self.state_store.work_dir / "retired_samples"
+            if archive_root.resolve().parent != self.state_store.work_dir.resolve():
+                raise ValueError("cannot retire samples outside the run directory")
+            archive_root.mkdir(parents=True, exist_ok=True)
+            archive_path = archive_root / f"{sample_dir.name}-{time.time_ns()}"
+            if archive_path.resolve().parent != archive_root.resolve():
+                raise ValueError(f"cannot retire sample outside its archive: {sample_id}")
+            sample_dir.rename(archive_path)
+
+        if self._discovery_changed:
+            run_state.conclusion = {}
+            run_state.stats.pop("per_stage", None)
+        if needs_refresh:
+            log.info(
+                "%s: refreshed snapshot, %d present and %d retired",
+                ingest_name,
+                len(sample_states),
+                len(removed_ids),
+            )
+        run_state.stats["discovered"] = len(sample_states)
         self.state_store.save_manifest(list(sample_states.values()))
+        self.state_store.save_run(run_state)
 
         if self.dashboard:
             self.dashboard.set_transient_status(None)
-            self.dashboard.stage_done(ingest_name, len(samples), 0, 0, elapsed)
+            self.dashboard.stage_done(ingest_name, len(sample_states), 0, 0, elapsed)
+
+        if not sample_states:
+            run_state.mark_completed()
+            self.state_store.save_run(run_state)
+            return None
 
         return sample_states
 
@@ -666,6 +834,10 @@ class PipelineRunner:
             if result.error:
                 log.error("[%s] %s failed: %s", spec.name, state.filename, result.error)
 
+        # Failed, filtered, timed-out and cached outcomes also belong to these
+        # inputs. A changed config can then reconsider them on the next run.
+        state.history[spec.name].input_digest = self._digest_for(spec)
+
         if persist:
             self.state_store.save_sample(state)
 
@@ -843,6 +1015,20 @@ class PipelineRunner:
         stage_stats: dict[str, int],
     ) -> list[str]:
         """run a reduce stage. returns the ids it kept, in the order it chose."""
+        digest = self._digest_for(spec)
+        if all(state.is_stage_done(spec.name, digest) for state in active):
+            kept = [
+                state
+                for state in active
+                if state.history[spec.name].status == StageStatus.COMPLETED
+                and state.history[spec.name].verdict == Verdict.CONTINUE
+            ]
+            return [
+                state.sample_id
+                for state in sorted(
+                    kept, key=lambda s: s.history[spec.name].data.get("__reduce_order", 0)
+                )
+            ]
         log.info("%s: reducing %d active samples", spec.name, len(active))
         ctx = ProcessorContext(
             pipeline_dir=self.pipeline_dir,
@@ -871,16 +1057,20 @@ class PipelineRunner:
             return []
 
         kept_ids = set(results)
+        ranks = {sample_id: i for i, sample_id in enumerate(results)}
         for state in active:
             if state.sample_id in kept_ids:
-                if not state.is_stage_done(spec.name):
-                    state.mark_stage_completed(spec.name, verdict=Verdict.CONTINUE)
-                    stage_stats["completed"] += 1
+                state.mark_stage_completed(
+                    spec.name,
+                    verdict=Verdict.CONTINUE,
+                    data={"__reduce_order": ranks[state.sample_id]},
+                    input_digest=digest,
+                )
+                stage_stats["completed"] += 1
             else:
-                if not state.is_stage_done(spec.name):
-                    state.verdict = SampleStatus.FILTERED
-                    state.mark_stage_skipped(spec.name, "filtered by reduce")
-                    stage_stats["filtered"] += 1
+                state.mark_stage_skipped(spec.name, "filtered by reduce")
+                state.history[spec.name].input_digest = digest
+                stage_stats["filtered"] += 1
             self.state_store.save_sample(state)
 
         return list(results)

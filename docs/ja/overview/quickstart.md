@@ -15,8 +15,19 @@ DeepZero には **Python 3.11+** が必要です。
 ```bash
 git clone https://github.com/416rehman/DeepZero.git
 cd DeepZero
-pip install -e .
+python -m pip install -e ".[full]"
 ```
+
+以降のコマンドはクローンしたリポジトリ内で実行してください。`full` には PE 解析用の LIEF と API モデル用の LiteLLM が含まれます。エンジンのみなら `python -m pip install -e .` でインストールできます。
+
+外部ツールも同じ環境にインストールしてください。
+
+- 両パイプライン: PATH 上の **Semgrep**（`python -m pip install semgrep`）と LLM バックエンド。
+- ソース監査: PATH 上の **Git**。
+- ドライバー解析: **Ghidra** とそのバージョンが対応する **JDK**。`.env` の `GHIDRA_INSTALL_DIR` に自分のインストール先を設定します。
+- 既定の LLM: **Claude Code CLI** をインストールし、自分のアカウントでサインインしてください。CLI の既定モデルを使い、API キーは不要です。API モデルとキーを下で設定することもできます。
+
+WSL を使う場合は、ツール、Python、DeepZero をすべて WSL 内にインストールして実行してください。
 
 ### 2. 環境設定
 
@@ -25,6 +36,8 @@ AI 分析ステージを統合する場合は、`.env` ファイルを作成し�
 ```bash
 cp .env.example .env
 ```
+
+PowerShell では `Copy-Item .env.example .env` を使います。`.env` の `DEEPZERO_MODEL` で両パイプラインのバックエンドとモデルを変更でき、`-m` なら 1 回の実行だけ変更できます。たとえば `DEEPZERO_MODEL=openai/gpt-4o` には自分の `OPENAI_API_KEY` が必要です。
 
 同梱の 2 つのパイプラインはどちらも `claude-code` モデルを宣言しています。これは、すでにサインイン済みの Claude Code CLI を駆動するもので、API キーをまったく必要としません。代わりに任意の [LiteLLM モデル]({{ '/ja/reference/pipeline-yaml.html' | relative_url }})を、パイプラインの `model` フィールドまたはコマンドラインの `-m` で指定することもできます。上記の API キーはそのためのものです。
 
@@ -44,19 +57,21 @@ deepzero validate pipelines/loldrivers/pipeline.yaml
 ターゲットパスに対して同梱の LOLDrivers パイプラインを実行します。
 
 ```bash
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml
 ```
+
+`./drivers` は自分のドライバー群のパスに置き換えるか、1 行に 1 つのリポジトリ URL を書いた `repos.txt` を作成してください。これらの入力データは同梱されていません。
 
 あるいは、リポジトリのマニフェストやチェックアウトのディレクトリに対してソースコード監査を実行します。
 
 ```bash
-deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
+deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
 ```
 
 このどちらにも `--preflight` を付けられます。これは、LLM バックエンドが実際にサインイン済みかを、ごく小さな呼び出し 1 回で確認します。バックエンドの準備ができていなければ数秒で停止し、そうでなければ実行はそのまま通常どおり進みます。つまり、単独で打ち込む確認コマンドではなく、もともと始めるつもりだった実行に添えるフラグです。これがなければ、数時間経ってから最初の評価ステージで気づくことになります。
 
 ```bash
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --preflight
 ```
 
 <div class="callout">

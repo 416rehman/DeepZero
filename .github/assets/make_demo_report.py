@@ -504,7 +504,7 @@ def build(demo: Demo, root: pathlib.Path) -> tuple[pathlib.Path, ReportConfig]:
             run_id=demo.run_id,
             pipeline=pipeline.name,
             target=demo.target,
-            model=pipeline.model or "claude-code/claude-opus-5",
+            model=pipeline.model or "claude-code",
             status=RunStatus.COMPLETED,
         )
     )

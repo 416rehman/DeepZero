@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
+
 from deepzero.engine.stage import ProcessorContext, StageSpec
 from deepzero.stages.ingest import FileDiscovery
 
@@ -69,5 +71,10 @@ class TestFileDiscovery:
     def test_discover_missing_target(self, tmp_path):
         processor = self._make_tool()
         ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=None)
-        samples = processor.process(ctx, tmp_path / "nope")
-        assert len(samples) == 0
+        with pytest.raises(FileNotFoundError, match="target does not exist"):
+            processor.process(ctx, tmp_path / "nope")
+
+    def test_discover_empty_directory(self, tmp_path):
+        processor = self._make_tool()
+        ctx = ProcessorContext(pipeline_dir=tmp_path, global_config={}, llm=None)
+        assert processor.process(ctx, tmp_path) == []

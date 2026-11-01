@@ -20,7 +20,8 @@ env.bak/
 venv.bak/
 
 # Environment variables
-.env.local
+.env.*
+!.env.example
 
 # IDE
 .vscode/

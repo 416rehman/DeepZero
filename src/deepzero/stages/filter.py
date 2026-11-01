@@ -13,6 +13,7 @@ from deepzero.engine.stage import (
 
 
 class MetadataFilter(MapProcessor):
+    cache_global_keys = ()
     description = (
         "generic metadata condition evaluator - checks field equality, min/max thresholds, dedup"
     )

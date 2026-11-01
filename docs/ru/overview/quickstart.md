@@ -15,8 +15,19 @@ DeepZero требует **Python 3.11+**.
 ```bash
 git clone https://github.com/416rehman/DeepZero.git
 cd DeepZero
-pip install -e .
+python -m pip install -e ".[full]"
 ```
+
+Выполняйте команды из клонированного репозитория. Набор `full` включает LIEF для PE и LiteLLM для моделей с API. Только движок: `python -m pip install -e .`.
+
+Установите внешние инструменты в той же среде:
+
+- Оба конвейера: **Semgrep** в PATH (`python -m pip install semgrep`) и бэкенд LLM.
+- Аудит исходников: **Git** в PATH.
+- Драйверы: **Ghidra**, **JDK, совместимый с этой версией**, и `GHIDRA_INSTALL_DIR` в `.env`, указывающий на вашу установку.
+- LLM по умолчанию: установите CLI **Claude Code** и войдите в собственную учетную запись. Используется модель CLI по умолчанию, без ключа API. Ниже можно настроить модель с API.
+
+При использовании WSL устанавливайте и запускайте инструменты, Python и DeepZero внутри этой среды.
 
 ### 2. Настройка среды
 
@@ -25,6 +36,8 @@ pip install -e .
 ```bash
 cp .env.example .env
 ```
+
+В PowerShell: `Copy-Item .env.example .env`. Задайте `DEEPZERO_MODEL` в `.env` для обоих конвейеров или передайте `-m` для одного запуска. Например, `DEEPZERO_MODEL=openai/gpt-4o` требует вашего `OPENAI_API_KEY`.
 
 Оба встроенных конвейера объявляют модель `claude-code`, которая обращается к CLI Claude Code, где вы уже вошли в систему, и не требует ключа API вовсе. Вместо нее подойдет любая [модель LiteLLM]({{ '/ru/reference/pipeline-yaml.html' | relative_url }}), заданная полем `model` конвейера или флагом `-m` в командной строке, и именно для нее нужны ключи API выше.
 
@@ -44,19 +57,21 @@ deepzero validate pipelines/loldrivers/pipeline.yaml
 Запустите встроенный конвейер LOLDrivers на целевом пути:
 
 ```bash
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml
 ```
+
+Замените `./drivers` путем к своему корпусу драйверов или создайте `repos.txt` с одним URL репозитория на строку. Эти примеры входных данных не входят в репозиторий.
 
 Либо аудит исходного кода, указав манифест репозиториев или каталог с уже склонированными копиями:
 
 ```bash
-deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
+deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
 ```
 
 Любая из этих команд принимает `--preflight`, который делает один крошечный вызов, чтобы убедиться, что бэкенд LLM действительно авторизован. Он останавливается за секунды, если бэкенд не готов, а иначе запуск идет дальше как обычно, поэтому это флаг у запуска, который вы и так собирались начать, а не отдельная проверка, которую набирают саму по себе. Иначе об этом можно узнать через несколько часов, на первом же этапе оценки:
 
 ```bash
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --preflight
 ```
 
 <div class="callout">

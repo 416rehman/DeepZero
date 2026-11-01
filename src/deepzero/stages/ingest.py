@@ -7,6 +7,7 @@ from deepzero.engine.stage import IngestProcessor, ProcessorContext, Sample
 
 
 class FileDiscovery(IngestProcessor):
+    cache_global_keys = ()
     description = "generic file discovery - finds files by extension, no format parsing"
 
     # both are recorded for every sample, in single-file mode and in directory
@@ -21,8 +22,7 @@ class FileDiscovery(IngestProcessor):
             return self._discover_single(target)
 
         if not target.is_dir():
-            self.log.error("target does not exist: %s", target)
-            return []
+            raise FileNotFoundError(f"target does not exist: {target}")
 
         return self._discover_directory(target, extensions, recursive)
 

@@ -138,7 +138,7 @@ The part of `model` before the first `/` is a scheme, and it selects the backend
 `claude-code` runs a pipeline against a Claude Code subscription with no API key.
 DeepZero never handles credentials for it: it invokes the CLI you already signed in to
 and inherits whatever authentication that binary has. The part after the slash is
-passed through as the model, so `claude-code/claude-opus-5` picks a specific model and
+passed through as the model, so `claude-code/opus` picks a specific model and
 bare `claude-code` leaves the CLI on its default. Both shipped pipelines declare a
 `claude-code` model, and `-m` overrides it for one run.
 

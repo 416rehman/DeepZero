@@ -110,6 +110,9 @@ class GhidraDecompile(MapProcessor):
     a finished run is ever adopted.
     """
 
+    cache_global_keys = ()
+    cache_path_keys = ()
+
     description = (
         "decompiles binaries using ghidra headless analysis with a configurable post-script"
     )
@@ -150,6 +153,20 @@ class GhidraDecompile(MapProcessor):
         if self.config.max_parallel and self.config.max_parallel > 0:
             return self.config.max_parallel
         return _auto_ghidra_workers()
+
+    def cache_files(self, pipeline_dir: Path) -> list[Path]:
+        # Track the strategy and tool version, not gigabytes of JARs or a JDK.
+        dependencies = []
+        if self.config.ghidra_install_dir:
+            properties = Path(self.config.ghidra_install_dir) / "Ghidra" / "application.properties"
+            if properties.is_file():
+                dependencies.append(properties)
+        if not self.config.strategy:
+            return dependencies
+        try:
+            return dependencies + [self._resolve_script(self.config.strategy)]
+        except FileNotFoundError:
+            return dependencies  # validation/process will report a missing script
 
     def validate(self, ctx: ProcessorContext) -> list[str]:
         if not self.config.ghidra_install_dir:

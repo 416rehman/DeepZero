@@ -13,7 +13,7 @@ order: 3
 | `pipelines/loldrivers` | Драйверы ядра Windows на диске | Кандидаты BYOVD: поверхности IOCTL, достижимые без оборудования |
 | `pipelines/source_audit` | Git-репозитории | Уязвимости на уровне исходного кода, достижимые из недоверенного ввода |
 
-Оба объявляют `model: claude-code/claude-opus-5`, поэтому работают через подписку Claude Code без ключа API. Переопределите флагом `-m` на любую модель LiteLLM. См. [Выбор Модели]({{ '/ru/reference/pipeline-yaml.html' | relative_url }}).
+Оба по умолчанию используют `claude-code`, поэтому работают через подписку Claude Code без ключа API. Переопределите флагом `-m` на любую модель LiteLLM. См. [Выбор Модели]({{ '/ru/reference/pipeline-yaml.html' | relative_url }}).
 
 ---
 
@@ -68,6 +68,7 @@ order: 3
 
 ### Предварительные требования
 
+- LIEF для разбора PE: `python -m pip install -e ".[pe]"` из корня репозитория.
 - Ghidra с установленной переменной `GHIDRA_INSTALL_DIR`. `JAVA_HOME` читается, если задана.
 - `semgrep` в PATH: `pip install semgrep`.
 
@@ -99,7 +100,7 @@ order: 3
 deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
 
 # либо каталог с уже склонированными рабочими копиями
-deepzero run C:\code\vendor -p pipelines/source_audit/pipeline.yaml
+deepzero run ./checkouts -p pipelines/source_audit/pipeline.yaml
 ```
 
 Клоны живут в собственном каталоге кэша этапа приема, а не в рабочем каталоге, поэтому повторный запуск не стоит сети, а `--clean` их не выбрасывает.

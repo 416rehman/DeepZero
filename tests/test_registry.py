@@ -56,3 +56,23 @@ class TestRegistryModule:
         )
         cls = resolve_processor_class("reg_test/reg_test.py")
         assert cls.__name__ == "RegTest"
+
+    @pytest.mark.parametrize("explicit_class", [False, True])
+    @pytest.mark.parametrize("forward_slashes", [False, True])
+    def test_resolve_absolute_file_path(self, tmp_path, explicit_class, forward_slashes):
+        processor_file = tmp_path / "external processors" / "absolute.py"
+        processor_file.parent.mkdir()
+        processor_file.write_text(
+            "from deepzero.engine.stage import MapProcessor, ProcessorResult\n"
+            "class AbsoluteProcessor(MapProcessor):\n"
+            "    def process(self, ctx, entry): return ProcessorResult.ok()\n",
+            encoding="utf-8",
+        )
+        reference = processor_file.as_posix() if forward_slashes else str(processor_file)
+        if explicit_class:
+            reference += ":AbsoluteProcessor"
+
+        cls = resolve_processor_class(reference)
+
+        assert cls.__name__ == "AbsoluteProcessor"
+        assert cls._source_file == processor_file

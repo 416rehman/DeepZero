@@ -72,6 +72,7 @@ deepzero run <TARGET> -p <pipeline> [opciones]
 | `-m, --model` | el `model` de la canalización | Sustituye el modelo LLM para esta ejecución, por ejemplo `openai/gpt-4o`. |
 | `-w, --work-dir` | el ajuste `work_dir` de la canalización | Sustituye la raíz bajo la que se construye el directorio de la ejecución. |
 | `--clean` | desactivado | Borra permanentemente los datos de ejecuciones anteriores y empieza de cero. |
+| `--refresh` | desactivado | Repite el descubrimiento y combina el corpus actual con la ejecución guardada. |
 | `--preflight` | desactivado | Verifica que el backend LLM está autenticado antes de ejecutar. Hace una llamada mínima. |
 | `--redo` | ninguna | Vuelve a ejecutar la etapa que se nombre y todas las posteriores, conservando el trabajo anterior y borrando la salida que esas etapas habían registrado. Se puede repetir. |
 | `--retry-timeouts` | desactivado | Vuelve a intentar las muestras que agotaron el tiempo, conservando todos los demás resultados. |
@@ -81,6 +82,18 @@ deepzero run <TARGET> -p <pipeline> [opciones]
 Una ejecución sin estado detrás empieza de cero; una que sí lo tiene se reanuda, y la cabecera indica qué ejecución está retomando. Cambiar `--model` entre ejecuciones está permitido y queda registrado: el estado de la ejecución se actualiza para nombrar el modelo al que se va a llamar realmente, de modo que ni `status` ni el informe describan un modelo que ya no se usa.
 
 `--clean` aparta el directorio anterior renombrándolo y lo borra en segundo plano, así que un corpus con cientos de miles de archivos no retiene el comando mientras se elimina.
+
+#### Actualizar el corpus descubierto
+
+La reanudación utiliza por defecto la instantánea de descubrimiento guardada. Use `--refresh` para descubrir entradas nuevas o modificadas en la misma ruta. Las muestras con metadatos idénticos conservan sus resultados; las modificadas y sus resultados posteriores se procesan de nuevo. Las muestras retiradas se mueven con sus artefactos a `retired_samples/`. `--redo discover` también repite el descubrimiento de las canalizaciones incluidas. La detección depende de los metadatos del procesador de ingesta; no vigila todos los cambios de archivos o de red.
+
+Para manifiestos git, configure también `refresh: true` en la ingesta para obtener nuevos commits remotos; `--refresh` por sí solo revisa los clones en caché.
+
+```bash
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --refresh
+```
+
+Una ejecución completada sale con código 0; una fallida o interrumpida, con 1. Los fallos individuales tratados con `on_failure: skip` siguen visibles en el informe sin necesariamente hacer fallar toda la ejecución.
 
 #### Dónde vive el estado de una ejecución
 
@@ -236,7 +249,7 @@ deepzero interactive -w work/loldrivers/drivers-1a2b3c4d
 
 | Opción | Predeterminado | Descripción |
 |------|---------|-------------|
-| `-m, --model` | `claude-code/claude-opus-5` | Modelo para la conversación. Cualquier cadena de modelo que acepten los backends. |
+| `-m, --model` | `claude-code` | Modelo para la conversación. Cualquier cadena de modelo que acepten los backends. |
 | `-w, --work-dir` | `work` | Directorio de ejecución del que cargar el contexto. |
 | `-v, --verbose` | desactivado | Registro detallado. |
 

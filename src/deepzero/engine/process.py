@@ -49,8 +49,14 @@ async def _run_async(
 async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
     try:
         if sys.platform == "win32":
+            system_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR")
+            taskkill = (
+                str(Path(system_root) / "System32" / "taskkill.exe")
+                if system_root
+                else "taskkill.exe"
+            )
             kproc = await asyncio.create_subprocess_exec(
-                r"C:\Windows\System32\taskkill.exe",
+                taskkill,
                 "/T",
                 "/F",
                 "/PID",

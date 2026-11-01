@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Any
 
 import click
+import yaml
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.markup import escape
@@ -241,12 +242,23 @@ def _choose_run(root: Path) -> Path | None:
 def _report_config_for_run(work_path: Path) -> dict:
     """recover a run's report block from the work directory alone.
 
-    The report block decides the vocabulary the page is written in, and it lives
-    in the pipeline rather than in the run. Pointing --work-dir at a driver run
-    without it produced a page calling drivers samples and the target a corpus,
-    which is the default wording rather than the one the pipeline asked for. The
-    run records which pipeline produced it, so the block can be recovered.
+    The saved snapshot lets a custom pipeline's report outlive its source files
+    and the working directory it originally ran from. Older runs without a
+    snapshot can still recover their configuration by pipeline name.
     """
+    snapshot_path = work_path / "pipeline.yaml"
+    if snapshot_path.is_file():
+        try:
+            snapshot = yaml.safe_load(snapshot_path.read_text(encoding="utf-8"))
+            if isinstance(snapshot, dict):
+                from deepzero.engine.pipeline import _expand_env_vars
+
+                report = snapshot.get("report") or {}
+                if isinstance(report, dict):
+                    return _expand_env_vars(report)
+        except (OSError, yaml.YAMLError) as exc:
+            log.debug("could not read pipeline snapshot %s: %s", snapshot_path, exc)
+
     run_json = work_path / "run.json"
     if not run_json.exists():
         return {}
@@ -353,6 +365,11 @@ def main(ctx: click.Context):
 @click.option("--verbose", "-v", is_flag=True, help="verbose logging")
 @click.option("--clean", is_flag=True, help="permanently delete previous run data and start fresh")
 @click.option(
+    "--refresh",
+    is_flag=True,
+    help="rediscover the corpus and update its saved snapshot, keeping unchanged samples",
+)
+@click.option(
     "--preflight",
     is_flag=True,
     help="verify the LLM backend is authenticated before running (makes one tiny call)",
@@ -382,6 +399,7 @@ def run(
     work_dir: str | None,
     verbose: bool,
     clean: bool,
+    refresh: bool,
     preflight: bool,
     redo_stages: tuple[str, ...],
     retry_timeouts: bool,
@@ -420,6 +438,20 @@ def run(
     # scope the run to this corpus so different targets through the same pipeline
     # get isolated, independently resumable work directories under one root.
     pipeline_def.bind_corpus(target_path)
+
+    from deepzero.engine.locking import RunLock, RunLockedError
+
+    lock_path = pipeline_def.base_work_dir / ".locks" / f"{pipeline_def.corpus_key}.lock"
+    writer_lock = RunLock(lock_path)
+    try:
+        writer_lock.acquire()
+    except RunLockedError as exc:
+        raise click.ClickException(
+            f"another DeepZero process is writing this run: {pipeline_def.work_dir}"
+        ) from exc
+    except OSError as exc:
+        raise click.ClickException(f"cannot acquire the run's writer lock: {exc}") from exc
+    click.get_current_context().call_on_close(writer_lock.release)
 
     import os
     import shutil
@@ -469,6 +501,7 @@ def run(
     )
 
     runner, llm = _build_runner(pipeline_def, dashboard=dashboard)
+    runner.refresh_ingest = refresh
 
     if preflight and llm is not None:
         console.print("[dim]preflight: checking LLM backend authentication...[/]")
@@ -558,7 +591,6 @@ def run(
             run_state.model = pipeline_def.model
     else:
         # initialize fresh state
-        state_store.save_pipeline_snapshot(pipeline_def.raw_yaml)
         run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}"
         run_state = RunState(
             run_id=run_id,
@@ -566,6 +598,16 @@ def run(
             target=str(target_path),
             model=pipeline_def.model,
         )
+
+    # Keep current configuration for report/serve even when the pipeline lives
+    # elsewhere. Start from raw YAML so environment-backed credentials stay as
+    # references rather than being copied into the run directory.
+    snapshot = pipeline_def.raw_yaml
+    if model is not None:
+        snapshot_data = yaml.safe_load(snapshot)
+        snapshot_data["model"] = pipeline_def.model
+        snapshot = yaml.safe_dump(snapshot_data, sort_keys=False, allow_unicode=True)
+    state_store.save_pipeline_snapshot(snapshot)
 
     # a live report the user can open straight away and watch fill in. it is
     # rebuilt when results actually land rather than on a timer, and rate
@@ -593,6 +635,9 @@ def run(
     finally:
         _refresh_report(force=True)  # settle the final state, no reload banner
         console.print(f"\n report   [bold]{report_index.resolve().as_uri()}[/]")
+
+    if run_state.status != RunStatus.COMPLETED:
+        raise SystemExit(1)
 
 
 @main.command()
@@ -862,7 +907,7 @@ stages:
 @click.option(
     "--model",
     "-m",
-    default="claude-code/claude-opus-5",
+    default="claude-code",
     help="llm model for interactive mode",
 )
 @click.option("--work-dir", "-w", default="work", help="work directory for context")

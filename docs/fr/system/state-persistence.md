@@ -110,11 +110,7 @@ Ce cloisonnement par espaces de noms empêche définitivement les collisions de 
 
 ### Empreintes des Entrées d'une Étape
 
-Chaque `StageOutput` porte également un `input_digest` : une empreinte de tout ce qui détermine
-ce que cette étape produit, c'est-à-dire son processeur, sa configuration, et tout fichier que
-cette configuration désigne, tel qu'un prompt, un ensemble de règles ou un script d'analyse. Elle
-est enregistrée à l'achèvement de l'étape et comparée lorsqu'une exécution reprise se demande si
-cette étape est déjà faite.
+Chaque `StageOutput` porte un `input_digest` : une empreinte du processeur, de la configuration et des fichiers suivis selon les contrôles ci-dessous. Elle est enregistrée à la fin de l'étape puis comparée lors d'une reprise pour détecter les résultats périmés.
 
 Là où les deux empreintes sont présentes et diffèrent, le résultat stocké décrit des entrées que
 le pipeline n'a plus : il compte donc comme périmé plutôt que comme fait, et l'étape est
@@ -124,6 +120,20 @@ l'une des deux empreintes est vide, la question ne peut pas être posée, et une
 réponse ne justifie pas de jeter un travail qui a pu prendre des heures : les résultats écrits
 avant que l'empreinte ne soit enregistrée sont donc retenus plutôt que refaits.
 
-Le corpus lui-même ne fait pas partie de l'empreinte. Il est déjà cloisonné par le répertoire de
-travail, et lire chaque échantillon pour décider s'il faut lire chaque échantillon coûterait plus
-cher que l'étape que la vérification protège.
+Les empreintes incluent le code source du processeur, les fichiers référencés récursivement par sa configuration et la configuration globale qu'il déclare lire. Un changement de modèle invalide l'évaluation LLM et ses descendants, mais conserve le travail non LLM fourni, tel que la décompilation. Une invalidation en amont efface aussi les états et artefacts enregistrés en aval. Un réducteur recalcule son groupe quand les résultats ou ses membres changent.
+
+Par défaut, un processeur personnalisé prend toute la configuration globale dans son empreinte ; `cache_global_keys` peut limiter cette dépendance (`()` pour sa seule configuration locale). Déclarez les fichiers requis dans la configuration. Les ressources externes et variables d'environnement lues directement par son code ne sont pas suivies automatiquement : utilisez `--redo <stage>` si elles changent.
+
+`cache_path_keys` sélectionne les clés de configuration suivies comme dépendances de fichiers ou dossiers (`None` : toutes ; `()` : aucune). Utilisez `cache_files(pipeline_dir)` pour déclarer les scripts ou métadonnées de version nécessaires, sans lire toute une installation ni les dossiers de sortie ou de cache.
+
+### Actualiser le corpus découvert
+
+Par défaut, une reprise utilise le dernier instantané de découverte. `--refresh` recherche les entrées nouvelles ou modifiées au même chemin cible. Des métadonnées de découverte identiques conservent les résultats ; les échantillons modifiés et leurs résultats en aval sont retraités. Les échantillons retirés sont déplacés dans `retired_samples/` avec leurs artefacts. `--redo discover` relance aussi la découverte des pipelines fournis. La détection dépend des métadonnées produites par le processeur d'ingestion ; elle ne surveille pas toutes les modifications de fichiers ou du réseau.
+
+Pour un manifeste git, activez aussi `refresh: true` dans la configuration de l'ingestion pour récupérer de nouveaux commits distants ; `--refresh` seul réexamine les clones en cache.
+
+```bash
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --refresh
+```
+
+Un seul processus peut écrire dans un même pipeline/corpus. Un verrou système refuse un second `deepzero run` avant nettoyage, reprise d'étape ou actualisation ; il est libéré à la fin du processus, sans suppression manuelle du fichier de verrou.

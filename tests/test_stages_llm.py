@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from deepzero.engine.stage import ProcessorContext, StageSpec
 from deepzero.engine.state import StageOutput
 from deepzero.stages.llm import GenericLLM
@@ -359,3 +361,101 @@ class TestAPromptIsPlainTextNotAWebPage:
         )
         for entity in ("&amp;", "&gt;", "&lt;", "&#34;", "&#39;", "&quot;"):
             assert entity not in out
+
+
+class TestPromptDependencyFingerprints:
+    def _stage(self, tmp_path, prompt, history=None):
+        template_dir = tmp_path / "templates"
+        template_dir.mkdir()
+        (template_dir / "prompt.j2").write_text(prompt, encoding="utf-8")
+        spec = StageSpec("assess", "generic_llm", config={"prompt": "prompt.j2"})
+        stage = GenericLLM(spec)
+        ctx, entry = _make_ctx(tmp_path, history_data=history)
+        ctx.pipeline_dir = template_dir
+        return stage, ctx, entry
+
+    def _digest(self, stage, ctx):
+        from deepzero.engine.stage import stage_input_digest
+
+        return stage_input_digest(stage.spec, ctx.pipeline_dir, processor=stage)
+
+    @pytest.mark.parametrize(
+        ("prompt", "dependency"),
+        [
+            ('{% include "child.j2" %}', "before"),
+            ('{% extends "child.j2" %}', "before"),
+            (
+                '{% import "child.j2" as helpers %}{{ helpers.answer() }}',
+                "{% macro answer() %}before{% endmacro %}",
+            ),
+            (
+                '{% from "child.j2" import answer %}{{ answer() }}',
+                "{% macro answer() %}before{% endmacro %}",
+            ),
+        ],
+    )
+    def test_referenced_template_edit_invalidates_changed_prompt(
+        self, tmp_path, prompt, dependency
+    ):
+        stage, ctx, entry = self._stage(tmp_path, prompt)
+        child = ctx.pipeline_dir / "child.j2"
+        child.write_text(dependency, encoding="utf-8")
+        before = self._digest(stage, ctx)
+        assert stage._render_prompt("prompt.j2", ctx, entry) == "before"
+
+        child.write_text(dependency.replace("before", "after"), encoding="utf-8")
+
+        assert stage._render_prompt("prompt.j2", ctx, entry) == "after"
+        assert self._digest(stage, ctx) != before
+
+    def test_transitive_includes_use_main_template_loader_root(self, tmp_path):
+        stage, ctx, entry = self._stage(tmp_path, '{% include "nested/child.j2" %}')
+        (ctx.pipeline_dir / "nested").mkdir()
+        (ctx.pipeline_dir / "nested" / "child.j2").write_text(
+            '{% include "leaf.j2" %}', encoding="utf-8"
+        )
+        leaf = ctx.pipeline_dir / "leaf.j2"
+        leaf.write_text("before", encoding="utf-8")
+        before = self._digest(stage, ctx)
+
+        leaf.write_text("after", encoding="utf-8")
+
+        assert stage._render_prompt("prompt.j2", ctx, entry) == "after"
+        assert self._digest(stage, ctx) != before
+
+    def test_dynamic_include_tracks_loader_tree(self, tmp_path):
+        stage, ctx, entry = self._stage(
+            tmp_path, "{% include chosen_template %}", {"chosen_template": "nested/child.j2"}
+        )
+        (ctx.pipeline_dir / "nested").mkdir()
+        child = ctx.pipeline_dir / "nested" / "child.j2"
+        child.write_text("before", encoding="utf-8")
+        before = self._digest(stage, ctx)
+
+        child.write_text("after", encoding="utf-8")
+
+        assert stage._render_prompt("prompt.j2", ctx, entry) == "after"
+        assert self._digest(stage, ctx) != before
+
+    def test_dynamic_include_ignores_python_bytecode_cache(self, tmp_path):
+        stage, ctx, _ = self._stage(tmp_path, "{% include chosen_template %}")
+        cache = ctx.pipeline_dir / "__pycache__"
+        cache.mkdir()
+        bytecode = cache / "generated.pyc"
+        bytecode.write_bytes(b"before")
+        before = self._digest(stage, ctx)
+
+        bytecode.write_bytes(b"after")
+
+        assert self._digest(stage, ctx) == before
+
+    def test_static_include_does_not_depend_on_unreferenced_sibling(self, tmp_path):
+        stage, ctx, _ = self._stage(tmp_path, '{% include "child.j2" %}')
+        (ctx.pipeline_dir / "child.j2").write_text("used", encoding="utf-8")
+        unused = ctx.pipeline_dir / "unused.j2"
+        unused.write_text("before", encoding="utf-8")
+        before = self._digest(stage, ctx)
+
+        unused.write_text("after", encoding="utf-8")
+
+        assert self._digest(stage, ctx) == before

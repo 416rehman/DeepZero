@@ -15,7 +15,7 @@ real.
 | `pipelines/loldrivers` | Controladores del kernel de Windows en disco | Candidatos BYOVD: superficies IOCTL alcanzables sin el hardware |
 | `pipelines/source_audit` | Repositorios git | Vulnerabilidades a nivel de código fuente alcanzables desde entrada no confiable |
 
-Ambas declaran `model: claude-code/claude-opus-5`, así que se ejecutan contra una suscripción
+Ambas usan `claude-code` por defecto, así que se ejecutan contra una suscripción
 de Claude Code sin ninguna clave API. Sustitúyalo con `-m` por cualquier modelo de LiteLLM.
 Consulte [Elección del Modelo]({{ '/es/reference/pipeline-yaml.html' | relative_url }}).
 
@@ -99,6 +99,7 @@ documento para cada controlador al construir su prompt.
 
 ### Requisitos previos
 
+- LIEF para analizar PE: `python -m pip install -e ".[pe]"` desde la raíz del repositorio.
 - Ghidra, con `GHIDRA_INSTALL_DIR` definido. `JAVA_HOME` se lee si está presente.
 - `semgrep` en el PATH: `pip install semgrep`.
 
@@ -140,7 +141,7 @@ nombre y apellidos, por inalcanzable.
 deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
 
 # o un directorio de copias locales ya presentes en disco
-deepzero run C:\code\vendor -p pipelines/source_audit/pipeline.yaml
+deepzero run ./checkouts -p pipelines/source_audit/pipeline.yaml
 ```
 
 Los clones viven en el directorio de caché propio de la etapa de ingestión y no en el

@@ -85,6 +85,8 @@ class _Checkout:
 
 
 class GitIngest(IngestProcessor):
+    cache_global_keys = ()
+    cache_path_keys = ()  # cached clones are outputs, not discovery configuration
     description = (
         "turns git repositories into samples, from a directory of checkouts or a manifest of urls"
     )

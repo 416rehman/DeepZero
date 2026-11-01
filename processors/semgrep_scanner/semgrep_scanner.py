@@ -18,6 +18,7 @@ from deepzero.engine.stage import (
 
 
 class SemgrepScanner(BulkMapProcessor):
+    cache_global_keys = ()
     description = "runs semgrep batch scan across all active samples"
 
     # what a sample's scannable files are called on disk. The default suits a

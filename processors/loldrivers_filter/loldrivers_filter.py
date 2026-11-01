@@ -39,6 +39,7 @@ class LoldriversFilterConfig:
 
 
 class LoldriversFilter(MapProcessor):
+    cache_global_keys = ()
     description = (
         "excludes samples whose sha256 matches a known entry in the loldrivers.io database"
     )

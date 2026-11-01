@@ -7,6 +7,7 @@ from deepzero.stages.sort import bad_direction, descending, metric_reader
 
 
 class TopKSelector(ReduceProcessor):
+    cache_global_keys = ()
     description = "sorts active samples by an upstream metric and keeps only the top k"
 
     @dataclass

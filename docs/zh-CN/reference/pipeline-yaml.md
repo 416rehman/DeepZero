@@ -108,7 +108,7 @@ stages:
 | `claude-code`, `claude-code/<model-id>` | 本机已安装并已登录的 Claude Code CLI |
 | 其他任意值，例如 `openai/gpt-4o`, `gemini/...`, `gpt-4o` | LiteLLM，覆盖它所支持的每一个需要 API 密钥的端点 |
 
-`claude-code` 让流水线跑在 Claude Code 订阅上，完全不需要 API 密钥。DeepZero 从不为它经手任何凭据：它调用的是你已经登录过的那个 CLI，并沿用该可执行文件已有的认证。斜杠之后的部分会作为模型原样传递，因此 `claude-code/claude-opus-5` 指定了一个具体模型，而单独的 `claude-code` 则让该 CLI 保持它的默认模型。两条内置流水线都声明了 `claude-code` 模型，`-m` 可以为单次运行覆盖它。
+`claude-code` 让流水线跑在 Claude Code 订阅上，完全不需要 API 密钥。DeepZero 从不为它经手任何凭据：它调用的是你已经登录过的那个 CLI，并沿用该可执行文件已有的认证。斜杠之后的部分会作为模型原样传递，因此 `claude-code/opus` 指定了一个具体模型，而单独的 `claude-code` 则让该 CLI 保持它的默认模型。两条内置流水线都声明了 `claude-code` 模型，`-m` 可以为单次运行覆盖它。
 
 由于这些调用携带的是不可信内容，即反编译器的输出以及从陌生人仓库中拉取的源代码，调用该 CLI 时会禁用它的工具和 MCP 服务器。补全本身并不需要它们，而放任它们启用会让一段被注入的提示词得以触及 shell。
 

@@ -53,6 +53,7 @@ def metric_reader(path: str) -> Callable[[ProcessorEntry], float]:
 
 
 class Sort(ReduceProcessor):
+    cache_global_keys = ()
     description = "sorts active samples by an upstream data field - preserves all samples, changes processing order"
 
     @dataclass

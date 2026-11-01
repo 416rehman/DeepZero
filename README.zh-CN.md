@@ -68,23 +68,40 @@ DeepZero 需要一个待分析的目标语料库，以及一份用于说明如�
    ```bash
    git clone https://github.com/416rehman/DeepZero.git
    cd DeepZero
-   pip install -e .
+   python -m pip install -e ".[full]"
    ```
+
+   请在克隆的仓库目录中运行以下命令。`full` 可选依赖包含用于 PE 解析的 LIEF 和用于 API 模型的 LiteLLM。仅安装引擎可使用 `python -m pip install -e .`。
+
+   运行示例流水线前，请在同一环境中安装外部工具：
+
+   - 两条流水线：PATH 中可用的 **Semgrep**（`python -m pip install semgrep`）和一个 LLM 后端。
+   - 源代码审计：PATH 中可用的 **Git**。
+   - 驱动分析：**Ghidra** 及该版本支持的 **JDK**，并在 `.env` 中将 `GHIDRA_INSTALL_DIR` 设置为你自己的安装目录。
+   - 默认 LLM：安装 **Claude Code CLI** 并登录你自己的账户。它使用 CLI 的默认模型，无需 API 密钥。也可以在下方配置 API 模型及密钥。
+
+   使用 WSL 时，请在 WSL 环境内安装并运行工具、Python 和 DeepZero。
 
 2. **配置环境**
    ```bash
    cp .env.example .env
    ```
-   两条内置流水线都声明了 `model: claude-code/claude-opus-5`，它驱动的是你本机上已登录的 Claude Code CLI。若想改用任意 LiteLLM 模型，请使用 `-m`。
+
+   在 PowerShell 中请使用 `Copy-Item .env.example .env`。在 `.env` 中设置 `DEEPZERO_MODEL` 可覆盖两条内置流水线的后端和模型，或使用 `-m` 仅覆盖一次运行。例如，`DEEPZERO_MODEL=openai/gpt-4o` 需要设置你自己的 `OPENAI_API_KEY`。
+   两条内置流水线默认使用 `claude-code`，即你自己的 Claude Code CLI 的默认模型。请先安装该 CLI 并登录。也可以通过 `DEEPZERO_MODEL` 或 `-m` 选择 LiteLLM 模型，并设置你自己的 API 密钥。
 
 3. **运行一条流水线**
    ```bash
    # 磁盘上的内核驱动程序
-   deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
+   deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --preflight
 
    # 或者源代码，来自一份仓库清单文件或一个存放检出目录的目录
-   deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
+   deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml --preflight
    ```
+
+   请将 `./drivers` 替换为你自己的驱动语料库路径，或创建每行一个仓库 URL 的 `repos.txt`。仓库中不包含这些示例输入。
+
+   `deepzero validate pipelines/loldrivers/pipeline.yaml` / `deepzero validate pipelines/source_audit/pipeline.yaml`
    `--preflight` 会在昂贵的阶段开始之前先确认 LLM 后端已就绪，而不是等到几小时后跑到第一个评估阶段才发现问题。
 
 4. **查看结果**

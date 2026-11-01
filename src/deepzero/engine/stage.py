@@ -242,34 +242,32 @@ class StageSpec:
     timeout: int = 0
 
 
-# how big a file has to be before its contents are summarised by size rather than
-# read. A prompt or a rule set is kilobytes; anything far larger is not the kind
-# of input whose editing should silently invalidate a stage.
-_DIGEST_MAX_BYTES = 4 * 1024 * 1024
-
-
 def _digest_path(path: Path, into: Any) -> None:
     """fold a file, or a directory of files, into a running hash."""
     try:
         if path.is_file():
             into.update(path.name.encode("utf-8"))
-            if path.stat().st_size <= _DIGEST_MAX_BYTES:
-                into.update(path.read_bytes())
-            else:
-                into.update(str(path.stat().st_size).encode("utf-8"))
+            with path.open("rb") as source:
+                for block in iter(lambda: source.read(1024 * 1024), b""):
+                    into.update(block)
         elif path.is_dir():
             for child in sorted(path.rglob("*")):
                 if child.is_file():
                     into.update(str(child.relative_to(path)).encode("utf-8"))
-                    if child.stat().st_size <= _DIGEST_MAX_BYTES:
-                        into.update(child.read_bytes())
+                    _digest_path(child, into)
     except OSError:
         # unreadable is a state worth being stable about rather than failing on:
         # the stage will report the real problem when it runs
         into.update(b"<unreadable>")
 
 
-def stage_input_digest(spec: StageSpec, pipeline_dir: Path | None = None) -> str:
+def stage_input_digest(
+    spec: StageSpec,
+    pipeline_dir: Path | None = None,
+    *,
+    processor: Any = None,
+    global_config: GlobalConfig | None = None,
+) -> str:
     """a fingerprint of everything that decides what this stage produces.
 
     A stage's results are stale when its inputs change, and the inputs are its
@@ -289,8 +287,51 @@ def stage_input_digest(spec: StageSpec, pipeline_dir: Path | None = None) -> str
     h.update(spec.processor.encode("utf-8"))
     h.update(json.dumps(spec.config or {}, sort_keys=True, default=str).encode("utf-8"))
 
+    if processor is not None:
+        import inspect
+
+        # Include implementations, including shared base classes. A Python file
+        # edited in place is a different processor even when its YAML name is
+        # unchanged. Dependencies outside these files should be versioned by
+        # the extension or included explicitly in its configuration.
+        sources: set[Path] = set()
+        source_file = getattr(processor, "_source_file", None)
+        if source_file:
+            sources.add(Path(source_file).resolve())
+        for cls in type(processor).__mro__:
+            try:
+                sources.add(Path(inspect.getfile(cls)).resolve())
+            except (TypeError, OSError):
+                continue
+        for source in sorted(sources):
+            _digest_path(source, h)
+        cache_files = getattr(processor, "cache_files", None)
+        if cache_files is not None:
+            for dependency in sorted(cache_files(pipeline_dir or Path.cwd())):
+                _digest_path(Path(dependency), h)
+
+    if global_config is not None:
+        keys = getattr(processor, "cache_global_keys", None)
+        inputs = global_config if keys is None else {k: global_config.get(k) for k in keys}
+        h.update(json.dumps(inputs, sort_keys=True, default=str).encode("utf-8"))
+
     roots = [Path.cwd()] + ([pipeline_dir] if pipeline_dir else [])
-    for value in (spec.config or {}).values():
+
+    def values(value: Any):
+        if isinstance(value, dict):
+            for nested in value.values():
+                yield from values(nested)
+        elif isinstance(value, (list, tuple)):
+            for nested in value:
+                yield from values(nested)
+        else:
+            yield value
+
+    path_keys = getattr(processor, "cache_path_keys", None)
+    path_config = spec.config or {}
+    if path_keys is not None:
+        path_config = {key: path_config[key] for key in path_keys if key in path_config}
+    for value in values(path_config):
         if not isinstance(value, str) or not value:
             continue
         for root in roots:
@@ -336,6 +377,14 @@ ENGINE_CONFIG_KEYS: frozenset[str] = frozenset({"limit"})
 class Processor(ABC):
     # which lane of the pipeline this processor operates in
     processor_type: ProcessorType
+
+    # None conservatively fingerprints all global configuration. Extensions
+    # may name just the keys they read, or () when their inputs are entirely
+    # stage configuration and upstream results.
+    cache_global_keys: ClassVar[tuple[str, ...] | None] = None
+    # None follows every config path; () is useful for output/cache/tool
+    # directories. Such processors declare their actual files via cache_files.
+    cache_path_keys: ClassVar[tuple[str, ...] | None] = None
 
     # subclass with a @dataclass to declare accepted config fields.
     # the engine instantiates it from the YAML config dict at pipeline load time.
@@ -400,6 +449,10 @@ class Processor(ABC):
         #   - check that a required config field is not empty
         #   - check that an external binary exists on disk
         #   - check that a rules directory contains .yaml files
+        return []
+
+    def cache_files(self, pipeline_dir: Path) -> list[Path]:
+        """Additional inputs, such as imported templates or analysis scripts."""
         return []
 
     @property

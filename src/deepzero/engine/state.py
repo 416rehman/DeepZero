@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -97,12 +98,14 @@ class SampleState:
         stage.status = StageStatus.COMPLETED
         stage.verdict = verdict
         stage.completed_at = _now()
-        if artifacts:
+        if artifacts is not None:
             stage.artifacts = artifacts
-        if data:
+        if data is not None:
             stage.data = data
         if input_digest:
             stage.input_digest = input_digest
+        stage.error = None
+        stage.skip_reason = ""
 
         # promote skip verdict to sample level
         if verdict == Verdict.FILTER:
@@ -322,9 +325,14 @@ class StateStore:
         # real, rather than merely being asked about
         self._ensure_dirs()
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(content, encoding="utf-8")
-        atomic_replace(tmp, path)
+        fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        tmp = Path(name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as output:
+                output.write(content)
+            atomic_replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def _dumps(self, obj: Any) -> str:
         return json.dumps(obj, indent=2, cls=SafeJSONEncoder)

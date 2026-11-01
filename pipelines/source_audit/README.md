@@ -61,14 +61,20 @@ Clones live in the `discover` stage's own cache, outside the work directory, so 
 rerun costs no network and `--clean` does not throw them away. Set `refresh: true` on
 that stage to fetch before reading.
 
+A normal resume keeps its saved discovery snapshot. Pass `--refresh` to discover the
+corpus again. For a manifest, also set `refresh: true` in the `discover` stage's config
+to fetch newer remote commits; `--refresh` by itself revisits the cached clones.
+
 ## Prerequisites
 
 - `git` on PATH, for the `discover` stage.
 - `semgrep` on PATH: `pip install semgrep`.
 - Rules in `rules/`. The scan stage fails loudly if that directory is missing rather
   than scanning with nothing loaded.
-- A model. The pipeline declares `claude-code/claude-opus-5`, which needs the Claude
-  Code CLI and no API key. Override with `-m` for any LiteLLM model.
+- A model. The pipeline defaults to `claude-code`, which uses your Claude Code CLI
+  default model. Install that CLI and sign in with your own account. No API key
+  is needed. For an API-backed model, install `python -m pip install -e ".[llm]"`,
+  configure its API key, and set `DEEPZERO_MODEL` in `.env` or pass `-m`.
 
 Check all of it before a long run:
 
@@ -78,12 +84,15 @@ deepzero validate pipelines/source_audit/pipeline.yaml
 
 ## Example
 
+Run these commands from the cloned repository. Replace `./checkouts` with your own
+directory, or create `repos.txt` with one repository URL per line.
+
 ```bash
 # audit the repositories listed in a manifest
 deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
 
 # or a directory of checkouts already on disk
-deepzero run C:\code\vendor -p pipelines/source_audit/pipeline.yaml
+deepzero run ./checkouts -p pipelines/source_audit/pipeline.yaml
 
 # read the results
 deepzero report -p source_audit --open

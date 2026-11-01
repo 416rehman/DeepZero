@@ -134,7 +134,7 @@ La parte de `model` anterior a la primera `/` es un prefijo, y selecciona el bac
 | `claude-code`, `claude-code/<model-id>` | La CLI de Claude Code instalada localmente, con la sesión ya iniciada |
 | cualquier otra, p. ej. `openai/gpt-4o`, `gemini/...`, `gpt-4o` | LiteLLM, que cubre todos los endpoints con clave API que admite |
 
-`claude-code` ejecuta una canalización contra una suscripción de Claude Code sin ninguna clave API. DeepZero nunca maneja credenciales para ello: invoca la CLI en la que usted ya inició sesión y hereda la autenticación que tenga ese binario. La parte posterior a la barra se pasa tal cual como modelo, así que `claude-code/claude-opus-5` elige un modelo concreto y `claude-code` a secas deja la CLI en el suyo predeterminado. Ambas canalizaciones incluidas declaran un modelo `claude-code`, y `-m` lo sustituye para una ejecución.
+`claude-code` ejecuta una canalización contra una suscripción de Claude Code sin ninguna clave API. DeepZero nunca maneja credenciales para ello: invoca la CLI en la que usted ya inició sesión y hereda la autenticación que tenga ese binario. La parte posterior a la barra se pasa tal cual como modelo, así que `claude-code/opus` elige un modelo concreto y `claude-code` a secas deja la CLI en el suyo predeterminado. Ambas canalizaciones incluidas declaran un modelo `claude-code`, y `-m` lo sustituye para una ejecución.
 
 Como estas llamadas transportan contenido no confiable, salida del descompilador y código fuente traído de repositorios ajenos, la CLI se invoca con sus herramientas y sus servidores MCP denegados. Una compleción no necesita ninguno, y dejarlos habilitados permitiría que un prompt inyectado alcanzara un shell.
 

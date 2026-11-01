@@ -9,6 +9,7 @@ from deepzero.engine.stage import IngestProcessor, ProcessorContext, Sample
 
 
 class PEIngest(IngestProcessor):
+    cache_global_keys = ()
     description = (
         "discovers portable executable files, parses PE headers, and extracts driver metadata"
     )

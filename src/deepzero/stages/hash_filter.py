@@ -14,6 +14,7 @@ from deepzero.engine.stage import (
 
 
 class HashExclude(MapProcessor):
+    cache_global_keys = ()
     description = (
         "hash-based exclusion filter - skips samples whose hash matches a known set, "
         "and optionally drops repeats of a hash already seen in this run"

@@ -15,8 +15,19 @@ DeepZero requiere **Python 3.11+**.
 ```bash
 git clone https://github.com/416rehman/DeepZero.git
 cd DeepZero
-pip install -e .
+python -m pip install -e ".[full]"
 ```
+
+Ejecute los comandos desde el repositorio clonado. El extra `full` incluye LIEF para analizar PE y LiteLLM para modelos con API. Para instalar solo el motor: `python -m pip install -e .`.
+
+Instale las herramientas externas en el mismo entorno:
+
+- Ambas canalizaciones: **Semgrep** en PATH (`python -m pip install semgrep`) y un backend LLM.
+- Auditoría de código: **Git** en PATH.
+- Controladores: **Ghidra**, el **JDK compatible con esa versión**, y `GHIDRA_INSTALL_DIR` en `.env` apuntando a su instalación.
+- LLM predeterminado: instale la CLI de **Claude Code** e inicie sesión con su propia cuenta. Se usa su modelo predeterminado sin clave API. También puede configurar un modelo con API abajo.
+
+Si usa WSL, instale y ejecute las herramientas, Python y DeepZero dentro de ese entorno.
 
 ### 2. Configuración del entorno
 
@@ -25,6 +36,8 @@ Si integra etapas de análisis de IA, configure las claves API creando un archiv
 ```bash
 cp .env.example .env
 ```
+
+En PowerShell: `Copy-Item .env.example .env`. Configure `DEEPZERO_MODEL` en `.env` para ambas canalizaciones, o pase `-m` para una ejecución. Por ejemplo, `DEEPZERO_MODEL=openai/gpt-4o` requiere su `OPENAI_API_KEY`.
 
 Ambas canalizaciones incluidas declaran un modelo `claude-code`, que utiliza la CLI de Claude Code en la que ya ha iniciado sesión y no necesita ninguna clave API. En su lugar sirve cualquier [modelo de LiteLLM]({{ '/es/reference/pipeline-yaml.html' | relative_url }}), mediante el campo `model` de la canalización o la opción `-m` en la línea de comandos, y para eso son las claves anteriores.
 
@@ -44,19 +57,21 @@ Sale con código 1 cuando informa de un error, así que sirve como hook de commi
 Ejecute la canalización LOLDrivers incluida contra una ruta de destino:
 
 ```bash
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml
 ```
+
+Sustituya `./drivers` por su corpus de controladores, o cree `repos.txt` con una URL de repositorio por línea. Estas entradas de ejemplo no están incluidas en el repositorio.
 
 O la auditoría de código fuente, contra un manifiesto de repositorios o un directorio de copias locales:
 
 ```bash
-deepzero run repos.txt -p .\pipelines\source_audit\pipeline.yaml
+deepzero run repos.txt -p pipelines/source_audit/pipeline.yaml
 ```
 
 Cualquiera de las dos admite `--preflight`, que hace una llamada mínima para confirmar que la sesión del backend LLM está realmente iniciada. Se detiene en segundos si el backend no está listo y, si lo está, la ejecución continúa con normalidad, así que es una opción sobre una ejecución que quería lanzar y no una comprobación para escribir por su cuenta. La alternativa es enterarse varias horas después, en la primera etapa de evaluación:
 
 ```bash
-deepzero run C:\drivers -p .\pipelines\loldrivers\pipeline.yaml --preflight
+deepzero run ./drivers -p pipelines/loldrivers/pipeline.yaml --preflight
 ```
 
 <div class="callout">

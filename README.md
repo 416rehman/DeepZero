@@ -3,7 +3,7 @@
   <img src=".github/banner.svg" alt="DeepZero" width="700">
   <br><br>
   <p><b>Automated vulnerability research pipeline engine</b></p>
-  <p>Define pipelines as YAML. DeepZero handles orchestration, parallelism, fault tolerance, and state.</p>
+  <p>Define pipelines in YAML, process samples in parallel, and resume interrupted runs.</p>
   <p>
     <a href="https://github.com/416rehman/DeepZero/actions"><img src="https://img.shields.io/github/actions/workflow/status/416rehman/DeepZero/ci.yml?branch=main&style=flat-square" alt="CI"></a>
     <a href="https://github.com/416rehman/DeepZero/blob/main/LICENSE"><img src="https://img.shields.io/github/license/416rehman/DeepZero?style=flat-square" alt="License"></a>
@@ -29,7 +29,7 @@
 </table>
 
 <div align="center">
-  <sub>One engine, two disciplines. The report takes its vocabulary from the pipeline, so the same code says <b>6 repositories</b> / <b>not exploitable</b> on the left and <b>6 drivers</b> / <b>clear</b> on the right. Illustrative data.</sub>
+  <sub>Example reports using sample data.</sub>
 </div>
 
 <br>
@@ -40,29 +40,26 @@
 
 <br>
 
-- 🔗 **Pipeline-as-YAML** - chain ingest, filter, transform, and LLM-assess stages declaratively
-- 🧭 **Discipline-agnostic** - the engine knows nothing about binaries, repositories or endpoints; a pipeline brings the domain, and the shipped pipelines are examples rather than the point
-- ⚡ **Parallel execution** - ThreadPoolExecutor with configurable concurrency per stage
-- 💾 **Resumable runs** - atomic per-sample state on disk, scoped per corpus; Ctrl+C and re-run to pick up where you left off
-- 🔁 **Knows what went stale** - each stage fingerprints its own inputs, so editing a prompt, a rule set or a config re-runs exactly the stages that read it and nothing before them
-- 🤖 **LLM integration** - Jinja2 prompt templates, with either an API key via [LiteLLM](https://github.com/BerriAI/litellm) or your Claude Code subscription and no API key at all
-- 📊 **Browsable reports** - `deepzero report` builds a self-contained HTML report from run state; each pipeline names its own entities and verdicts
-- 🌐 **REST API (WIP)** - query run state and sample data over HTTP (currently experimental and incomplete)
-- 🧩 **Extensible** - write custom processors as Python classes, reference them by path in YAML
+- **YAML pipelines** - combine ingestion, filtering, transformation, and LLM assessment stages.
+- **Parallel execution** - set concurrency per stage.
+- **Saved state** - resume interrupted runs from results on disk.
+- **Incremental reruns** - changes to prompts, rules, or configuration rerun the affected stage and downstream stages.
+- **LLM backends** - use Jinja2 prompts with [LiteLLM](https://github.com/BerriAI/litellm) or the Claude Code CLI.
+- **HTML reports** - build a self-contained report with `deepzero report`.
+- **Custom processors** - write Python classes and reference them by path in YAML.
+- **Experimental REST API** - query run state and sample data over HTTP.
 
 ---
 
 ## 📚 Documentation
 
-The documentation covers architecture, pipeline schemas, CLI references, and custom processor development.
-
-👉 **[Read the Official Documentation here](https://blog.ahmadz.ai/DeepZero/en/)**
+[Architecture, pipeline configuration, CLI reference, and custom processors](https://blog.ahmadz.ai/DeepZero/en/).
 
 ---
 
 ## ⚡️ Quickstart
 
-Try a complete local run with the included text samples. **No API keys, Ghidra, or driver corpus needed.** Requires Python 3.11+.
+Requires Python 3.11+. The demo uses included text files and needs no API keys or external tools.
 
 ```sh
 git clone https://github.com/416rehman/DeepZero.git
@@ -74,7 +71,7 @@ deepzero report -p pipelines/demo/pipeline.yaml --open
 
 These commands work in PowerShell and POSIX shells. For an isolated installation, create and activate a Python virtual environment before installing.
 
-The demo discovers two harmless text files, keeps one, filters the smaller one, and generates a browsable HTML report. Run the same pipeline command again to resume from saved state. This demonstrates the engine; it does not run vulnerability analysis. See the [demo walkthrough](pipelines/demo/README.md) for expected results and configuration experiments.
+The demo keeps one text file, filters out the smaller one, and generates a report. Repeat the `deepzero run` command to resume from saved state. See the [demo walkthrough](pipelines/demo/README.md) for expected results and configuration options.
 
 ### Security Pipeline Setup
 
@@ -108,17 +105,17 @@ The two security pipelines need your own target corpus and additional tools. Con
    Replace `./drivers` with your driver corpus, or create `repos.txt` with one repository URL per line for source audits. These are example inputs; neither is included in the repository.
 
    Check tool and pipeline prerequisites before starting: `deepzero validate pipelines/loldrivers/pipeline.yaml` (or `pipelines/source_audit/pipeline.yaml`).
-   `--preflight` confirms the LLM backend is ready before the expensive stages run, rather than finding out hours later at the first assessment stage.
+   `--preflight` checks the LLM backend before processing starts.
 
 4. **Read the Results**
    ```bash
    deepzero report -p loldrivers --open
    ```
-   Safe to run mid-run. The report is built from run state, so it can be deleted and rebuilt at any time. `deepzero runs` lists every run on disk whatever produced it, and `deepzero report` with no arguments works out which one you meant.
+   Reports can be built during or after a run. `deepzero runs` lists runs under `work/`, or another directory passed with `--work-dir`. With no arguments, `deepzero report` uses the only run under `work/` or prompts you to choose if several exist. Use `--work-dir` to select a run in scripts.
 
 For the security pipelines, follow the [full setup guide](https://blog.ahmadz.ai/DeepZero/en/overview/quickstart.html) and [pipeline prerequisites](https://blog.ahmadz.ai/DeepZero/en/reference/included-pipeline.html). Optional integrations require their own dependencies and configuration.
 
-If DeepZero is useful to your work, **star this repository** to help others discover it. Feedback on your first run is welcome in the [issue tracker](https://github.com/416rehman/DeepZero/issues).
+Report bugs or suggest changes in the [issue tracker](https://github.com/416rehman/DeepZero/issues).
 
 ---
 

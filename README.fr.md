@@ -3,7 +3,7 @@
   <img src=".github/banner.svg" alt="DeepZero" width="700">
   <br><br>
   <p><b>Moteur de pipeline de recherche de vulnérabilités automatisé</b></p>
-  <p>Définissez des pipelines via YAML. DeepZero gère l'orchestration, le parallélisme, la tolérance aux pannes et l'état.</p>
+  <p>Définissez des pipelines en YAML, traitez les échantillons en parallèle et reprenez les exécutions interrompues.</p>
   <p>
     <a href="https://github.com/416rehman/DeepZero/actions"><img src="https://img.shields.io/github/actions/workflow/status/416rehman/DeepZero/ci.yml?branch=main&style=flat-square" alt="CI"></a>
     <a href="https://github.com/416rehman/DeepZero/blob/main/LICENSE"><img src="https://img.shields.io/github/license/416rehman/DeepZero?style=flat-square" alt="License"></a>
@@ -29,7 +29,7 @@
 </table>
 
 <div align="center">
-  <sub>Un seul moteur, deux disciplines. Le rapport tient son vocabulaire du pipeline : le même code affiche <b>6 dépôts</b> / <b>non exploitable</b> à gauche et <b>6 pilotes</b> / <b>sain</b> à droite. Données fournies à titre indicatif.</sub>
+  <sub>Exemples de rapports avec des données fictives.</sub>
 </div>
 
 <br>
@@ -40,29 +40,24 @@
 
 <br>
 
-- 🔗 **Pipeline en YAML** - enchaînez de manière déclarative les étapes d'ingestion, de filtrage, de transformation et d'évaluation LLM
-- 🧭 **Indépendant du domaine** - le moteur ne connaît ni les binaires, ni les dépôts, ni les points d'accès web ; c'est le pipeline qui apporte le domaine, et les pipelines fournis sont des exemples, non la finalité
-- ⚡ **Exécution parallèle** - ThreadPoolExecutor avec une concurrence configurable par étape
-- 💾 **Exécutions reprenables** - état atomique par échantillon sur le disque, cloisonné par corpus ; appuyez sur Ctrl+C et relancez pour reprendre là où vous vous étiez arrêté
-- 🔁 **Sait ce qui a vieilli** - chaque étape prend l'empreinte de ses propres entrées : modifier un prompt, un jeu de règles ou une configuration relance exactement les étapes qui les lisaient, et aucune de celles d'avant
-- 🤖 **Intégration LLM** - modèles de prompts Jinja2, avec au choix une clé d'API via [LiteLLM](https://github.com/BerriAI/litellm) ou votre abonnement Claude Code et aucune clé d'API du tout
-- 📊 **Rapports consultables** - `deepzero report` construit un rapport HTML autonome à partir de l'état de l'exécution ; chaque pipeline nomme lui-même ses entités et ses verdicts
-- 🌐 **API REST (WIP)** - interrogez l'état de l'exécution et les données d'échantillons via HTTP (actuellement expérimental et incomplet)
-- 🧩 **Extensible** - écrivez des processeurs personnalisés sous forme de classes Python, et référencez-les par leur chemin dans YAML
+- **Pipelines YAML** - combinez ingestion, filtrage, transformation et évaluation LLM.
+- **Exécution parallèle** - configurez la concurrence par étape.
+- **État sauvegardé** - reprenez les exécutions interrompues à partir des résultats sur disque.
+- **Réexécution après modification** - une modification des prompts, règles ou paramètres relance l'étape concernée et les suivantes.
+- **Modèles LLM** - utilisez des prompts Jinja2 avec [LiteLLM](https://github.com/BerriAI/litellm) ou la CLI Claude Code.
+- **Rapports HTML** - générez un rapport autonome avec `deepzero report`.
+- **Processeurs personnalisés** - écrivez des classes Python et référencez-les par leur chemin en YAML.
+- **API REST expérimentale** - consultez l'état des exécutions et les données des échantillons via HTTP.
 
 ---
 
 ## 📚 Documentation
 
-DeepZero dispose d'une documentation exhaustive couvrant l'architecture, les schémas de pipeline, les références de la CLI et le développement de processeurs personnalisés.
-
-👉 **[Lisez la documentation officielle ici](https://blog.ahmadz.ai/DeepZero/fr/)**
+[Architecture, configuration des pipelines, référence CLI et processeurs personnalisés](https://blog.ahmadz.ai/DeepZero/fr/).
 
 ---
 
 ## ⚡️ Démarrage Rapide
-
-DeepZero nécessite un corpus cible à analyser et une configuration de pipeline détaillant comment le traiter.
 
 Pour un premier essai sans clé API ni outil externe, suivez la [démo locale](https://blog.ahmadz.ai/DeepZero/fr/overview/quickstart.html) : `python -m pip install -e .` suffit. Les étapes ci-dessous configurent les deux pipelines de sécurité.
 
@@ -89,8 +84,7 @@ Pour un premier essai sans clé API ni outil externe, suivez la [démo locale](h
    cp .env.example .env
    ```
 
-   Dans PowerShell : `Copy-Item .env.example .env`. Définissez `DEEPZERO_MODEL` dans `.env` pour les deux pipelines de sécurité, ou passez `-m` pour une exécution. Par exemple, `DEEPZERO_MODEL=openai/gpt-4o` nécessite votre `OPENAI_API_KEY`.
-   Les deux pipelines de sécurité utilisent `claude-code` par défaut, donc le modèle choisi dans votre propre CLI Claude Code. Installez cette CLI et connectez-vous avant de lancer une analyse. Utilisez `DEEPZERO_MODEL` ou `-m` pour un modèle LiteLLM avec votre clé API.
+   Dans PowerShell : `Copy-Item .env.example .env`. Les deux pipelines utilisent `claude-code` par défaut et le modèle de votre CLI Claude Code. Pour choisir un modèle LiteLLM, définissez `DEEPZERO_MODEL` dans `.env` ou passez `-m`. Par exemple, `DEEPZERO_MODEL=openai/gpt-4o` nécessite votre `OPENAI_API_KEY`.
 
 3. **Exécuter un Pipeline**
    ```bash
@@ -104,13 +98,13 @@ Pour un premier essai sans clé API ni outil externe, suivez la [démo locale](h
    Remplacez `./drivers` par votre corpus de pilotes, ou créez `repos.txt` avec une URL de dépôt par ligne. Ces entrées ne sont pas fournies dans le dépôt.
 
    `deepzero validate pipelines/loldrivers/pipeline.yaml` / `deepzero validate pipelines/source_audit/pipeline.yaml`
-   `--preflight` confirme que le backend LLM est prêt avant que les étapes coûteuses ne s'exécutent, plutôt que de l'apprendre des heures plus tard, à la première étape d'évaluation.
+   `--preflight` vérifie le backend LLM avant le début du traitement.
 
 4. **Lire les Résultats**
    ```bash
    deepzero report -p loldrivers --open
    ```
-   Peut être exécuté sans risque pendant une exécution. Le rapport est construit à partir de l'état de l'exécution : il peut donc être supprimé et reconstruit à tout moment. `deepzero runs` liste toutes les exécutions présentes sur le disque, quel que soit ce qui les a produites, et `deepzero report` sans argument devine celle que vous vouliez.
+   Les rapports peuvent être générés pendant ou après une exécution. `deepzero runs` liste les exécutions sous `work/`, ou dans le répertoire indiqué par `--work-dir`. Sans argument, `deepzero report` utilise l'unique exécution sous `work/` ou vous demande de choisir s'il y en a plusieurs. Dans un script, utilisez `--work-dir` pour sélectionner une exécution.
 
 Pour des instructions de configuration détaillées et des exemples de corpus, consultez la [Documentation de Démarrage Rapide](https://blog.ahmadz.ai/DeepZero/fr/overview/quickstart.html).
 
@@ -133,7 +127,7 @@ processors/              # processeurs externes (fournis comme exemples)
 └── semgrep_scanner/     # scanneur de lots semgrep (BulkMapProcessor)
 
 pipelines/
-├── demo/                # local first run; no API keys or external tools
+├── demo/                # démo locale, sans clé API ni outil externe
 ├── loldrivers/          # pipeline de recherche de vulnérabilités pour les pilotes noyau BYOVD
 │   ├── pipeline.yaml
 │   ├── assessment.j2    # modèle de prompt LLM

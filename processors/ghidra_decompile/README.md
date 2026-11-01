@@ -1,18 +1,15 @@
 # ghidra_decompile
 
-A `MapProcessor` that decompiles one binary per sample by running Ghidra
-headless with a post-script. The post-script does the analysis and writes
-`ghidra_result.json`; this processor launches it, waits for it, lifts a few
-values out of that file into the sample's data, and records the files it wrote
-as artifacts so a later stage's prompt can reach them.
+A `MapProcessor` that decompiles one binary per sample using Ghidra headless
+and a post-script. It reads metadata from `ghidra_result.json` and records
+output files as artifacts for later stages.
 
-The strategy script is the interesting half. `extract_dispatch.py` ships beside
-this processor and looks for a driver's `IRP_MJ_DEVICE_CONTROL` handler, but the
-processor itself has no opinion about what a post-script does. Its contract is
-narrow: run in Ghidra's Jython environment, write `ghidra_result.json` into
-`$DEEPZERO_OUTPUT_DIR`, and put a boolean `success` at the top level of it.
+The included `extract_dispatch.py` strategy looks for a driver's
+`IRP_MJ_DEVICE_CONTROL` handler. Custom strategies must run in Ghidra's Jython
+environment and write `ghidra_result.json` into `$DEEPZERO_OUTPUT_DIR` with a
+top-level boolean `success` field.
 
-## What one sample costs
+## Output files
 
 Everything lands in `<sample dir>/decompiled/`:
 
@@ -32,43 +29,21 @@ The command is `support/analyzeHeadless` (or the `.bat` on Windows) with
 `-analysisTimeoutPerFile`. `DEEPZERO_OUTPUT_DIR` is exported to the child so the
 script knows where to write, and `JAVA_HOME` is exported when `java_home` is set.
 
-## Decompiled output on disk is adopted instead of re-analysed
+## Cached decompilation
 
-This is the surprising one, and it is a cache that lives outside the run state.
+Completed results are reused while their recorded inputs still match.
+Fingerprints include processor source, configuration, the strategy script,
+available Ghidra version metadata, and upstream inputs.
 
-Before running anything, `should_skip()` reads `entry.cache_is_valid` and returns
-without looking at the disk when it is false. The engine sets that flag by
-comparing the stage's recorded input digest with the current one, so a result
-written under a different processor or config is not offered as a cache hit for
-this one. When the digest still holds, `should_skip()` looks for
-`<sample dir>/decompiled/ghidra_result.json`. If it is there, parses, and records
-`success: true`, the sample is skipped and counted as passed. Analysing one
-binary costs minutes, so an interrupted run does not pay for it twice.
+When invoked with `cache_is_valid: true`, the processor can reuse a
+parseable `ghidra_result.json` with `success: true`. Discarding run state
+does not make leftover files a valid cache. Completed legacy stages without
+a digest are retained until explicitly rerun.
 
-Only a result recording a finished run is adopted. A file that will not decode,
-will not parse, or says `success: false` is not an analysis: the post-script
-writes that last one on its way out of a crash, and adopting it would mark the
-driver decompiled while leaving nothing decompiled and none of the values a
-later prompt reads. Both readers of the file go through the same helper so they
-cannot disagree, and an unusable file is deleted before Ghidra is launched again.
-
-Two consequences are worth knowing before copying this pattern:
-
-- A skipped sample records **no data**. `mark_stage_cached` sets the stage to
-  completed and leaves `data` alone, so the keys below come from the run that
-  actually executed. On a resume the earlier run's history entry is still there
-  and its values survive. If the run state was discarded while the files were
-  kept, the stage completes with an empty `data` and a later prompt asking for
-  `device_name` gets nothing. This holds only for a sample the gate above
-  actually skipped. Once the config has moved the digest the sample is not
-  skipped, so it runs and does record its data, and `_run_ghidra_headless` reads
-  the same file through the same helper, so Ghidra is still not launched again.
-- `deepzero run --redo <stage>` is what forces a genuine re-analysis, and it
-  works because `ghidra_result.json` is recorded as an artifact: `--redo` deletes
-  the artifacts of the stages it drops. `driver_entry.c`, `ioctls/` and the two
-  log files are not recorded, so they survive. The next successful run overwrites
-  `driver_entry.c` and `dispatch_ioctl.c`, but `ioctls/` is not emptied first, so
-  a code the previous run found and this one did not leaves its file behind.
+Changed inputs and `--redo <stage>` discard recorded artifacts for this
+stage and its downstream stages, forcing re-analysis. Unrecorded files,
+including `driver_entry.c`, `ioctls/`, and logs, remain on disk.
+Use `--clean` to discard the entire run.
 
 ## What it emits
 

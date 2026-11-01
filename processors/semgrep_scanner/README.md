@@ -1,9 +1,7 @@
 # semgrep_scanner
 
-A `BulkMapProcessor` that scans every active sample with semgrep. Starting one
-semgrep process per sample would spend most of the run on process startup, so the
-samples are gathered into batches, each batch is scanned in one invocation, and
-the results are routed back to the sample each file came from.
+A `BulkMapProcessor` that scans samples in batches with Semgrep and assigns
+findings to their source samples.
 
 It serves both shipped pipelines because what it scans is configurable. The
 defaults suit a pipeline that decompiles first and writes C beside each sample,
@@ -46,47 +44,20 @@ scan that quotes a byte that codepage cannot represent, which any non-UTF-8 file
 guarantees because the parse error quotes the bytes, then dies encoding its own
 report and leaves an empty file behind, failing every sample in the batch.
 
-## A findings.json already on disk is adopted, not rescanned
+## Cached findings
 
-This is the surprising one, and it is a cache that lives outside the run state.
+Completed scan results are reused from run state. When invoked with
+`cache_is_valid: true`, the processor can reuse a readable `findings.json`
+and records `findings_cached: true`.
 
-Before anything is scanned, each sample's own directory is checked for
-`findings.json`. Three conditions have to hold together: the file exists, the
-engine set `ProcessorEntry.cache_is_valid` on this entry, and the JSON parses.
-Then those findings are the result, the sample is recorded with
-`findings_cached: true`, and semgrep is never asked about it. A file that is
-there but unreadable sends the sample to a real scan, and so does one the engine
-has already declared stale.
+Fingerprints include processor source, configuration, rules, and upstream
+inputs. Changed fingerprints invalidate affected results and downstream
+artifacts. The Semgrep executable/version is not fingerprinted; use
+`--redo <stage>` after changing it or other untracked inputs.
 
-`cache_is_valid` is the engine's answer to whether this stage's own output on
-disk still describes the pipeline as it stands, and any processor that adopts its
-previous output rather than doing the work again has to consult it. The engine is
-what answers, because it is the only thing that knows what this stage read last
-time.
-
-Adoption is what stops an interrupted run from repeating batches it had already
-finished. Editing the rules and running again does not get the old findings back,
-though: `stage_input_digest` folds in the contents of every file or directory a
-config string points at, and `rules_dir` is one of those, so an edited rule set
-changes this stage's fingerprint and the findings already on disk stop counting
-as a cache.
-
-`deepzero run --redo <stage>` remains the way to force a rescan the fingerprint
-cannot ask for on its own. The fingerprint covers the config and the files the
-config names, not the processor's own code, not a new semgrep version, and not
-the contents of the directory being scanned, because the corpus is deliberately
-not hashed. A result recorded before fingerprinting existed carries an empty
-digest and is trusted rather than redone, which is the other case for `--redo`.
-It works because `findings.json` is recorded as an artifact on every path that
-writes one, including the filtered path, so `--redo` can find the file and delete
-it. Without that the file would outlive the run state that describes it, and the
-next run would report findings the current rules cannot produce.
-
-The check happens before the scan directory is looked for, so a sample whose
-`findings.json` survives is adopted even if the directory that produced it is
-gone. That holds only while the fingerprint still matches. Once it does not, the
-sample goes looking for a scan directory that is no longer there and fails on
-that instead.
+Use `--refresh` to update discovery. Completed legacy stages without a
+digest are retained until explicitly rerun. A loose `findings.json`
+without matching recorded state is not adopted.
 
 ## What it emits
 

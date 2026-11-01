@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/416rehman/DeepZero/compare/deepzero-v0.5.0...deepzero-v0.5.1) (2026-11-01)
+
+
+### Documentation
+
+* simplify README copy and correct cache guidance ([b26865b](https://github.com/416rehman/DeepZero/commit/b26865ba5eed25a6eceabb930f04f86bf8243ae3))
+* simplify README copy and correct cache guidance ([9e9b655](https://github.com/416rehman/DeepZero/commit/9e9b6551485c3699e886505bbd7a264d484f9d81))
+
 ## [0.5.0](https://github.com/416rehman/DeepZero/compare/deepzero-v0.4.0...deepzero-v0.5.0) (2026-11-01)
 
 

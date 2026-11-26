@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.1](https://github.com/416rehman/DeepZero/compare/deepzero-v0.5.0...deepzero-v0.5.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **tests:** use minimal ELF binary in Ghidra E2E test ([3d54586](https://github.com/416rehman/DeepZero/commit/3d5458606072adc3d6b6f923cca986ebc093b309))
+
+
+### Documentation
+
+* add FAQ sections, JSON-LD schema, sitemap, and llms.txt ([8e37bd9](https://github.com/416rehman/DeepZero/commit/8e37bd94e4d18fb353e79a7e73b9b21ec35355d8))
+* simplify README copy and correct cache guidance ([9e9b655](https://github.com/416rehman/DeepZero/commit/9e9b6551485c3699e886505bbd7a264d484f9d81))
+
 ## [0.5.0](https://github.com/416rehman/DeepZero/compare/deepzero-v0.4.0...deepzero-v0.5.0) (2026-11-01)
 
 

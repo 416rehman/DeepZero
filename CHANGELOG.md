@@ -11,7 +11,6 @@
 ### Documentation
 
 * add FAQ sections, JSON-LD schema, sitemap, and llms.txt ([8e37bd9](https://github.com/416rehman/DeepZero/commit/8e37bd94e4d18fb353e79a7e73b9b21ec35355d8))
-* simplify README copy and correct cache guidance ([b26865b](https://github.com/416rehman/DeepZero/commit/b26865ba5eed25a6eceabb930f04f86bf8243ae3))
 * simplify README copy and correct cache guidance ([9e9b655](https://github.com/416rehman/DeepZero/commit/9e9b6551485c3699e886505bbd7a264d484f9d81))
 
 ## [0.5.0](https://github.com/416rehman/DeepZero/compare/deepzero-v0.4.0...deepzero-v0.5.0) (2026-11-01)

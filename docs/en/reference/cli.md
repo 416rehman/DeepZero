@@ -1,6 +1,7 @@
 ---
 layout: default
 title: CLI Reference
+description: "Complete DeepZero CLI reference covering run, validate, report, runs, status, init, list-processors, interactive, and resume flags (--redo, --refresh, --preflight)."
 order: 1
 ---
 
@@ -393,3 +394,9 @@ after. `stage` matches the sample's current stage; `status` keeps a sample when 
 stage in its history carries that status. A sample id containing a path separator is
 rejected, because the id becomes a filesystem path and this server can be bound to
 every interface.
+
+## Frequently Asked Questions
+
+### How do I validate, run, and resume a DeepZero pipeline from the CLI?
+
+Run `deepzero validate <pipeline.yaml>` first to verify every processor binary, API key, and Jinja prompt variable without executing any stages. Start execution with `deepzero run <target> -p <pipeline.yaml>` (optionally adding `--preflight` to verify your LLM login in seconds). If interrupted, re-run the identical command to resume from saved state, pass `--redo <stage>` to re-run only one stage and downstream stages, or pass `--clean` to delete prior run state and start fresh.

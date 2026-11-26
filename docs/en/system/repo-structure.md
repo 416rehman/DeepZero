@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Repository Structure
+description: "Source layout of DeepZero CLI covering src/deepzero engine modules, built-in stages, bundled security processors, and YAML pipelines."
 order: 2
 ---
 

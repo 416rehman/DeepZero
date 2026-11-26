@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Core Architecture
+description: "How DeepZero executes Ingest, Map, Reduce, and LLM assessment stages concurrently with bounded thread pools, prompt context construction, and resumable state."
 order: 2
 ---
 

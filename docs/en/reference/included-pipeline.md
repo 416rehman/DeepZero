@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Included Pipelines
+description: "Walkthrough of DeepZero's bundled security pipelines: LOLDrivers BYOVD Windows kernel driver hunting (LIEF, Ghidra, Semgrep) and Git repository source auditing."
 order: 3
 ---
 
@@ -217,3 +218,13 @@ deepzero validate pipelines/source_audit/pipeline.yaml
 ```
 
 It exits 1 if it reports an error, so it can gate a commit rather than only being read.
+
+## Frequently Asked Questions
+
+### How does the DeepZero LOLDrivers pipeline filter known vulnerable drivers?
+
+The `loldrivers` pipeline runs `pe_ingest` and `metadata_filter` first to keep only kernel-mode drivers with IOCTL surfaces, then runs `loldrivers_filter` to exclude cryptographic hashes already cataloged by `loldrivers.io` before invoking expensive headless Ghidra decompilation and Semgrep scanning.
+
+### How does the DeepZero source audit pipeline scan Git repositories?
+
+Point `pipelines/source_audit/pipeline.yaml` at either a directory of local checkouts or a `repos.txt` / YAML manifest. `git_ingest` clones or reads each repository at one revision, `size_filter` drops unsupported or empty trees, `semgrep_scanner` runs 136 security rules across Python, JS/TS, Go, Java, Ruby, PHP, and C#, and `generic_llm` evaluates whether flagged sinks are reachable from untrusted input.

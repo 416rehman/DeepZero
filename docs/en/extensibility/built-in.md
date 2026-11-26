@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Built-in Processors
+description: "Reference for DeepZero's built-in Ingest, Map, Filter, LLM, Command, and Reduce processors plus bundled external security processors."
 order: 1
 ---
 

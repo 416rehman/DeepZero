@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Building Processors
+description: "How to extend DeepZero by subclassing deepzero.engine.stage processors, declaring typed Config and provides keys, and calling ctx.llm or ctx.conclude."
 order: 2
 ---
 

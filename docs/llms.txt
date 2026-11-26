@@ -1,0 +1,45 @@
+# DeepZero CLI
+
+> Open-source Python CLI and concurrent YAML pipeline orchestration engine for automated vulnerability research, BYOVD kernel driver hunting, and AI-assisted source code auditing.
+
+- Website: https://blog.ahmadz.ai/DeepZero/en/
+- Repository: https://github.com/416rehman/DeepZero
+- License: MIT
+- Python requirement: 3.11+
+
+## Install & Run (Local Demo)
+
+```bash
+git clone https://github.com/416rehman/DeepZero.git
+cd DeepZero
+python -m pip install -e .
+deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml
+deepzero report -p pipelines/demo/pipeline.yaml --open
+```
+
+For full security pipelines (LIEF, LiteLLM, Semgrep, and Ghidra):
+
+```bash
+python -m pip install -e ".[full]"
+```
+
+## Core Architecture & Models
+
+- Multi-stage YAML DAG: Ingest -> deterministic Map filters/decompilers/scanners -> Reduce rankers -> LLM assessment.
+- Cheap stages run first so model tokens are spent only on surviving candidates.
+- LLM backends: defaults to local `claude-code` CLI (signed-in, tools and MCP denied for untrusted inputs) or any LiteLLM provider (`openai/gpt-4o`, `gemini/...`) via `model:` or `-m`.
+- Atomic state persistence per sample per corpus key enables instant Ctrl+C resume, `--redo <stage>`, and live HTML reporting.
+
+## Documentation Pages
+
+- [Home](https://blog.ahmadz.ai/DeepZero/en/)
+- [Quickstart](https://blog.ahmadz.ai/DeepZero/en/overview/quickstart.html): Installation, local demo, prerequisites, and running included pipelines.
+- [Core Architecture](https://blog.ahmadz.ai/DeepZero/en/overview/architecture.html): Ingest/Map/Reduce stage lifecycle, bounded thread pools, and context construction.
+- [CLI Reference](https://blog.ahmadz.ai/DeepZero/en/reference/cli.html): Every command and flag (`run`, `report`, `runs`, `status`, `validate`, `init`, `list-processors`, `interactive`, `serve`).
+- [Pipeline YAML](https://blog.ahmadz.ai/DeepZero/en/reference/pipeline-yaml.html): Full YAML schema, stage options (`parallel`, `timeout`, `limit`, `on_failure`), Jinja prompts, and report configuration.
+- [Included Pipelines](https://blog.ahmadz.ai/DeepZero/en/reference/included-pipeline.html): Worked LOLDrivers BYOVD driver pipeline and Semgrep + LLM source audit pipeline.
+- [Built-in Processors](https://blog.ahmadz.ai/DeepZero/en/extensibility/built-in.html): Standard library ingest, filter, LLM, command, and reduce processors.
+- [Building Processors](https://blog.ahmadz.ai/DeepZero/en/extensibility/building-custom.html): Subclassing `deepzero.engine.stage` and using `ProcessorContext`.
+- [State Persistence](https://blog.ahmadz.ai/DeepZero/en/system/state-persistence.html): Atomic JSON persistence, resume semantics, and invalidation.
+- [Repository Structure](https://blog.ahmadz.ai/DeepZero/en/system/repo-structure.html): Directory layout for `src/deepzero/`, `processors/`, and `pipelines/`.
+- [Full reference for AI agents](https://blog.ahmadz.ai/DeepZero/llms-full.txt)

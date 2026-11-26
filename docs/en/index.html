@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Home
+description: "DeepZero CLI is an open-source Python orchestration engine for automated vulnerability research, BYOVD Windows driver hunting with Ghidra and LOLDrivers, and AI-assisted source auditing."
 ---
 <section class="hero-massive">
     <div class="hero-massive-content">
@@ -195,3 +196,30 @@ title: Home
             open while it is still going.</p>
     </div>
 </div>
+
+<section class="faq-section" id="faq" aria-labelledby="faq-heading">
+    <h2 id="faq-heading">Quickstart &amp; Frequently Asked Questions</h2>
+    <p class="faq-intro">Direct answers on installing DeepZero CLI, configuring AI backends, and running BYOVD driver or source-audit pipelines.</p>
+    <div class="faq-list">
+        <details class="faq-item">
+            <summary>What is DeepZero CLI?</summary>
+            <p>DeepZero CLI is an open-source Python command-line orchestration engine for automated vulnerability research. You define multi-stage pipelines in YAML combining ingest, static filtering, decompilation, Semgrep scanning, and LLM assessment across binaries or Git repositories.</p>
+        </details>
+        <details class="faq-item">
+            <summary>How do I install and use DeepZero?</summary>
+            <p>Install with Python 3.11+ by cloning the repository and running <code>python -m pip install -e .</code>, then run the bundled demo with <code>deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml</code> and open the HTML report via <code>deepzero report -p pipelines/demo/pipeline.yaml --open</code>. See the <a href="{{ '/en/overview/quickstart.html' | relative_url }}">Quickstart guide</a>.</p>
+        </details>
+        <details class="faq-item">
+            <summary>How does DeepZero use AI models (Claude Code and LiteLLM)?</summary>
+            <p>Cheap deterministic filter and scanner stages run first so model calls only evaluate surviving samples. The bundled security pipelines default to <code>claude-code</code> (using your local signed-in Claude Code CLI with tools and MCP denied), or you can pick any LiteLLM model such as <code>openai/gpt-4o</code> via <code>-m</code> or <code>DEEPZERO_MODEL</code>.</p>
+        </details>
+        <details class="faq-item">
+            <summary>How does DeepZero work with LOLDrivers for BYOVD driver analysis?</summary>
+            <p>The <a href="{{ '/en/reference/included-pipeline.html' | relative_url }}">LOLDrivers pipeline</a> (<code>pipelines/loldrivers/pipeline.yaml</code>) parses Windows PE kernel drivers with LIEF, excludes known hashes from <a href="https://www.loldrivers.io/" target="_blank" rel="noopener">loldrivers.io</a>, decompiles IOCTL dispatch handlers in headless Ghidra, scans exported C with Semgrep, ranks by findings, and triages candidates with an LLM.</p>
+        </details>
+        <details class="faq-item">
+            <summary>Can I resume interrupted runs or build custom YAML pipelines?</summary>
+            <p>Yes. DeepZero writes atomic per-sample state scoped by pipeline and corpus key, so pressing <code>Ctrl+C</code> and re-running resumes where you left off. Use <code>deepzero validate</code> to verify processors and prompts before long runs, <code>--redo</code> to re-run one stage, or <code>deepzero init</code> to scaffold a custom <a href="{{ '/en/reference/pipeline-yaml.html' | relative_url }}">YAML pipeline</a>.</p>
+        </details>
+    </div>
+</section>

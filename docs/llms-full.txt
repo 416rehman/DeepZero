@@ -1,0 +1,43 @@
+# DeepZero CLI: Full Reference
+
+> Open-source Python CLI and concurrent YAML pipeline orchestration engine for automated vulnerability research, BYOVD kernel driver hunting, and AI-assisted source code auditing.
+
+- Canonical Docs: https://blog.ahmadz.ai/DeepZero/en/
+- GitHub Repository: https://github.com/416rehman/DeepZero
+- Python: 3.11+
+
+## Frequently Asked Questions
+
+### What is DeepZero CLI?
+DeepZero CLI is an open-source Python command-line orchestration engine for automated vulnerability research. Pipelines are defined declaratively in YAML and combine deterministic ingest, filtering, decompilation, static analysis, and LLM assessment over binaries, Git repositories, or custom corpora.
+
+### How do I install and use DeepZero?
+1. Clone `https://github.com/416rehman/DeepZero.git` and install with `python -m pip install -e .` (or `".[full]"` for LIEF and LiteLLM).
+2. Run the no-API-key demo: `deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml`.
+3. View progress and report: `deepzero status -p pipelines/demo/pipeline.yaml` and `deepzero report -p pipelines/demo/pipeline.yaml --open`.
+
+### How does DeepZero use AI models (Claude Code and LiteLLM)?
+DeepZero treats an LLM as one stage after cheap filters and static scanners have narrowed the corpus. `model: claude-code` uses a local signed-in Claude Code CLI with tools and MCP servers disabled so untrusted code or decompilation cannot reach a shell. Any LiteLLM-supported model string (such as `openai/gpt-4o`) works via `pipeline.yaml`, `DEEPZERO_MODEL`, or `-m`.
+
+### How does DeepZero work with LOLDrivers for BYOVD driver analysis?
+`pipelines/loldrivers/pipeline.yaml` ingests PE binaries via LIEF (`pe_ingest`), restricts to kernel drivers exposing IOCTL surfaces (`metadata_filter`), drops known drivers via `loldrivers_filter` using hashes from `loldrivers.io`, decompiles IOCTL dispatch handlers headless in Ghidra (`ghidra_decompile`), scans C output with Semgrep (`semgrep_scanner`), ranks by finding count (`top_k`), and evaluates reachability (`generic_llm`).
+
+### Can I resume interrupted runs or re-run one stage?
+Yes. State persists atomically per sample under `<work_dir>/<pipeline>/<corpus_key>/`. Interrupt with Ctrl+C and re-run the same command to resume. Pass `--refresh` to merge new files, `--retry-timeouts` to retry timed-out samples with `--timeout-multiplier`, or `--redo <stage>` to invalidate and re-run from one stage onward.
+
+## CLI Commands Summary
+
+- `deepzero run <TARGET> -p <pipeline> [-m model] [-w work_dir] [--clean] [--refresh] [--preflight] [--redo stage] [--retry-timeouts]`
+- `deepzero validate <pipeline>`: Dry-run check of YAML schema, processor prerequisites, and Jinja prompt variables (exits 1 on error).
+- `deepzero report [-p pipeline | -w work_dir] [--open]`: Rebuilds browsable HTML (`index.html`, `items/<id>.html`), `inventory.csv`, `findings.jsonl`, and `report.json`.
+- `deepzero runs [-w work_dir]`: Lists all runs on disk newest first.
+- `deepzero status [-p pipeline | -w work_dir]`: Stage counts and verdicts.
+- `deepzero init <name>`: Scaffolds `pipelines/<name>/pipeline.yaml`.
+- `deepzero list-processors`: Prints built-in processor classes.
+- `deepzero interactive [-w work_dir] [-m model]`: REPL grounded in run state.
+
+## Pipeline YAML Reference
+
+Top-level keys: `name`, `description`, `version`, `model`, `settings` (`work_dir`, `max_workers`), `knowledge`, `report` (`title`, `entity`, `entity_plural`, `target_label`, `classification_key`, `positive_when`, `negative_when`, `columns`, `findings_files`, `lexicon`), and `stages`.
+Stage keys: `name`, `processor`, `config`, `parallel` (`0` auto-scales capped by processor ceiling and `max_workers`), `timeout` (Map stage per-sample wait budget in seconds), `on_failure` (`skip`, `retry`, `abort`), `max_retries`, and `config.limit`.
+Environment variables expand dynamically via `${VAR:-default}`. Prompt files under `config.prompt` render as Jinja templates with `sample_name`, `sample_path`, `history`, `config`, upstream `provides` keys, and flattened artifact variables (e.g. `decompiled_dispatch_ioctl_c`).

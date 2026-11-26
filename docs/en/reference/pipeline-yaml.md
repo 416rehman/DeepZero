@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Pipeline YAML
+description: "DeepZero pipeline.yaml schema reference: stages, parallel concurrency, timeouts, limits, Jinja prompt variables, Claude Code and LiteLLM models, and report configuration."
 order: 2
 ---
 
@@ -427,3 +428,17 @@ as `marks.json`; save that next to `index.html` and they become part of the repo
 rendered for anyone who opens it, and included in `inventory.csv` as `review` and
 `review_note`. Marks are keyed on the pipeline and target rather than on the file
 path, so re-running over the same corpus keeps them.
+
+## Frequently Asked Questions
+
+### How do I configure a DeepZero pipeline in YAML?
+
+Declare a `stages:` list where stage 1 is an ingest processor (such as `file_discovery`, `pe_ingest`, or `git_ingest`) followed by Map, Bulk-Map, or Reduce processors. Top-level fields accept `name`, `description`, `model`, `settings` (`work_dir`, `max_workers`), `knowledge`, and `report`, with `${VAR:-default}` shell variable expansion across the YAML tree.
+
+### How do I choose or override the LLM backend in pipeline.yaml?
+
+Set the top-level `model` field using a backend scheme: `claude-code` (or `claude-code/<model-id>`) invokes your signed-in Claude Code CLI with tools and MCP denied, while any other value such as `openai/gpt-4o` routes through LiteLLM. You can override the YAML setting per invocation with `deepzero run ... -m <model>` or `DEEPZERO_MODEL`.
+
+### How do stage `parallel`, `timeout`, and `limit` work?
+
+Setting `parallel: 0` auto-scales from CPU count capped by both the processor's `max_parallelism()` and `settings.max_workers`, whereas an explicit integer `N` runs exactly `N` workers. `timeout` caps how long a Map stage waits per sample before recording an out-of-time status (retriable with `--retry-timeouts`), and `config.limit` truncates the surviving corpus after a stage completes while preserving any prior Reduce ranking.

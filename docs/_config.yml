@@ -1,6 +1,6 @@
 title: DeepZero
-tagline: Automated Vulnerability Research
-description: "Hunt zero-days at scale. DeepZero is a concurrent orchestration engine for automated vulnerability research, executing multi-stage pipelines across massive datasets."
+tagline: Open-Source AI Vulnerability Research CLI & Pipeline Engine
+description: "DeepZero CLI is a Python orchestration engine for automated vulnerability research: hunt BYOVD kernel drivers with Ghidra, Semgrep, and LOLDrivers, or audit Git repositories at scale with YAML pipelines and Claude Code or LiteLLM."
 # the engine is discipline-agnostic, so these name the engine and the two pipelines that
 # ship as examples, rather than describing the driver pipeline as though it were the product
 keywords: "vulnerability research, zero-day, security pipeline, orchestration, static analysis, source code audit, LLM assessment, semgrep, reverse engineering, BYOVD, LOLDrivers"

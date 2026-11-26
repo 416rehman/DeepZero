@@ -1,0 +1,9 @@
+---
+layout: null
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{% for p in site.html_pages %}{% unless p.url == "/index.html" or p.url == "/" or p.url contains "404" %}  <url>
+    <loc>{{ p.url | replace: 'index.html', '' | absolute_url }}</loc>
+  </url>
+{% endunless %}{% endfor %}</urlset>

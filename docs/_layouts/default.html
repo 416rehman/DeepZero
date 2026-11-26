@@ -16,9 +16,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% if page.title == "Home" or page.url == "/" %}{{ site.title | default: "DeepZero" }} - {{ site.tagline |
-        default: "Automated Vulnerability Research" }}{% else %}{{ page.title }} | {{ site.title | default: "DeepZero"
-        }}{% endif %}</title>
+    <title>{% if page.title == "Home" or page.url == "/" %}DeepZero CLI - {{ site.tagline | default: "Open-Source AI Vulnerability Research CLI & Pipeline Engine" }}{% else %}{{ page.title }} | {{ site.title | default: "DeepZero" }}{% endif %}</title>
 
     <!-- SEO Primary Meta Tags -->
     <meta name="description"
@@ -30,6 +28,16 @@
          /DeepZero prefix the site is actually served under, so every canonical and
          social URL pointed at a page that does not exist -->
     <link rel="canonical" href="{{ page.url | replace: 'index.html', '' | absolute_url }}">
+    {% assign page_suffix = page.url | remove_first: current_lang | replace: 'index.html', '' %}
+    <link rel="alternate" hreflang="x-default" href="{{ '/en/' | append: page_suffix | absolute_url }}">
+    <link rel="alternate" hreflang="en" href="{{ '/en/' | append: page_suffix | absolute_url }}">
+    <link rel="alternate" hreflang="zh-CN" href="{{ '/zh-CN/' | append: page_suffix | absolute_url }}">
+    <link rel="alternate" hreflang="es" href="{{ '/es/' | append: page_suffix | absolute_url }}">
+    <link rel="alternate" hreflang="fr" href="{{ '/fr/' | append: page_suffix | absolute_url }}">
+    <link rel="alternate" hreflang="ja" href="{{ '/ja/' | append: page_suffix | absolute_url }}">
+    <link rel="alternate" hreflang="ru" href="{{ '/ru/' | append: page_suffix | absolute_url }}">
+    <link rel="sitemap" type="application/xml" href="{{ '/sitemap.xml' | absolute_url }}">
+    <link rel="alternate" type="text/plain" title="LLMs.txt" href="{{ '/llms.txt' | absolute_url }}">
 
     <!-- Favicon -->
     <link rel="icon"
@@ -39,20 +47,116 @@
     <meta property="og:type" content="website">
     <meta property="og:url" content="{{ page.url | replace: 'index.html', '' | absolute_url }}">
     <meta property="og:title"
-        content="{% if page.title == 'Home' or page.url == '/' %}DeepZero: Automated Vulnerability Research at Scale{% else %}{{ page.title }} | DeepZero{% endif %}">
+        content="{% if page.title == 'Home' or page.url == '/' %}DeepZero CLI: Open-Source AI Vulnerability Research & Pipeline Engine{% else %}{{ page.title }} | DeepZero{% endif %}">
     <meta property="og:description"
         content="{{ page.description | default: site.description | default: 'Pipeline engine for hunting for zero-days at scale through LLM orchestration, static analysis, and tools like Ghidra' }}">
     <meta property="og:site_name" content="DeepZero">
-    <meta property="og:image" content="https://repository-images.githubusercontent.com/416rehman/DeepZero">
+    <meta property="og:image" content="https://opengraph.githubassets.com/1/416rehman/DeepZero">
 
     <!-- Twitter / X -->
     <meta property="twitter:card" content="summary_large_image">
     <meta property="twitter:url" content="{{ page.url | replace: 'index.html', '' | absolute_url }}">
     <meta property="twitter:title"
-        content="{% if page.title == 'Home' or page.url == '/' %}DeepZero: Automated Vulnerability Research at Scale{% else %}{{ page.title }} | DeepZero{% endif %}">
+        content="{% if page.title == 'Home' or page.url == '/' %}DeepZero CLI: Open-Source AI Vulnerability Research & Pipeline Engine{% else %}{{ page.title }} | DeepZero{% endif %}">
     <meta property="twitter:description"
         content="{{ page.description | default: site.description | default: 'Pipeline engine for hunting for zero-days at scale through LLM orchestration, static analysis, and tools like Ghidra' }}">
-    <meta property="twitter:image" content="https://repository-images.githubusercontent.com/416rehman/DeepZero">
+    <meta property="twitter:image" content="https://opengraph.githubassets.com/1/416rehman/DeepZero">
+
+    {% if page.title == "Home" or page.url == "/" %}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "{{ '/en/' | absolute_url }}#website",
+          "name": "DeepZero CLI",
+          "url": "{{ '/en/' | absolute_url }}"
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "{{ '/en/' | absolute_url }}#software",
+          "name": "DeepZero CLI",
+          "applicationCategory": "SecurityApplication",
+          "operatingSystem": "Linux, macOS, Windows",
+          "softwareRequirements": "Python 3.11+",
+          "url": "{{ page.url | replace: 'index.html', '' | absolute_url }}",
+          "codeRepository": "https://github.com/416rehman/DeepZero",
+          "license": "https://github.com/416rehman/DeepZero/blob/main/LICENSE",
+          "description": {{ page.description | default: site.description | jsonify }}
+        }{% if current_lang == "/en/" %},
+        {
+          "@type": "FAQPage",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "What is DeepZero CLI?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "DeepZero CLI is an open-source Python command-line orchestration engine for automated vulnerability research. You define multi-stage pipelines in YAML combining ingest, static filtering, decompilation, Semgrep scanning, and LLM assessment across binaries or Git repositories."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "How do I install and use DeepZero?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Clone https://github.com/416rehman/DeepZero.git with Python 3.11+, install it via pip install -e ., and run the built-in demo with deepzero run pipelines/demo/samples -p pipelines/demo/pipeline.yaml followed by deepzero report -p pipelines/demo/pipeline.yaml --open."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "How does DeepZero use AI models (Claude Code and LiteLLM)?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Cheap deterministic filter and scanner stages run first so model calls only analyze surviving candidates. Security pipelines default to your local signed-in Claude Code CLI with tools and MCP disabled, or use LiteLLM via -m or DEEPZERO_MODEL for OpenAI, Gemini, and other providers."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "How does DeepZero work with LOLDrivers for BYOVD driver analysis?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "The bundled pipelines/loldrivers/pipeline.yaml workflow ingests Windows PE drivers with LIEF, excludes known hashes from loldrivers.io, decompiles IOCTL dispatch handlers in headless Ghidra, scans exported C with Semgrep, ranks drivers by finding count, and assesses reachability with an LLM."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Can I resume interrupted runs or build custom YAML pipelines?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes. DeepZero saves atomic per-sample state under the pipeline and corpus key so interrupted runs resume immediately, --redo re-runs a single stage, deepzero init scaffolds a new YAML pipeline, and deepzero validate checks prerequisites and prompts."
+              }
+            }
+          ]
+        }{% endif %}
+      ]
+    }
+    </script>
+    {% else %}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "TechArticle",
+          "headline": {{ page.title | jsonify }},
+          "description": {{ page.description | default: site.description | jsonify }},
+          "url": "{{ page.url | replace: 'index.html', '' | absolute_url }}",
+          "inLanguage": "{{ current_lang | remove: '/' }}",
+          "isPartOf": { "@id": "{{ '/en/' | absolute_url }}#website" }
+        },
+        {
+          "@type": "BreadcrumbList",
+          "itemListElement": [
+            { "@type": "ListItem", "position": 1, "name": "DeepZero", "item": "{{ current_lang | absolute_url }}" },
+            { "@type": "ListItem", "position": 2, "name": {{ page.title | jsonify }}, "item": "{{ page.url | replace: 'index.html', '' | absolute_url }}" }
+          ]
+        }
+      ]
+    }
+    </script>
+    {% endif %}
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

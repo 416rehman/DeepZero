@@ -523,3 +523,65 @@ td {
         font-size: 1.75rem;
     }
 }
+
+.faq-section {
+    margin-top: 4rem;
+    padding-top: 3rem;
+    border-top: 1px solid var(--border);
+}
+
+.faq-section h2 {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.faq-intro {
+    margin-bottom: 2rem;
+}
+
+.faq-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.faq-item {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+}
+
+.faq-item summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 1rem 1.25rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.faq-item summary::-webkit-details-marker {
+    display: none;
+}
+
+.faq-item summary::after {
+    content: "+";
+    font-family: var(--font-mono);
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+}
+
+.faq-item[open] summary::after {
+    content: "-";
+}
+
+.faq-item p {
+    padding: 0 1.25rem 1.125rem;
+    margin: 0;
+    font-size: 1rem;
+}

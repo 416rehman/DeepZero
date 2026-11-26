@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Quickstart
+description: "Install DeepZero CLI with Python 3.11+, run the local demo without API keys, and configure Ghidra, Semgrep, Claude Code, or LiteLLM for security pipelines."
 order: 1
 ---
 

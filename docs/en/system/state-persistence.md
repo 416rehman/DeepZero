@@ -1,6 +1,7 @@
 ---
 layout: default
 title: State Persistence
+description: "How DeepZero guarantees crash-safe atomic state persistence per sample and corpus using temp-file swaps, input digests, and instant resumability."
 order: 1
 ---
 
